@@ -43,9 +43,12 @@ export default function Login() {
     setError(null);
 
     try {
+      console.log('[Login] Attempting login for:', email.trim());
       await login(email.trim(), password);
+      console.log('[Login] Login successful');
       // AuthContext handles the rest via onAuthStateChange
     } catch (err) {
+      console.log('[Login] Login failed:', err.message);
       if (err.message?.includes('Invalid login credentials')) {
         setError('パスワードが違います');
       } else if (err.message?.includes('Email not confirmed')) {
@@ -53,6 +56,8 @@ export default function Login() {
       } else {
         setError(err.message || 'ログイン中にエラーが発生しました。');
       }
+      // デバッグ用：エラーの詳細をアラート表示
+      alert('Login Error: ' + (err.message || 'Unknown error'));
     } finally {
       setIsLoading(false);
     }
