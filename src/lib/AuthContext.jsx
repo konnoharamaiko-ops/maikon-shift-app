@@ -208,6 +208,13 @@ export const AuthProvider = ({ children }) => {
       console.log('[Auth] Loading profile for:', data.user.email);
       const success = await loadAndSetProfile(data.user);
       console.log('[Auth] Profile load result:', success);
+      
+      if (!success) {
+        // loadAndSetProfile already set authError, throw it
+        const errorMsg = 'このメールアドレスは登録されていません。\n管理者からの招待を受けてからログインしてください。';
+        throw new Error(errorMsg);
+      }
+      
       return data;
     } catch (error) {
       console.log('[Auth] Login exception:', error.message);
