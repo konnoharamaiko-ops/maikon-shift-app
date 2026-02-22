@@ -192,19 +192,25 @@ export const AuthProvider = ({ children }) => {
 
   // Login function - handles everything directly
   const login = async (email, password) => {
+    console.log('[Auth] Login attempt:', email);
     setIsLoadingAuth(true);
     setAuthError(null);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      console.log('[Auth] signInWithPassword result:', { data: !!data, error: error?.message });
       if (error) {
+        console.log('[Auth] Login failed:', error.message);
         setIsLoadingAuth(false);
         throw error;
       }
 
       // Directly load profile - don't rely on onAuthStateChange
-      await loadAndSetProfile(data.user);
+      console.log('[Auth] Loading profile for:', data.user.email);
+      const success = await loadAndSetProfile(data.user);
+      console.log('[Auth] Profile load result:', success);
       return data;
     } catch (error) {
+      console.log('[Auth] Login exception:', error.message);
       setIsLoadingAuth(false);
       throw error;
     }
