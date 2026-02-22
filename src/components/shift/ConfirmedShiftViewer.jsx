@@ -1,0 +1,954 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { supabase } from '@/api/supabaseClient';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/lib/AuthContext';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  ClipboardCheck, X, Printer, Download, CheckCircle, Users,
+  History, Trash2, Undo2, Calendar, ChevronRight,
+  Loader2, Eye, EyeOff
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { format, parseISO } from 'date-fns';
+import { ja } from 'date-fns/locale';
+import { insertRecord } from '@/api/supabaseHelpers';
+import { cn } from '@/lib/utils';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+import ReadOnlyTableView from '@/components/shift-creation/ReadOnlyTableView';
+import { ConfirmShiftPreview, WeekTimelineView } from '@/components/shift-creation/ShiftTableView';
+import { sortStoresByOrder } from '@/lib/storeOrder';
+import ZoomableWrapper from '@/components/ui/ZoomableWrapper';
+
+
+export default function ConfirmedShiftViewer() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState('current');
+  const [showConfirmStatus, setShowConfirmStatus] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [expandedSnapshotId, setExpandedSnapshotId] = useState(null);
+  const printRef = useRef(null);
+
+  const isAdmin = user?.user_role === 'admin' || user?.role === 'admin';
+  const isManager = user?.user_role === 'manager' || user?.role === 'manager';
+  const isAdminOrManager = isAdmin || isManager;
+
+  // Listen for openConfirmedShift event from NotificationCenter
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener('openConfirmedShift', handler);
+    return () => window.removeEventListener('openConfirmedShift', handler);
+  }, []);
+
+  // Fetch user's stores (User.store_idsから取得)
+  const { data: userStores = [] } = useQuery({
+    queryKey: ['userStores', user?.email],
+    queryFn: async () => {
+      if (!user?.email) return [];
+      const { data: userData } = await supabase
+        .from('User')
+        .select('store_ids')
+        .eq('email', user.email)
+        .single();
+      const storeIds = userData?.store_ids;
+      if (!storeIds || !Array.isArray(storeIds) || storeIds.length === 0) return [];
+      const { data: stores } = await supabase
+        .from('Store')
+        .select('*')
+        .in('id', storeIds);
+      return sortStoresByOrder(stores || []);
+    },
+    enabled: !!user?.email,
+    staleTime: 0,
+  });
+
+  // selectedStoreIdをuserStoresが返ってきた時点で即座に設定
+  const [selectedStoreId, setSelectedStoreId] = useState('');
+  useEffect(() => {
+    if (userStores.length > 0 && !selectedStoreId) {
+      setSelectedStoreId(userStores[0].id);
+    }
+  }, [userStores, selectedStoreId]);
+
+  // 全ストアの最初のIDを即座に使用するためのeffective store ID
+  const effectiveStoreId = selectedStoreId || (userStores.length > 0 ? userStores[0].id : '');
+
+  const selectedStoreName = useMemo(() => {
+    const store = userStores.find(s => s.id === effectiveStoreId);
+    return store?.name || store?.store_name || '店舗';
+  }, [userStores, effectiveStoreId]);
+
+  // ===== Fetch current snapshot (常にアクティブ - ダイアログが閉じていても) =====
+  const { data: currentSnapshot, isLoading: loadingCurrent } = useQuery({
+    queryKey: ['confirmedShiftSnapshot', effectiveStoreId, 'current'],
+    queryFn: async () => {
+      if (!effectiveStoreId) return null;
+      const { data } = await supabase
+        .from('ConfirmedShiftSnapshot')
+        .select('*')
+        .eq('store_id', effectiveStoreId)
+        .eq('is_current', true)
+        .order('confirmed_at', { ascending: false })
+        .limit(1);
+      return data && data.length > 0 ? data[0] : null;
+    },
+    enabled: !!effectiveStoreId,
+    staleTime: 0,
+    refetchInterval: 10000,
+  });
+
+  // ===== ②NEWバッジ: 全ストア横断で未確認スナップショットがあるか確認 =====
+  const allStoreIds = useMemo(() => userStores.map(s => s.id), [userStores]);
+  
+  const { data: allStoreSnapshots = [] } = useQuery({
+    queryKey: ['allStoreCurrentSnapshots', allStoreIds.join(',')],
+    queryFn: async () => {
+      if (allStoreIds.length === 0) return [];
+      const { data } = await supabase
+        .from('ConfirmedShiftSnapshot')
+        .select('id, store_id, target_year, target_month, confirmed_at')
+        .in('store_id', allStoreIds)
+        .eq('is_current', true);
+      return data || [];
+    },
+    enabled: allStoreIds.length > 0,
+    staleTime: 0,
+    refetchInterval: 10000,
+  });
+
+  const { data: allStoreConfirmations = [] } = useQuery({
+    queryKey: ['allStoreConfirmations', allStoreIds.join(','), user?.email],
+    queryFn: async () => {
+      if (allStoreIds.length === 0 || !user?.email) return [];
+      // 全ストアの全月の確認状況を取得
+      const months = allStoreSnapshots.map(s => `${s.target_year}-${String(s.target_month).padStart(2, '0')}`);
+      if (months.length === 0) return [];
+      const { data } = await supabase
+        .from('ShiftConfirmation')
+        .select('*')
+        .in('store_id', allStoreIds)
+        .in('month', months)
+        .eq('user_email', user.email);
+      return data || [];
+    },
+    enabled: allStoreSnapshots.length > 0 && !!user?.email,
+    staleTime: 0,
+    refetchInterval: 10000,
+  });
+
+  // NEWバッジ: いずれかのストアに未確認のスナップショットがあるか
+  const hasNewUpdate = useMemo(() => {
+    if (allStoreSnapshots.length === 0) return false;
+    return allStoreSnapshots.some(snap => {
+      const monthStr = `${snap.target_year}-${String(snap.target_month).padStart(2, '0')}`;
+      const confirmed = allStoreConfirmations.some(
+        c => c.store_id === snap.store_id && c.month === monthStr
+      );
+      return !confirmed;
+    });
+  }, [allStoreSnapshots, allStoreConfirmations]);
+
+  // ===== Fetch past snapshots =====
+  const { data: pastSnapshots = [], isLoading: loadingHistory } = useQuery({
+    queryKey: ['confirmedShiftSnapshots', effectiveStoreId, 'history'],
+    queryFn: async () => {
+      if (!effectiveStoreId) return [];
+      const { data } = await supabase
+        .from('ConfirmedShiftSnapshot')
+        .select('*')
+        .eq('store_id', effectiveStoreId)
+        .eq('is_current', false)
+        .order('confirmed_at', { ascending: false });
+      return data || [];
+    },
+    enabled: !!effectiveStoreId,
+  });
+
+  // ===== Fetch confirmation status (常にアクティブ) =====
+  const snapshotMonth = currentSnapshot ? `${currentSnapshot.target_year}-${String(currentSnapshot.target_month).padStart(2, '0')}` : null;
+  const { data: confirmations = [] } = useQuery({
+    queryKey: ['shiftConfirmations', effectiveStoreId, snapshotMonth],
+    queryFn: async () => {
+      if (!currentSnapshot || !snapshotMonth) return [];
+      const { data } = await supabase
+        .from('ShiftConfirmation')
+        .select('*')
+        .eq('store_id', effectiveStoreId)
+        .eq('month', snapshotMonth);
+      return data || [];
+    },
+    enabled: !!currentSnapshot && !!snapshotMonth,
+    staleTime: 0,
+    refetchInterval: 10000,
+  });
+
+  // ===== Fetch store members =====
+  const { data: storeMembers = [] } = useQuery({
+    queryKey: ['storeMembersForConfirm', effectiveStoreId],
+    queryFn: async () => {
+      if (!effectiveStoreId) return [];
+      const { data: users } = await supabase
+        .from('User')
+        .select('*')
+        .contains('store_ids', [effectiveStoreId]);
+      return users || [];
+    },
+    enabled: !!effectiveStoreId,
+  });
+
+  // ===== Check user confirmation =====
+  const userHasConfirmed = confirmations.some(c => c.user_email === user?.email);
+
+  // ===== Realtime subscription for snapshot & confirmation changes =====
+  useEffect(() => {
+    if (!effectiveStoreId) return;
+    const channel = supabase
+      .channel(`shift_changes_${effectiveStoreId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'ConfirmedShiftSnapshot',
+        filter: `store_id=eq.${effectiveStoreId}`,
+      }, () => {
+        queryClient.invalidateQueries({ queryKey: ['confirmedShiftSnapshot', effectiveStoreId] });
+        queryClient.invalidateQueries({ queryKey: ['confirmedShiftSnapshots', effectiveStoreId] });
+        queryClient.invalidateQueries({ queryKey: ['shiftConfirmations', effectiveStoreId] });
+        queryClient.invalidateQueries({ queryKey: ['allStoreCurrentSnapshots'] });
+        queryClient.invalidateQueries({ queryKey: ['allStoreConfirmations'] });
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'ShiftConfirmation',
+        filter: `store_id=eq.${effectiveStoreId}`,
+      }, () => {
+        queryClient.invalidateQueries({ queryKey: ['shiftConfirmations', effectiveStoreId] });
+        queryClient.invalidateQueries({ queryKey: ['allStoreConfirmations'] });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [effectiveStoreId, queryClient]);
+
+  // ===== 全ストアのリアルタイム監視（NEWバッジ用） =====
+  useEffect(() => {
+    if (allStoreIds.length === 0) return;
+    const channels = allStoreIds
+      .filter(sid => sid !== effectiveStoreId) // effectiveStoreIdは上で監視済み
+      .map(storeId => {
+        return supabase
+          .channel(`shift_new_badge_${storeId}`)
+          .on('postgres_changes', {
+            event: '*',
+            schema: 'public',
+            table: 'ConfirmedShiftSnapshot',
+            filter: `store_id=eq.${storeId}`,
+          }, () => {
+            queryClient.invalidateQueries({ queryKey: ['allStoreCurrentSnapshots'] });
+            queryClient.invalidateQueries({ queryKey: ['allStoreConfirmations'] });
+          })
+          .subscribe();
+      });
+    return () => { channels.forEach(ch => supabase.removeChannel(ch)); };
+  }, [allStoreIds, effectiveStoreId, queryClient]);
+
+  // ===== Handle user confirmation =====
+  const handleConfirm = async () => {
+    if (!currentSnapshot || !snapshotMonth) return;
+    try {
+      await insertRecord('ShiftConfirmation', {
+        store_id: effectiveStoreId,
+        month: snapshotMonth,
+        user_email: user.email,
+        user_id: user.id,
+        confirmed_at: new Date().toISOString(),
+      });
+      queryClient.invalidateQueries({ queryKey: ['shiftConfirmations'] });
+      queryClient.invalidateQueries({ queryKey: ['allStoreConfirmations'] });
+      toast.success('シフト表の確認が完了しました');
+    } catch (error) {
+      console.error('確認エラー:', error);
+      toast.error('確認に失敗しました');
+    }
+  };
+
+  // ===== Handle admin: revoke user confirmation =====
+  const handleRevokeConfirmation = async (confirmationId) => {
+    try {
+      await supabase.from('ShiftConfirmation').delete().eq('id', confirmationId);
+      queryClient.invalidateQueries({ queryKey: ['shiftConfirmations'] });
+      queryClient.invalidateQueries({ queryKey: ['allStoreConfirmations'] });
+      toast.success('確認を取り消しました');
+    } catch (error) {
+      toast.error('取り消しに失敗しました');
+    }
+  };
+
+  // ===== Handle admin: revoke current snapshot =====
+  const handleRevokeCurrentSnapshot = async () => {
+    if (!currentSnapshot) return;
+    if (!window.confirm('現在の確定シフト表を取り消しますか？過去シフトに移動されます。')) return;
+    try {
+      await supabase.from('ConfirmedShiftSnapshot').update({ is_current: false }).eq('id', currentSnapshot.id);
+      queryClient.invalidateQueries({ queryKey: ['confirmedShiftSnapshot'] });
+      queryClient.invalidateQueries({ queryKey: ['confirmedShiftSnapshots'] });
+      queryClient.invalidateQueries({ queryKey: ['allStoreCurrentSnapshots'] });
+      toast.success('確定シフト表を取り消しました（過去シフトに移動）');
+    } catch (error) {
+      toast.error('取り消しに失敗しました');
+    }
+  };
+
+  // ===== Handle admin: delete past snapshot =====
+  const handleDeleteSnapshot = async (snapshotId) => {
+    if (!window.confirm('この過去シフト表を完全に削除しますか？この操作は元に戻せません。')) return;
+    try {
+      await supabase.from('ConfirmedShiftSnapshot').delete().eq('id', snapshotId);
+      queryClient.invalidateQueries({ queryKey: ['confirmedShiftSnapshots'] });
+      toast.success('過去シフト表を削除しました');
+    } catch (error) {
+      toast.error('削除に失敗しました');
+    }
+  };
+
+  // ===== Print =====
+  const handlePrint = useCallback(() => {
+    if (!printRef.current) return;
+    // 非表示コンテナを一時的に表示して内容を取得
+    printRef.current.classList.remove('hidden');
+    const htmlContent = printRef.current.innerHTML;
+    printRef.current.classList.add('hidden');
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) { toast.error('ポップアップがブロックされました'); return; }
+    printWindow.document.write(`
+      <html><head><title>確定シフト表</title>
+      <style>
+        body { margin: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+        img { max-width: 100%; height: auto; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #cbd5e1; padding: 2px 4px; font-size: 9px; }
+      </style>
+      </head><body>${htmlContent}</body></html>
+    `);
+    printWindow.document.close();
+    setTimeout(() => { printWindow.print(); }, 500);
+  }, []);
+
+  // ===== PDF Download =====
+  const handleDownloadPdf = useCallback(async () => {
+    if (!printRef.current) return;
+    setIsGeneratingPdf(true);
+    try {
+      // 非表示コンテナを一時的に表示してキャプチャ
+      printRef.current.classList.remove('hidden');
+      
+      // 表示形式に応じた最適な幅を設定
+      const displayFormat = currentSnapshot?.display_format || 'month';
+      const isLandscapeFormat = displayFormat === 'confirm' || displayFormat === 'week';
+      const captureWidth = isLandscapeFormat ? 1400 : 1200;
+      
+      // PDF用に固定幅を設定してレンダリング品質を確保
+      printRef.current.style.width = `${captureWidth}px`;
+      printRef.current.style.position = 'absolute';
+      printRef.current.style.left = '-9999px';
+      printRef.current.style.top = '0';
+      
+      // PDF用カスタムスタイルを注入（名前欄のフォントサイズ調整・省略表示）
+      const pdfStyle = document.createElement('style');
+      pdfStyle.id = 'pdf-custom-style';
+      pdfStyle.textContent = `
+        /* WeekTimelineView（日ごと）: 名前欄を小さいフォントで全体表示 */
+        .space-y-8 .w-24, .space-y-8 .sm\\:w-32 {
+          width: 100px !important;
+          font-size: 10px !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+        }
+        /* ConfirmShiftPreview（月ごと横表）: 名前欄 */
+        table .whitespace-nowrap {
+          font-size: 10px !important;
+          max-width: 80px !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+        }
+        /* ReadOnlyTableView（月ごと/週ごと）: ユーザー名ヘッダー */
+        table thead th.whitespace-nowrap {
+          font-size: 10px !important;
+          max-width: 80px !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+        }
+        /* タイムラインのシフトバー内テキスト - 切れないようにoverflow:visible */
+        .space-y-8 .truncate {
+          font-size: 8px !important;
+          overflow: visible !important;
+          text-overflow: clip !important;
+          white-space: nowrap !important;
+        }
+        /* シフトバー自体もoverflow:visibleでテキストがはみ出せるように */
+        .space-y-8 .absolute.rounded {
+          overflow: visible !important;
+          padding: 0 1px !important;
+        }
+        /* 全体のレスポンシブクラスをPC表示に強制 */
+        .text-sm.sm\\:text-xl { font-size: 16px !important; }
+        .text-\\[9px\\].sm\\:text-xs { font-size: 11px !important; }
+        .mb-2.sm\\:mb-6 { margin-bottom: 12px !important; }
+      `;
+      document.head.appendChild(pdfStyle);
+      
+      // レンダリング完了を待つ
+      await new Promise(r => setTimeout(r, 400));
+      const canvas = await html2canvas(printRef.current, {
+        scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff',
+        width: captureWidth,
+      });
+      
+      // カスタムスタイルを削除
+      pdfStyle.remove();
+      // 元に戻す
+      printRef.current.style.width = '';
+      printRef.current.style.position = '';
+      printRef.current.style.left = '';
+      printRef.current.style.top = '';
+      printRef.current.classList.add('hidden');
+      const imgData = canvas.toDataURL('image/png');
+      const imgAspect = canvas.width / canvas.height;
+
+      // 最適な向きを自動判定: コンテンツのアスペクト比に基づく
+      // 横長コンテンツ（confirm, week）→ landscape、縦長コンテンツ → portrait
+      const isLandscape = isLandscapeFormat;
+
+      // A4の両方の向きでどちらがより大きく表示できるか判定
+      const a4W_p = 210, a4H_p = 297; // portrait (mm)
+      const a4W_l = 297, a4H_l = 210; // landscape (mm)
+      const margin = 5; // 5mm余白
+
+      const usableW_p = a4W_p - margin * 2;
+      const usableH_p = a4H_p - margin * 2;
+      const usableW_l = a4W_l - margin * 2;
+      const usableH_l = a4H_l - margin * 2;
+
+      // portrait でのスケール
+      const scale_p = Math.min(usableW_p / imgAspect / usableH_p, usableW_p / (imgAspect * usableH_p), 1);
+      const fitW_p = Math.min(usableW_p, imgAspect * usableH_p);
+      const fitH_p = fitW_p / imgAspect;
+      // landscape でのスケール
+      const fitW_l = Math.min(usableW_l, imgAspect * usableH_l);
+      const fitH_l = fitW_l / imgAspect;
+
+      // どちらの向きがより面積を有効活用できるか
+      const area_p = fitW_p * fitH_p;
+      const area_l = fitW_l * fitH_l;
+      const useOrientation = isLandscape || (area_l > area_p * 1.1) ? 'landscape' : 'portrait';
+
+      const pdf = new jsPDF({
+        orientation: useOrientation, unit: 'mm', format: 'a4'
+      });
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const usableW = pdfWidth - margin * 2;
+      const usableH = pdfHeight - margin * 2;
+
+      // A4 1枚に収まるようにスケーリング（常に1枚に収める）
+      let imgW, imgH;
+      if (imgAspect > usableW / usableH) {
+        // 横幅基準でフィット
+        imgW = usableW;
+        imgH = usableW / imgAspect;
+      } else {
+        // 縦幅基準でフィット
+        imgH = usableH;
+        imgW = usableH * imgAspect;
+      }
+
+      // 中央配置
+      const offsetX = margin + (usableW - imgW) / 2;
+      const offsetY = margin + (usableH - imgH) / 2;
+
+      pdf.addImage(imgData, 'PNG', offsetX, offsetY, imgW, imgH);
+      pdf.save(`確定シフト表_${selectedStoreName}.pdf`);
+      toast.success('PDFをダウンロードしました');
+    } catch (error) {
+      console.error('PDF生成エラー:', error);
+      toast.error('PDF生成に失敗しました');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }, [selectedStoreName, currentSnapshot]);
+
+  // ===== Group past snapshots by date =====
+  const groupedPastSnapshots = useMemo(() => {
+    return pastSnapshots.reduce((acc, snap) => {
+      const dateKey = format(new Date(snap.confirmed_at), 'yyyy年M月d日（E）', { locale: ja });
+      if (!acc[dateKey]) acc[dateKey] = [];
+      acc[dateKey].push(snap);
+      return acc;
+    }, {});
+  }, [pastSnapshots]);
+
+  const confirmedCount = confirmations.length;
+  const totalMembers = storeMembers.length;
+
+  const getDisplayFormatLabel = (fmt) => {
+    switch (fmt) {
+      case 'month': return '月ごと';
+      case 'week': return '週ごと';
+      case 'day': return '日ごと';
+      case 'confirm': return '月ごと横表';
+      default: return fmt || '';
+    }
+  };
+
+  // ===== ①Reactコンポーネントでスナップショットを表示 =====
+  const renderSnapshotContent = (snapshot, forPrint = false) => {
+    // shift_dataがある場合はReactコンポーネントで表示（プレビューと完全一致）
+    if (snapshot.shift_data && snapshot.users_data && snapshot.store_data && snapshot.display_days) {
+      try {
+        const shiftData = typeof snapshot.shift_data === 'string' ? JSON.parse(snapshot.shift_data) : snapshot.shift_data;
+        const usersData = typeof snapshot.users_data === 'string' ? JSON.parse(snapshot.users_data) : snapshot.users_data;
+        const storeData = typeof snapshot.store_data === 'string' ? JSON.parse(snapshot.store_data) : snapshot.store_data;
+        const displayDaysStr = typeof snapshot.display_days === 'string' ? JSON.parse(snapshot.display_days) : snapshot.display_days;
+        const displayDays = displayDaysStr.map(d => parseISO(d));
+        const displayFormat = snapshot.display_format || 'month';
+
+        // ヘッダー情報
+        const storeName = storeData.name || selectedStoreName;
+        const monthLabel = `${snapshot.target_year}年${snapshot.target_month}月`;
+
+        // forPrint（PDF/印刷用）の場合はw-fullで親コンテナ幅に合わせる
+        const containerClass = forPrint
+          ? "w-full p-4 bg-white"
+          : "w-full p-1 sm:p-4 bg-white";
+
+        return (
+          <div className={containerClass}>
+            <div className="text-center mb-2 sm:mb-6">
+              <h2 className="text-sm sm:text-xl font-bold text-slate-800">
+                {storeName} {monthLabel} 確定シフト表
+              </h2>
+              <p className="text-[9px] sm:text-xs text-slate-400 mt-0.5 sm:mt-1">
+                確定日: {format(new Date(snapshot.confirmed_at), 'yyyy/MM/dd HH:mm')} | 表示形式: {getDisplayFormatLabel(displayFormat)}
+              </p>
+            </div>
+            {renderShiftComponent(displayFormat, shiftData, usersData, storeData, displayDays, snapshot)}
+          </div>
+        );
+      } catch (e) {
+        console.warn('JSONパースエラー、HTMLフォールバック:', e);
+        return <div dangerouslySetInnerHTML={{ __html: snapshot.html_content }} />;
+      }
+    }
+    // フォールバック: 古いスナップショットはhtml_contentで表示
+    return <div dangerouslySetInnerHTML={{ __html: snapshot.html_content }} />;
+  };
+
+  // ===== display_formatに応じたReactコンポーネントの選択 =====
+  const renderShiftComponent = (displayFormat, shiftData, usersData, storeData, displayDays, snapshot) => {
+    switch (displayFormat) {
+      case 'confirm':
+        return (
+          <ConfirmShiftPreview
+            selectedMonth={new Date(snapshot.target_year, snapshot.target_month - 1, 1)}
+            users={usersData}
+            workShifts={shiftData}
+            store={storeData}
+            monthDays={displayDays}
+          />
+        );
+      case 'day':
+        return (
+          <WeekTimelineView
+            weekDays={displayDays}
+            users={usersData}
+            workShifts={shiftData}
+            onEditShift={() => {}}
+            onCellClick={() => {}}
+            shiftRequests={[]}
+            store={storeData}
+          />
+        );
+      case 'month':
+      case 'week':
+      default:
+        return (
+          <ReadOnlyTableView
+            displayDays={displayDays}
+            users={usersData}
+            workShifts={shiftData}
+            store={storeData}
+            shiftRequests={[]}
+          />
+        );
+    }
+  };
+
+  return (
+    <>
+      {/* ===== Trigger Icon Button ===== */}
+      <button
+        onClick={() => setOpen(true)}
+        className="relative w-10 h-10 sm:w-13 sm:h-13 rounded-xl sm:rounded-2xl bg-indigo-400/40 backdrop-blur-sm border border-indigo-200/40 flex items-center justify-center hover:bg-indigo-400/55 transition-all shadow-lg hover:shadow-xl hover:scale-105"
+        title="確定シフト表を確認"
+      >
+        <ClipboardCheck className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+        {hasNewUpdate && (
+          <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center">
+            <span className="animate-ping absolute inline-flex h-4 w-7 rounded-full bg-red-400 opacity-75"></span>
+            <span className="relative flex items-center justify-center px-1.5 py-0.5 bg-red-500 rounded-full shadow-md">
+              <span className="text-[8px] font-bold text-white leading-none">New</span>
+            </span>
+          </span>
+        )}
+      </button>
+
+      {/* ===== Main Dialog ===== */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="w-[95vw] max-w-6xl max-h-[95vh] overflow-hidden flex flex-col p-0">
+          {/* Header */}
+          <div className="px-3 sm:px-6 pt-4 sm:pt-5 pb-3 bg-gradient-to-r from-emerald-600 to-teal-600 pr-10 sm:pr-12">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                  <ClipboardCheck className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                </div>
+                <h2 className="text-base sm:text-lg font-bold text-white">確定シフト表</h2>
+              </div>
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <Button
+                  variant={view === 'current' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => { setView('current'); setExpandedSnapshotId(null); }}
+                  className={cn("text-[10px] sm:text-xs h-7 sm:h-8 px-2 sm:px-3 border-white/30", view === 'current' ? 'bg-white text-emerald-700 hover:bg-white/90' : 'bg-white/15 text-white hover:text-white hover:bg-white/25')}
+                >
+                  <ClipboardCheck className="w-3 h-3 sm:w-3.5 sm:h-3.5 mr-0.5 sm:mr-1" />
+                  最新
+                </Button>
+                <Button
+                  variant={view === 'history' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setView('history')}
+                  className={cn("text-[10px] sm:text-xs h-7 sm:h-8 px-2 sm:px-3 border-white/30", view === 'history' ? 'bg-white text-slate-700 hover:bg-white/90' : 'bg-white/15 text-white hover:text-white hover:bg-white/25')}
+                >
+                  <History className="w-3 h-3 sm:w-3.5 sm:h-3.5 mr-0.5 sm:mr-1" />
+                  過去
+                  {pastSnapshots.length > 0 && (
+                    <Badge className="ml-1 text-[9px] sm:text-[10px] px-1 py-0 bg-white/20 text-white border-0">{pastSnapshots.length}</Badge>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* Store selector */}
+            {userStores.length > 1 && (
+              <div className="mt-2 sm:mt-3 flex gap-1.5 sm:gap-2 flex-wrap">
+                {userStores.map(store => (
+                  <Button
+                    key={store.id}
+                    variant={effectiveStoreId === store.id ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => { setSelectedStoreId(store.id); setExpandedSnapshotId(null); }}
+                    className={cn("text-[10px] sm:text-xs h-7 px-2 border-white/30", effectiveStoreId === store.id ? 'bg-white text-emerald-700' : 'bg-white/15 text-white hover:text-white hover:bg-white/25')}
+                  >
+                    {store.name || store.store_name}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ===== Content ===== */}
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4">
+            {view === 'current' ? (
+              /* ===== CURRENT SHIFT VIEW ===== */
+              <div>
+                {loadingCurrent ? (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+                  </div>
+                ) : currentSnapshot ? (
+                  <div>
+                    {/* Info bar */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 sm:mb-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-2.5 sm:p-3 border border-emerald-200/60 shadow-sm">
+                      <div className="text-xs sm:text-sm text-slate-700">
+                        <span className="font-bold text-emerald-800">
+                          {currentSnapshot.target_year}年{currentSnapshot.target_month}月
+                          {/* シフト期間を表示 */}
+                          {currentSnapshot.display_days && (() => {
+                            try {
+                              const days = typeof currentSnapshot.display_days === 'string' ? JSON.parse(currentSnapshot.display_days) : currentSnapshot.display_days;
+                              if (days && days.length > 0) {
+                                const first = parseISO(days[0]);
+                                const last = parseISO(days[days.length - 1]);
+                                return (
+                                  <span className="text-[9px] sm:text-[11px] font-normal text-emerald-600 ml-1">
+                                    ({format(first, 'M/d')}～{format(last, 'M/d')})
+                                  </span>
+                                );
+                              }
+                            } catch (e) { /* ignore */ }
+                            return null;
+                          })()}
+                        </span>
+                        <span className="ml-1.5 sm:ml-2 text-slate-500 text-[10px] sm:text-xs">
+                          確定: {format(new Date(currentSnapshot.confirmed_at), 'M/d HH:mm')}
+                        </span>
+                        {currentSnapshot.display_format && (
+                          <Badge variant="outline" className="ml-1.5 text-[9px] sm:text-[10px]">
+                            {getDisplayFormatLabel(currentSnapshot.display_format)}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
+                        <Button variant="outline" size="sm" onClick={handlePrint} className="text-[10px] sm:text-xs h-7 sm:h-8 px-2">
+                          <Printer className="w-3 h-3 sm:w-3.5 sm:h-3.5 mr-0.5 sm:mr-1" />印刷
+                        </Button>
+                        <Button
+                          variant="outline" size="sm" onClick={handleDownloadPdf}
+                          disabled={isGeneratingPdf} className="text-[10px] sm:text-xs h-7 sm:h-8 px-2"
+                        >
+                          {isGeneratingPdf ? <Loader2 className="w-3 h-3 mr-0.5 animate-spin" /> : <Download className="w-3 h-3 sm:w-3.5 sm:h-3.5 mr-0.5 sm:mr-1" />}
+                          PDF
+                        </Button>
+                        {isAdminOrManager && (
+                          <Button
+                            variant="outline" size="sm"
+                            onClick={() => setShowConfirmStatus(!showConfirmStatus)}
+                            className="text-[10px] sm:text-xs h-7 sm:h-8 px-2"
+                          >
+                            {showConfirmStatus ? <EyeOff className="w-3 h-3 mr-0.5" /> : <Eye className="w-3 h-3 mr-0.5" />}
+                            <span className="hidden sm:inline">確認状況</span> ({confirmedCount}/{totalMembers})
+                          </Button>
+                        )}
+                        {isAdminOrManager && (
+                          <Button
+                            variant="outline" size="sm"
+                            onClick={handleRevokeCurrentSnapshot}
+                            className="text-[10px] sm:text-xs h-7 sm:h-8 px-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                          >
+                            <Undo2 className="w-3 h-3 mr-0.5" />
+                            <span className="hidden sm:inline">取り消し</span>
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Confirmation status panel */}
+                    {showConfirmStatus && isAdminOrManager && (
+                      <div className="mb-3 sm:mb-4 p-3 sm:p-4 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl border border-indigo-200/60 shadow-sm">
+                        <h4 className="font-bold text-xs sm:text-sm text-indigo-800 mb-2 sm:mb-3 flex items-center gap-2">
+                          <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          確認状況 ({confirmedCount}/{totalMembers}名)
+                          <div className="flex-1 h-1.5 bg-indigo-100 rounded-full overflow-hidden ml-2">
+                            <div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full transition-all" style={{ width: `${totalMembers > 0 ? (confirmedCount / totalMembers) * 100 : 0}%` }} />
+                          </div>
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5 sm:gap-2">
+                          {storeMembers.map(member => {
+                            const confirmation = confirmations.find(c => c.user_email === member.email);
+                            const displayName = member.metadata?.display_name || member.full_name || member.email?.split('@')[0];
+                            return (
+                              <div
+                                key={member.email}
+                                className={cn(
+                                  "flex items-center justify-between p-2 sm:p-2.5 rounded-lg text-xs sm:text-sm border",
+                                  confirmation ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'
+                                )}
+                              >
+                                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                                  {confirmation ? (
+                                    <CheckCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-500 flex-shrink-0" />
+                                  ) : (
+                                    <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full border-2 border-slate-300 flex-shrink-0" />
+                                  )}
+                                  <div className="min-w-0">
+                                    <span className="text-xs sm:text-sm font-medium truncate block">{displayName}</span>
+                                    {confirmation && (
+                                      <span className="text-[9px] sm:text-[10px] text-slate-400">
+                                        {format(new Date(confirmation.confirmed_at), 'M/d HH:mm')}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                {confirmation && isAdminOrManager && (
+                                  <button
+                                    onClick={() => handleRevokeConfirmation(confirmation.id)}
+                                    className="text-red-400 hover:text-red-600 ml-1 flex-shrink-0 p-0.5 sm:p-1"
+                                    title="確認を取り消す"
+                                  >
+                                    <Undo2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===== Snapshot content - Reactコンポーネントで表示 ===== */}
+                    {/* 印刷/PDF用の非表示コンテナ（フルサイズ） */}
+                    <div ref={printRef} className="hidden">
+                      {renderSnapshotContent(currentSnapshot, true)}
+                    </div>
+                    {/* スマホ対応: テーブル全体を画面幅に自動縮小 */}
+                    <div className="border border-slate-200/60 rounded-xl bg-white shadow-sm">
+                      <ZoomableWrapper className="p-1 sm:p-2">
+                        {renderSnapshotContent(currentSnapshot)}
+                      </ZoomableWrapper>
+                    </div>
+
+                    {/* Confirm button */}
+                    <div className="mt-3 sm:mt-4 flex items-center justify-center">
+                      {userHasConfirmed ? (
+                        <div className="flex items-center gap-2 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/60 rounded-xl px-4 sm:px-6 py-2.5 sm:py-3 shadow-sm">
+                          <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500" />
+                          <span className="text-xs sm:text-sm font-medium text-emerald-700">確認済みです</span>
+                        </div>
+                      ) : (
+                        <Button
+                          onClick={handleConfirm}
+                          className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white px-6 sm:px-8 py-2.5 sm:py-3 text-sm sm:text-base shadow-lg shadow-emerald-200/50 rounded-xl"
+                        >
+                          <CheckCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-1.5 sm:mr-2" />
+                          確認しました
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-12 sm:py-16 text-slate-400">
+                    <ClipboardCheck className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-3 sm:mb-4 opacity-30" />
+                    <p className="text-base sm:text-lg font-medium">確定シフト表はまだありません</p>
+                    <p className="text-xs sm:text-sm mt-2">管理者がシフトを確定すると、ここに表示されます。</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* ===== HISTORY VIEW ===== */
+              <div>
+                {loadingHistory ? (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+                  </div>
+                ) : pastSnapshots.length === 0 ? (
+                  <div className="text-center py-12 sm:py-16 text-slate-400">
+                    <History className="w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-3 sm:mb-4 opacity-30" />
+                    <p className="text-base sm:text-lg font-medium">過去のシフト表はありません</p>
+                    <p className="text-xs sm:text-sm mt-2">確定シフト表が更新されると、古いものがここに表示されます。</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 sm:space-y-4">
+                    {Object.entries(groupedPastSnapshots).map(([dateKey, snapshots]) => (
+                      <div key={dateKey}>
+                        {/* Date header */}
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+                            <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600" />
+                          </div>
+                          <h4 className="font-bold text-xs sm:text-sm text-slate-700">{dateKey}</h4>
+                          <Badge variant="outline" className="text-[9px] sm:text-[10px]">{snapshots.length}件</Badge>
+                        </div>
+
+                        {/* Snapshots under this date */}
+                        <div className="space-y-2 ml-6 sm:ml-10">
+                          {snapshots.map(snap => {
+                            const isExpanded = expandedSnapshotId === snap.id;
+                            return (
+                              <div key={snap.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                                {/* Snapshot header (clickable) */}
+                                <div
+                                  className={cn(
+                                    "flex items-center justify-between p-2.5 sm:p-3 cursor-pointer transition-colors",
+                                    isExpanded ? 'bg-emerald-50 border-l-4 border-l-emerald-500' : 'bg-white hover:bg-emerald-50/50 border-l-4 border-l-slate-300 hover:border-l-emerald-400'
+                                  )}
+                                  onClick={() => setExpandedSnapshotId(isExpanded ? null : snap.id)}
+                                >
+                                  <div className="flex items-center gap-2 sm:gap-3">
+                                    <div className={cn("w-8 h-8 sm:w-10 sm:h-10 rounded-lg border flex flex-col items-center justify-center", isExpanded ? 'bg-emerald-100 border-emerald-300' : 'bg-slate-50 border-slate-200')}>
+                                      <span className="text-[8px] sm:text-[10px] text-slate-500 leading-none">{snap.target_year}</span>
+                                      <span className={cn("text-xs sm:text-sm font-bold leading-none", isExpanded ? 'text-emerald-700' : 'text-slate-700')}>{snap.target_month}月</span>
+                                    </div>
+                                    <div>
+                                      <div className="font-semibold text-xs sm:text-sm text-slate-800">
+                                        {snap.target_year}年{snap.target_month}月
+                                        {/* シフト期間を表示 */}
+                                        {snap.display_days && (() => {
+                                          try {
+                                            const days = typeof snap.display_days === 'string' ? JSON.parse(snap.display_days) : snap.display_days;
+                                            if (days && days.length > 0) {
+                                              const first = parseISO(days[0]);
+                                              const last = parseISO(days[days.length - 1]);
+                                              return (
+                                                <span className="text-[9px] sm:text-[11px] font-normal text-slate-500 ml-1">
+                                                  ({format(first, 'M/d')}～{format(last, 'M/d')})
+                                                </span>
+                                              );
+                                            }
+                                          } catch (e) { /* ignore */ }
+                                          return null;
+                                        })()}
+                                      </div>
+                                      <div className="text-[9px] sm:text-[11px] text-slate-500 flex items-center gap-1 sm:gap-2 flex-wrap mt-0.5">
+                                        <span className="font-medium">{format(new Date(snap.confirmed_at), 'HH:mm')} 確定</span>
+                                        {snap.display_format && (
+                                          <Badge variant="outline" className="text-[8px] sm:text-[9px] px-1.5 py-0 bg-slate-100 text-slate-600 border-slate-300">
+                                            {getDisplayFormatLabel(snap.display_format)}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-1 sm:gap-2">
+                                    {isAdminOrManager && (
+                                      <Button
+                                        variant="ghost" size="sm"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteSnapshot(snap.id); }}
+                                        className="text-red-400 hover:text-red-600 h-7 w-7 sm:h-8 sm:w-8 p-0"
+                                        title="削除"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                      </Button>
+                                    )}
+                                    <div className={cn(
+                                      "w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center transition-all",
+                                      isExpanded ? 'bg-emerald-100' : 'bg-slate-100'
+                                    )}>
+                                      <ChevronRight className={cn(
+                                        "w-3.5 h-3.5 sm:w-4 sm:h-4 transition-transform duration-200",
+                                        isExpanded ? 'rotate-90 text-emerald-600' : 'text-slate-500'
+                                      )} />
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Expanded content */}
+                                {isExpanded && (
+                                  <div className="border-t border-slate-200">
+                                    <div className="p-1 sm:p-3 bg-white">
+                                      <ZoomableWrapper>
+                                        {renderSnapshotContent(snap)}
+                                      </ZoomableWrapper>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

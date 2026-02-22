@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ZoomableWrapper テスト v2</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: sans-serif; padding: 10px; background: #f5f5f5; }
+h2 { font-size: 14px; margin: 10px 0 5px; }
+.info { font-size: 11px; color: #666; margin-bottom: 5px; }
+.container { background: white; border: 2px solid #333; margin-bottom: 20px; overflow: hidden; }
+table { border-collapse: collapse; width: max-content; }
+th, td { border: 1px solid #ccc; padding: 4px 8px; font-size: 11px; white-space: nowrap; }
+th { background: #e0e0e0; position: sticky; top: 0; z-index: 2; }
+th:first-child { position: sticky; left: 0; z-index: 3; background: #d0d0d0; }
+td:first-child { position: sticky; left: 0; z-index: 1; background: #f0f0f0; }
+.result { font-size: 12px; color: green; font-weight: bold; padding: 5px; background: #e8f5e9; margin-bottom: 10px; }
+.error { color: red; background: #fce4ec; }
+.success { color: green; background: #e8f5e9; }
+</style>
+</head>
+<body>
+
+<h1 style="font-size:16px;">ZoomableWrapper テスト v2 (transform:scale)</h1>
+<div id="viewport-info" class="info"></div>
+
+<!-- テスト1: transform:scale 自動計算 -->
+<h2>テスト1: transform:scale 自動計算</h2>
+<div class="container" id="test1-container">
+  <div id="test1-scroll" style="overflow: hidden;">
+    <div id="test1-content">
+      <div id="test1-table-wrapper"></div>
+    </div>
+  </div>
+</div>
+<div id="test1-result" class="result"></div>
+
+<!-- テスト2: transform:scale + カレンダー（grid） -->
+<h2>テスト2: カレンダー（grid）- 縮小不要</h2>
+<div class="container" id="test2-container">
+  <div id="test2-scroll" style="overflow: hidden;">
+    <div id="test2-content">
+      <div id="test2-calendar"></div>
+    </div>
+  </div>
+</div>
+<div id="test2-result" class="result"></div>
+
+<!-- テスト3: transform:scale + タイムライン（min-width） -->
+<h2>テスト3: タイムライン（min-width: 600px）</h2>
+<div class="container" id="test3-container">
+  <div id="test3-scroll" style="overflow: hidden;">
+    <div id="test3-content">
+      <div id="test3-timeline"></div>
+    </div>
+  </div>
+</div>
+<div id="test3-result" class="result"></div>
+
+<script>
+const vw = window.innerWidth;
+document.getElementById('viewport-info').textContent = `Viewport: ${vw}px × ${window.innerHeight}px`;
+
+// テーブルを生成（シフト表と同じ構造）
+function createTable() {
+  let html = '<table>';
+  html += '<thead><tr><th>名前</th>';
+  for (let d = 1; d <= 31; d++) html += `<th>${d}日</th>`;
+  html += '<th>合計</th></tr></thead><tbody>';
+  const names = ['田中太郎','佐藤花子','鈴木一郎','高橋美咲','伊藤健太','渡辺優子','山本大輔','中村真理','小林誠','加藤恵'];
+  names.forEach(name => {
+    html += `<tr><td>${name}</td>`;
+    for (let d = 1; d <= 31; d++) html += `<td>${Math.random()>0.3?'9-17':'-'}</td>`;
+    html += '<td>160h</td></tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+// カレンダーを生成
+function createCalendar() {
+  let html = '<div style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px; min-width:320px;">';
+  const days = ['日','月','火','水','木','金','土'];
+  days.forEach(d => { html += `<div style="text-align:center;font-weight:bold;font-size:11px;padding:4px;background:#e0e0e0;">${d}</div>`; });
+  for (let i = 0; i < 35; i++) {
+    const day = i - 2;
+    if (day >= 1 && day <= 31) {
+      html += `<div style="text-align:center;font-size:10px;padding:4px;border:1px solid #ddd;min-height:40px;">${day}<br><span style="font-size:8px;color:#666;">田中 9-17</span></div>`;
+    } else {
+      html += '<div style="padding:4px;"></div>';
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+// タイムラインを生成
+function createTimeline() {
+  let html = '<div style="min-width:600px;">';
+  html += '<div style="display:flex; border-bottom:1px solid #ccc; font-size:10px;">';
+  for (let h = 8; h <= 22; h++) html += `<div style="flex:1;text-align:center;padding:2px;border-right:1px solid #eee;">${h}:00</div>`;
+  html += '</div>';
+  const names = ['田中太郎','佐藤花子','鈴木一郎','高橋美咲','伊藤健太'];
+  names.forEach(name => {
+    html += `<div style="display:flex; border-bottom:1px solid #eee; font-size:10px;">`;
+    html += `<div style="width:60px;padding:4px;font-weight:bold;flex-shrink:0;">${name}</div>`;
+    html += `<div style="flex:1;position:relative;height:30px;"><div style="position:absolute;left:10%;width:50%;height:100%;background:#4CAF50;opacity:0.7;border-radius:4px;"></div></div>`;
+    html += '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+document.getElementById('test1-table-wrapper').innerHTML = createTable();
+document.getElementById('test2-calendar').innerHTML = createCalendar();
+document.getElementById('test3-timeline').innerHTML = createTimeline();
+
+// autoScale計算＆適用関数
+function applyAutoScale(containerId, scrollId, contentId, resultId) {
+  const container = document.getElementById(containerId);
+  const scroll = document.getElementById(scrollId);
+  const content = document.getElementById(contentId);
+  
+  const availableWidth = container.clientWidth;
+  
+  // 計測: transform:noneにしてwidth:max-contentで自然幅を取得
+  content.style.transform = 'none';
+  content.style.width = 'max-content';
+  void content.offsetWidth;
+  
+  let naturalWidth = content.scrollWidth;
+  
+  // テーブルの自然幅も確認
+  const tables = content.querySelectorAll('table');
+  tables.forEach(t => {
+    const saved = t.style.width;
+    t.style.width = 'max-content';
+    void t.offsetWidth;
+    if (t.offsetWidth > naturalWidth) naturalWidth = t.offsetWidth;
+    t.style.width = saved;
+  });
+  
+  // min-width要素も確認
+  content.querySelectorAll('[style*="min-width"]').forEach(el => {
+    const mw = parseFloat(window.getComputedStyle(el).minWidth);
+    if (!isNaN(mw) && mw > naturalWidth) naturalWidth = mw;
+  });
+  
+  // autoScale計算
+  let autoScale = 1;
+  if (naturalWidth > availableWidth + 2) {
+    autoScale = Math.floor((availableWidth / naturalWidth) * 1000) / 1000;
+  }
+  
+  // transform:scale適用
+  content.style.transform = `scale(${autoScale})`;
+  content.style.transformOrigin = 'top left';
+  content.style.width = autoScale < 1 ? `${100 / autoScale}%` : '100%';
+  
+  // コンテナの高さ調整
+  void content.offsetWidth;
+  const contentHeight = content.scrollHeight;
+  scroll.style.height = `${contentHeight * autoScale}px`;
+  
+  // テーブルが画面に収まっているか確認
+  const actualVisibleWidth = container.getBoundingClientRect().width;
+  const contentVisibleWidth = content.getBoundingClientRect().width * autoScale;
+  const fitsScreen = contentVisibleWidth <= actualVisibleWidth + 5;
+  
+  const resultEl = document.getElementById(resultId);
+  resultEl.textContent = `available: ${availableWidth}px, natural: ${naturalWidth}px, autoScale: ${autoScale} (${Math.round(autoScale*100)}%) | ${fitsScreen ? '✅ 画面に収まっている' : '❌ はみ出している'}`;
+  resultEl.className = fitsScreen ? 'result success' : 'result error';
+}
+
+// 少し遅延して計測（DOMレンダリング完了後）
+setTimeout(() => {
+  applyAutoScale('test1-container', 'test1-scroll', 'test1-content', 'test1-result');
+  applyAutoScale('test2-container', 'test2-scroll', 'test2-content', 'test2-result');
+  applyAutoScale('test3-container', 'test3-scroll', 'test3-content', 'test3-result');
+}, 200);
+</script>
+</body>
+</html>

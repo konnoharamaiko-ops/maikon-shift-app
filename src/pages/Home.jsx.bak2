@@ -1,0 +1,690 @@
+import React, { useState, useEffect } from 'react';
+import { supabase } from '@/api/supabaseClient';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { format, isSameDay, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, addDays } from 'date-fns';
+import { ja } from 'date-fns/locale';
+import { toast } from 'sonner';
+import { CalendarCheck, Sparkles, Copy, Repeat, Store, Trash2, Settings, Clock } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
+import ShiftCalendar from '@/components/shift/ShiftCalendar';
+import ShiftForm from '@/components/shift/ShiftForm';
+import ShiftList from '@/components/shift/ShiftList';
+import ShiftCopyDialog from '@/components/shift/ShiftCopyDialog';
+import ShiftResetDialog from '@/components/shift/ShiftResetDialog';
+import RepeatShiftDialog from '@/components/shift/RepeatShiftDialog';
+import DeadlineSettingDialog from '@/components/shift/DeadlineSettingDialog';
+import ConfirmedShiftViewer from '@/components/shift/ConfirmedShiftViewer';
+import { fetchAll, fetchFiltered, insertRecord, insertRecords, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
+import { sortStoresByOrder } from '@/lib/storeOrder';
+import { supabase as supabaseClient } from '@/api/supabaseClient';
+import { useAuth } from '@/lib/AuthContext';
+
+export default function Home() {
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [copyDialogOpen, setCopyDialogOpen] = useState(false);
+  const [repeatDialogOpen, setRepeatDialogOpen] = useState(false);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [deadlineDialogOpen, setDeadlineDialogOpen] = useState(false);
+  const [showFormDialog, setShowFormDialog] = useState(false);
+  const queryClient = useQueryClient();
+
+  const { user } = useAuth();
+
+  // Fetch stores
+  const { data: stores = [] } = useQuery({
+    queryKey: ['stores'],
+    queryFn: () => fetchAll('Store'),
+  });
+
+  // Initialize selected store
+  useEffect(() => {
+    if (user?.store_ids?.[0] && !selectedStoreId) {
+      setSelectedStoreId(user?.store_ids?.[0]);
+    }
+  }, [user, selectedStoreId]);
+
+  // Fetch shift deadlines
+  const { data: deadlines = [] } = useQuery({
+    queryKey: ['shiftDeadlines'],
+    queryFn: () => fetchAll('ShiftDeadline'),
+  });
+
+  // Fetch app settings
+  const { data: appSettings = [] } = useQuery({
+    queryKey: ['appSettings'],
+    queryFn: () => fetchAll('AppSettings'),
+  });
+
+  // Fetch events
+  const { data: events = [] } = useQuery({
+    queryKey: ['events', selectedStoreId],
+    queryFn: async () => {
+      const { data } = await supabaseClient.from('Events').select('*').order('event_date', { ascending: true });
+      return (data || []).filter(e => e.all_stores || !e.store_id || (selectedStoreId && e.store_id === selectedStoreId));
+    },
+    enabled: !!selectedStoreId,
+  });
+
+  // Fetch all users for display (MUST be before shiftRequests)
+  const { data: allUsers = [] } = useQuery({
+    queryKey: ['allUsers'],
+    queryFn: () => fetchAll('User'),
+  });
+
+  // Fetch paid leave requests for current user
+  const { data: myPaidLeaveRequests = [] } = useQuery({
+    queryKey: ['myPaidLeaveRequests', user?.email],
+    queryFn: async () => {
+      if (!user?.email) return [];
+      const data = await fetchFiltered('PaidLeaveRequest', { user_email: user.email });
+      return (data || []).filter(r => r.status === 'approved' || r.status === 'pending');
+    },
+    enabled: !!user?.email,
+  });
+
+  // Fetch shift requests for current month
+  const { data: shiftRequests = [], isLoading: shiftsLoading } = useQuery({
+    queryKey: ['shiftRequests', user?.email, selectedStoreId, format(currentMonth, 'yyyy-MM')],
+    queryFn: async () => {
+      if (!user?.email || !selectedStoreId) return [];
+      const monthStart = startOfMonth(currentMonth);
+      const monthEnd = endOfMonth(currentMonth);
+      const monthStartStr = format(monthStart, 'yyyy-MM-dd');
+      const monthEndStr = format(monthEnd, 'yyyy-MM-dd');
+      
+      const data = await fetchFiltered('ShiftRequest', {
+        created_by: user.email,
+        store_id: selectedStoreId,
+      });
+      
+      const existingShifts = (data || []).filter(s => s.date >= monthStartStr && s.date <= monthEndStr);
+      
+      // Use cached allUsers data instead of fetching again
+      const userProfile = (allUsers || []).find(u => u.email === user.email);
+      const defaultSettings = userProfile?.default_shift_settings || user?.default_shift_settings;
+
+      if (defaultSettings) {
+        const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+        const dayMap = {
+          0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday', 6: 'saturday'
+        };
+        
+        const defaultShifts = [];
+        days.forEach(day => {
+          const dateStr = format(day, 'yyyy-MM-dd');
+          // Skip if already has a shift request
+          if (existingShifts.some(s => s.date === dateStr)) return;
+          
+          const dayKey = dayMap[day.getDay()];
+          const setting = defaultSettings[dayKey];
+          
+          if (setting?.enabled) {
+            // Calculate week of month correctly considering the first day's day of week
+            const firstDayOfMonth = new Date(day.getFullYear(), day.getMonth(), 1);
+            const firstDayOfWeek = firstDayOfMonth.getDay();
+            const adjustedDate = day.getDate() + firstDayOfWeek;
+            const weekOfMonth = Math.ceil(adjustedDate / 7);
+            
+            // Support new week_settings format
+            if (setting.week_settings) {
+              const weekSetting = setting.week_settings[weekOfMonth];
+              if (weekSetting) {
+                defaultShifts.push({
+                  id: `default-${dateStr}`,
+                  date: dateStr,
+                  start_time: weekSetting.is_day_off ? null : weekSetting.start_time,
+                  end_time: weekSetting.is_day_off ? null : weekSetting.end_time,
+                  is_day_off: weekSetting.is_day_off,
+                  notes: weekSetting.notes,
+                  is_default: true
+                });
+              }
+            } else {
+              // Legacy format fallback
+              const allowedWeeks = setting.weeks || [1, 2, 3, 4, 5];
+              if (allowedWeeks.includes(weekOfMonth)) {
+                defaultShifts.push({
+                  id: `default-${dateStr}`,
+                  date: dateStr,
+                  start_time: setting.is_day_off ? null : setting.start_time,
+                  end_time: setting.is_day_off ? null : setting.end_time,
+                  is_day_off: setting.is_day_off,
+                  notes: setting.notes,
+                  is_default: true
+                });
+              }
+            }
+          }
+        });
+        
+        return [...existingShifts, ...defaultShifts];
+      }
+      
+      return existingShifts;
+    },
+    enabled: !!user?.email && !!selectedStoreId,
+  });
+
+  const isAdmin = user?.user_role === 'admin' || user?.role === 'admin';
+  const isManager = user?.user_role === 'manager';
+  const isAdminOrManager = isAdmin || isManager;
+
+  // Check if a date is locked by deadline or past date
+  const isDateLocked = (dateStr) => {
+    if (isAdmin) return false; // Admin can always edit
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const targetDateObj = parseISO(dateStr);
+    targetDateObj.setHours(0, 0, 0, 0);
+    
+    // Past dates: notes-only mode (can only add notes)
+    if (targetDateObj < today) {
+      return 'notes-only';
+    }
+    
+    // Find relevant deadline for this date
+    const relevantDeadline = (deadlines || []).find(d => 
+      d.store_id === selectedStoreId &&
+      d.target_month_start <= dateStr &&
+      d.target_month_end >= dateStr
+    );
+    
+    if (!relevantDeadline) return false;
+    
+    const deadlineDate = parseISO(relevantDeadline.deadline_date);
+    deadlineDate.setHours(0, 0, 0, 0);
+    
+    // After deadline: notes-only mode (can only add notes)
+    if (today > deadlineDate) {
+      return 'notes-only';
+    }
+    return false;
+  };
+
+  // Save shift
+  const saveMutation = useMutation({
+    mutationFn: async (shiftData) => {
+      const existing = (shiftRequests || []).find(s => s.date === shiftData.date && !s.is_default);
+      let result;
+      if (existing) {
+        result = await updateRecord('ShiftRequest', existing.id, shiftData);
+      } else {
+        result = await insertRecord('ShiftRequest', {
+          ...shiftData,
+          store_id: selectedStoreId,
+          created_by: user?.email,
+        });
+      }
+
+      // 有給申請予定チェック時: PaidLeaveRequestを自動作成
+      if (shiftData.is_paid_leave && shiftData.is_day_off) {
+        try {
+          // 既存の同日有給申請を確認
+          const existingLeave = await fetchFiltered('PaidLeaveRequest', {
+            user_email: user?.email,
+            date: shiftData.date,
+          });
+          if (!existingLeave || existingLeave.length === 0) {
+            await insertRecord('PaidLeaveRequest', {
+              user_email: user?.email,
+              date: shiftData.date,
+              status: 'pending',
+              notes: shiftData.notes || 'シフト希望より有給申請',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          }
+        } catch (e) {
+          console.warn('有給申請の自動作成に失敗:', e);
+        }
+      } else if (!shiftData.is_paid_leave && shiftData.is_day_off) {
+        // 有給チェックを外した場合: pending状態の有給申請を削除
+        try {
+          const existingLeave = await fetchFiltered('PaidLeaveRequest', {
+            user_email: user?.email,
+            date: shiftData.date,
+          });
+          if (existingLeave && existingLeave.length > 0) {
+            const pendingLeave = existingLeave.find(l => l.status === 'pending');
+            if (pendingLeave) {
+              await deleteRecord('PaidLeaveRequest', pendingLeave.id);
+            }
+          }
+        } catch (e) {
+          console.warn('有給申請の自動削除に失敗:', e);
+        }
+      }
+
+      return result;
+    },
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['myPaidLeaveRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['paidLeaveRequests'] });
+      if (variables.is_paid_leave) {
+        toast.success('シフト希望を保存し、有給申請を提出しました');
+      } else {
+        toast.success('シフト希望を保存しました');
+      }
+      setShowFormDialog(false);
+    },
+    onError: (error) => {
+      toast.error('保存に失敗しました: ' + error.message);
+    },
+  });
+
+  // Delete shift
+  const deleteMutation = useMutation({
+    mutationFn: async (shiftId) => {
+      // 削除対象のシフトを取得
+      const targetShift = (shiftRequests || []).find(s => s.id === shiftId);
+      
+      // シフト希望を削除
+      await deleteRecord('ShiftRequest', shiftId);
+      
+      // 有給申請が紐付いている場合、自動取り消し
+      if (targetShift?.is_paid_leave && targetShift?.date && user?.email) {
+        try {
+          const existingLeave = await fetchFiltered('PaidLeaveRequest', {
+            user_email: user.email,
+            leave_date: targetShift.date,
+          });
+          if (existingLeave && existingLeave.length > 0) {
+            // pendingまたはapproved状態の有給申請を取り消し
+            for (const leave of existingLeave) {
+              if (leave.status === 'pending' || leave.status === 'approved') {
+                await deleteRecord('PaidLeaveRequest', leave.id);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('有給申請の自動取り消しに失敗:', e);
+        }
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['myPaidLeaveRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['paidLeaveRequests'] });
+      setSelectedDate(null);
+      toast.success('シフト希望を削除しました');
+      setShowFormDialog(false);
+    },
+    onError: (error) => {
+      toast.error('削除に失敗しました: ' + error.message);
+    },
+  });
+
+  const handleSaveShift = (shiftData) => {
+    const lockStatus = isDateLocked(shiftData.date);
+    if (lockStatus === true) {
+      toast.error('提出期限を過ぎているため編集できません');
+      return;
+    }
+    // notes-onlyモードの場合もsaveMutationを通す（備考のみ更新）
+    saveMutation.mutate(shiftData);
+  };
+
+  const handleDeleteShift = (shiftId) => {
+    const shift = (shiftRequests || []).find(s => s.id === shiftId && !s.is_default);
+    if (shift) {
+      const lockStatus = isDateLocked(shift.date);
+      if (lockStatus === true) {
+        toast.error('提出期限を過ぎているため削除できません');
+        return;
+      }
+      deleteMutation.mutate(shiftId);
+    }
+  };
+
+  // Get active deadline for current month
+  const getActiveDeadline = () => {
+    const monthStart = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
+    
+    return (deadlines || []).find(d => 
+      d.store_id === selectedStoreId &&
+      d.target_month_start <= monthStart &&
+      d.target_month_end >= monthStart
+    );
+  };
+
+  const activeDeadline = getActiveDeadline();
+
+  // Get simple deadline setting for current store
+  const getSimpleDeadline = () => {
+    return (appSettings || []).find(s => 
+      s.setting_key === 'submission_deadline' && 
+      s.store_id === selectedStoreId
+    );
+  };
+
+  const simpleDeadline = getSimpleDeadline();
+
+  // Copy shifts with period specification
+  const handleCopyShifts = async (sourceStart, sourceEnd, targetStart, targetEnd) => {
+    try {
+      const sourceStartDate = parseISO(sourceStart);
+      const targetStartDate = parseISO(targetStart);
+
+      // Fetch source shifts
+      const sourceShifts = await fetchFiltered('ShiftRequest', {
+        created_by: user?.email,
+        store_id: selectedStoreId,
+      });
+      const filteredSourceShifts = (sourceShifts || []).filter(s => s.date >= sourceStart && s.date <= sourceEnd);
+
+      if (filteredSourceShifts.length === 0) {
+        toast.error('コピー元にシフトがありません');
+        return;
+      }
+
+      const daysDiff = Math.round((targetStartDate - sourceStartDate) / (1000 * 60 * 60 * 24));
+      const newShifts = filteredSourceShifts.map(shift => {
+        const shiftDate = parseISO(shift.date);
+        const newDate = addDays(shiftDate, daysDiff);
+        const newDateStr = format(newDate, 'yyyy-MM-dd');
+        return {
+          date: newDateStr,
+          start_time: shift.start_time,
+          end_time: shift.end_time,
+          is_day_off: shift.is_day_off,
+          is_paid_leave: shift.is_paid_leave,
+          is_full_day_available: shift.is_full_day_available,
+          notes: shift.notes,
+          store_id: selectedStoreId,
+          created_by: user?.email,
+        };
+      }).filter(s => s.date >= targetStart && s.date <= targetEnd);
+
+      if (newShifts.length > 0) {
+        await insertRecords('ShiftRequest', newShifts);
+        queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
+        toast.success(`${newShifts.length}件のシフトをコピーしました`);
+        setCopyDialogOpen(false);
+      } else {
+        toast.error('コピー先の期間に該当するシフトがありません');
+      }
+    } catch (error) {
+      console.error('Copy error:', error);
+      toast.error('コピーに失敗しました');
+    }
+  };
+
+  // Reset shifts for a period
+  const handleResetShifts = async (startDate, endDate) => {
+    try {
+      const shiftsToDelete = (shiftRequests || []).filter(s => 
+        s.date >= startDate && 
+        s.date <= endDate &&
+        !s.is_default
+      );
+
+      if (shiftsToDelete.length === 0) {
+        toast.error('削除するシフトがありません');
+        return;
+      }
+
+      for (const shift of shiftsToDelete) {
+        await deleteRecord('ShiftRequest', shift.id);
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
+      toast.success(`${shiftsToDelete.length}件のシフトを削除しました`);
+      setResetDialogOpen(false);
+    } catch (error) {
+      console.error('Reset error:', error);
+      toast.error('削除に失敗しました');
+    }
+  };
+
+  // Repeat shift pattern
+  const handleRepeatShift = async (sourceDate, targetDates) => {
+    try {
+      const sourceShift = (shiftRequests || []).find(s => s.date === sourceDate && !s.is_default);
+      
+      if (!sourceShift) {
+        toast.error('コピー元のシフトがありません');
+        return;
+      }
+
+      const newShifts = targetDates.map(date => ({
+        date,
+        start_time: sourceShift.start_time,
+        end_time: sourceShift.end_time,
+        is_day_off: sourceShift.is_day_off,
+        is_paid_leave: sourceShift.is_paid_leave,
+        is_full_day_available: sourceShift.is_full_day_available,
+        notes: sourceShift.notes,
+        store_id: selectedStoreId,
+        created_by: user?.email,
+      }));
+
+      await insertRecords('ShiftRequest', newShifts);
+      queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
+      toast.success(`${newShifts.length}件のシフトを登録しました`);
+      setRepeatDialogOpen(false);
+    } catch (error) {
+      console.error('Repeat error:', error);
+      toast.error('登録に失敗しました');
+    }
+  };
+
+  const handleDateSelect = (date) => {
+    setSelectedDate(date);
+    setShowFormDialog(true);
+  };
+
+  const selectedShift = selectedDate 
+    ? (shiftRequests || []).find(s => s.date === format(selectedDate, 'yyyy-MM-dd'))
+    : null;
+
+  const lockStatus = selectedDate ? isDateLocked(format(selectedDate, 'yyyy-MM-dd')) : false;
+
+  // Safe filtered lists for ShiftList
+  const nonDefaultShifts = (shiftRequests || []).filter(s => !s.is_default);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+      {/* Header */}
+      <header className="bg-white/80 backdrop-blur-sm border-b border-slate-100 sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-6 py-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-200">
+                <CalendarCheck className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+                  シフト希望提出
+                </h1>
+                <p className="text-sm text-slate-500 mt-1">
+                  {user?.metadata?.display_name || user?.display_name || user?.full_name || user?.email || ''}
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              {activeDeadline && (
+                <div className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white px-4 py-2.5 rounded-lg shadow">
+                  <Clock className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-sm font-semibold">
+                    提出期限: {format(parseISO(activeDeadline.deadline_date), 'M月d日', { locale: ja })}まで
+                  </span>
+                </div>
+              )}
+              {simpleDeadline && !activeDeadline && (
+                <div className="flex items-center gap-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white px-4 py-2.5 rounded-lg shadow">
+                  <Clock className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-sm font-semibold">
+                    提出期限: {simpleDeadline.setting_value}
+                  </span>
+                </div>
+              )}
+              {/* 確定シフト表確認アイコン */}
+              <ConfirmedShiftViewer />
+            </div>
+          </div>
+
+          {/* Store Selector */}
+          {stores.length > 1 && (
+            <div className="mt-4 flex items-center gap-3">
+              <Store className="w-5 h-5 text-slate-400" />
+              <Select value={selectedStoreId} onValueChange={setSelectedStoreId}>
+                <SelectTrigger className="w-64 bg-white">
+                  <SelectValue placeholder="店舗を選択" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sortStoresByOrder(stores).map(store => (
+                    <SelectItem key={store.id} value={store.id}>
+                      {store.store_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-6xl mx-auto px-6 py-8">
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Calendar Section */}
+          <div className="lg:col-span-2">
+            <ShiftCalendar
+              currentMonth={currentMonth}
+              onMonthChange={setCurrentMonth}
+              shiftRequests={shiftRequests || []}
+              onSelectDate={handleDateSelect}
+              selectedDate={selectedDate}
+              enableQuickEntry={false}
+              storeId={selectedStoreId}
+              paidLeaveRequests={myPaidLeaveRequests}
+              events={events}
+            />
+
+            {/* Action Buttons */}
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button
+                onClick={() => setCopyDialogOpen(true)}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Copy className="w-4 h-4" />
+                期間コピー
+              </Button>
+              <Button
+                onClick={() => setRepeatDialogOpen(true)}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <Repeat className="w-4 h-4" />
+                繰り返し登録
+              </Button>
+              <Button
+                onClick={() => setResetDialogOpen(true)}
+                variant="outline"
+                className="flex items-center gap-2 text-red-600 border-red-200 hover:bg-red-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                期間削除
+              </Button>
+              {isAdminOrManager && (
+                <Button
+                  onClick={() => setDeadlineDialogOpen(true)}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <Settings className="w-4 h-4" />
+                  提出期限設定
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Shift List Section */}
+          <div className="lg:col-span-1">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              <h2 className="text-lg font-semibold text-slate-800 mb-4">
+                {format(currentMonth, 'yyyy年M月', { locale: ja })}のシフト
+              </h2>
+              <ShiftList
+                shiftRequests={nonDefaultShifts}
+                onSelectDate={(date) => {
+                  setSelectedDate(date);
+                  setShowFormDialog(true);
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Shift Form Dialog */}
+      <Dialog open={showFormDialog} onOpenChange={setShowFormDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-hide p-4 sm:p-6 md:p-8" aria-describedby={undefined}>
+          <DialogTitle className="sr-only">シフト希望入力</DialogTitle>
+          {selectedDate && (
+            <ShiftForm
+              date={selectedDate}
+              shift={selectedShift}
+              onSubmit={handleSaveShift}
+              onDelete={selectedShift && !selectedShift.is_default ? () => handleDeleteShift(selectedShift.id) : undefined}
+              onCancel={() => setShowFormDialog(false)}
+              canEdit={lockStatus !== true}
+              notesOnlyMode={lockStatus === 'notes-only'}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Copy Dialog */}
+      {copyDialogOpen && (
+        <ShiftCopyDialog
+          open={copyDialogOpen}
+          onOpenChange={setCopyDialogOpen}
+          onCopy={handleCopyShifts}
+          currentMonth={currentMonth}
+        />
+      )}
+
+      {/* Reset Dialog */}
+      {resetDialogOpen && (
+        <ShiftResetDialog
+          open={resetDialogOpen}
+          onOpenChange={setResetDialogOpen}
+          onReset={handleResetShifts}
+          currentMonth={currentMonth}
+        />
+      )}
+
+      {/* Repeat Dialog */}
+      {repeatDialogOpen && (
+        <RepeatShiftDialog
+          open={repeatDialogOpen}
+          onOpenChange={setRepeatDialogOpen}
+          onRepeat={handleRepeatShift}
+          shifts={nonDefaultShifts}
+        />
+      )}
+
+      {/* Deadline Setting Dialog */}
+      {isAdminOrManager && deadlineDialogOpen && (
+        <DeadlineSettingDialog
+          open={deadlineDialogOpen}
+          onOpenChange={setDeadlineDialogOpen}
+          storeId={selectedStoreId}
+        />
+      )}
+    </div>
+  );
+}
