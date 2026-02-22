@@ -1,23 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
-import { Shield, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2, CheckCircle } from 'lucide-react';
+import { Shield, Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 export default function Login() {
-  const { isInviteFlow, authError: contextAuthError, login: authLogin } = useAuth();
+  const { isInviteFlow, authError: contextAuthError, login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [mode, setMode] = useState('login'); // 'login' or 'reset'
+  const [mode, setMode] = useState('login');
   const [resetSent, setResetSent] = useState(false);
-  const [isProcessingInvite, setIsProcessingInvite] = useState(false);
 
-  // Detect invite/auth tokens in URL on mount
+  // Show context auth errors
+  useEffect(() => {
+    if (contextAuthError) {
+      setError(contextAuthError);
+    }
+  }, [contextAuthError]);
+
+  // Detect invite flow - show processing message briefly
+  const [isProcessingInvite, setIsProcessingInvite] = useState(false);
   useEffect(() => {
     const hashParams = new URLSearchParams(window.location.hash.substring(1));
     const queryParams = new URLSearchParams(window.location.search);
@@ -25,21 +32,10 @@ export default function Login() {
     
     if (hasAuthToken || isInviteFlow) {
       setIsProcessingInvite(true);
-      // Give Supabase client time to process the tokens
-      const timer = setTimeout(() => {
-        setIsProcessingInvite(false);
-      }, 10000); // 10 second timeout (matches AuthContext invite timeout)
+      const timer = setTimeout(() => setIsProcessingInvite(false), 8000);
       return () => clearTimeout(timer);
     }
   }, [isInviteFlow]);
-
-  // Show context auth errors
-  useEffect(() => {
-    if (contextAuthError) {
-      setError(contextAuthError);
-      setIsProcessingInvite(false);
-    }
-  }, [contextAuthError]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -47,15 +43,15 @@ export default function Login() {
     setError(null);
 
     try {
-      await authLogin(email.trim(), password);
-      // Login successful - AuthContext will handle the rest
+      await login(email.trim(), password);
+      // AuthContext handles the rest via onAuthStateChange
     } catch (err) {
       if (err.message?.includes('Invalid login credentials')) {
-        setError('メールアドレスまたはパスワードが正しくありません。');
+        setError('パスワードが違います');
       } else if (err.message?.includes('Email not confirmed')) {
         setError('メールアドレスの確認が完了していません。受信トレイをご確認ください。');
       } else {
-        setError(err.message || 'ログイン中にエラーが発生しました。もう一度お試しください。');
+        setError(err.message || 'ログイン中にエラーが発生しました。');
       }
     } finally {
       setIsLoading(false);
@@ -71,14 +67,12 @@ export default function Login() {
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: `${window.location.origin}/`,
       });
-
       if (resetError) {
         setError(resetError.message);
         return;
       }
-
       setResetSent(true);
-    } catch (err) {
+    } catch {
       setError('パスワードリセットメールの送信に失敗しました。');
     } finally {
       setIsLoading(false);
@@ -112,7 +106,6 @@ export default function Login() {
       <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
-            {/* Header */}
             <div className="text-center mb-8">
               <div className="w-16 h-16 rounded-2xl bg-indigo-600 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-indigo-200">
                 <Lock className="w-8 h-8 text-white" />
@@ -149,7 +142,6 @@ export default function Login() {
                     <span>{error}</span>
                   </div>
                 )}
-
                 <div className="space-y-2">
                   <Label htmlFor="reset-email" className="text-sm font-medium text-slate-700">
                     メールアドレス
@@ -167,19 +159,13 @@ export default function Login() {
                     />
                   </div>
                 </div>
-
                 <Button
                   type="submit"
                   disabled={isLoading || !email}
                   className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl"
                 >
-                  {isLoading ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    'リセットリンクを送信'
-                  )}
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'リセットリンクを送信'}
                 </Button>
-
                 <button
                   type="button"
                   onClick={() => { setMode('login'); setError(null); }}
@@ -213,9 +199,9 @@ export default function Login() {
           {/* Login Form */}
           <form onSubmit={handleLogin} className="space-y-5">
             {error && (
-              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>{error}</span>
+              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span className="whitespace-pre-wrap">{error}</span>
               </div>
             )}
 
@@ -283,11 +269,7 @@ export default function Login() {
               disabled={isLoading || !email || !password}
               className="w-full h-12 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-xl shadow-lg shadow-indigo-200 transition-all"
             >
-              {isLoading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                'ログイン'
-              )}
+              {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'ログイン'}
             </Button>
           </form>
 

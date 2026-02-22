@@ -299,7 +299,7 @@ export default function Home() {
         try {
           const existingLeave = await fetchFiltered('PaidLeaveRequest', {
             user_email: user.email,
-            leave_date: targetShift.date,
+            date: targetShift.date,
           });
           if (existingLeave && existingLeave.length > 0) {
             // pendingまたはapproved状態の有給申請を取り消し
@@ -438,11 +438,30 @@ export default function Home() {
       }
 
       for (const shift of shiftsToDelete) {
+        // 有給申請が紐付いている場合、自動取り消し
+        if (shift.is_paid_leave && user?.email) {
+          try {
+            const existingLeave = await fetchFiltered('PaidLeaveRequest', {
+              user_email: user.email,
+              date: shift.date,
+            });
+            if (existingLeave && existingLeave.length > 0) {
+              for (const leave of existingLeave) {
+                if (leave.status === 'pending' || leave.status === 'approved') {
+                  await deleteRecord('PaidLeaveRequest', leave.id);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('有給申請の自動取り消しに失敗:', e);
+          }
+        }
         await deleteRecord('ShiftRequest', shift.id);
       }
-
       queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
-      toast.success(`${shiftsToDelete.length}件のシフトを削除しました`);
+      queryClient.invalidateQueries({ queryKey: ['myPaidLeaveRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['paidLeaveRequests'] });
+      toast.success(`${shiftsToDelete.length}件のシフトを削除しました`);;
       setResetDialogOpen(false);
     } catch (error) {
       console.error('Reset error:', error);

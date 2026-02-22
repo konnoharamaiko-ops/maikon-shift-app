@@ -12,6 +12,45 @@
     <meta name="apple-mobile-web-app-title" content="シフト管理(テストB)">
     <meta name="theme-color" content="#ffffff">
     <title>舞昆シフト提出アプリ(テストB)</title>
+    
+    <!-- Service Worker キャッシュ強制クリア -->
+    <script>
+      // 古いService Workerのキャッシュを強制クリアして白い画面を防止
+      if ('serviceWorker' in navigator && 'caches' in window) {
+        // JSファイルの読み込みエラーを検知して自動リカバリ
+        window.addEventListener('error', function(e) {
+          if (e.message && e.message.includes('Failed to fetch dynamically imported module')) {
+            console.log('[SW Recovery] Module load error detected, clearing caches...');
+            caches.keys().then(function(names) {
+              return Promise.all(names.map(function(name) {
+                return caches.delete(name);
+              }));
+            }).then(function() {
+              console.log('[SW Recovery] Caches cleared, reloading...');
+              window.location.reload();
+            });
+          }
+        });
+        
+        // 起動時に古いプリキャッシュを削除（workbox-precache-v2キャッシュ内のJSファイル）
+        caches.keys().then(function(names) {
+          names.forEach(function(name) {
+            if (name.includes('precache')) {
+              caches.open(name).then(function(cache) {
+                cache.keys().then(function(requests) {
+                  requests.forEach(function(request) {
+                    if (request.url.endsWith('.js')) {
+                      cache.delete(request);
+                      console.log('[SW Cleanup] Removed precached JS:', request.url);
+                    }
+                  });
+                });
+              });
+            }
+          });
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

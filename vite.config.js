@@ -40,7 +40,9 @@ export default defineConfig({
       },
       workbox: {
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // プリキャッシュはHTML, CSS, 画像, フォントのみ（JSは除外）
+        // JSをプリキャッシュするとビルドハッシュ不一致で白い画面になる
+        globPatterns: ['**/*.{css,html,ico,png,svg,woff2}'],
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
@@ -48,7 +50,34 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api/],
         runtimeCaching: [
           {
-            // Supabase API - network first
+            // JSファイル - ネットワーク優先（キャッシュフォールバック）
+            // これにより、ビルドハッシュが変わっても常に最新のJSを取得
+            urlPattern: /\/assets\/.*\.js$/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'js-cache',
+              expiration: {
+                maxEntries: 30,
+                maxAgeSeconds: 24 * 60 * 60 // 24時間
+              },
+              networkTimeoutSeconds: 3
+            }
+          },
+          {
+            // CSSファイル - ネットワーク優先
+            urlPattern: /\/assets\/.*\.css$/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'css-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 24 * 60 * 60
+              },
+              networkTimeoutSeconds: 3
+            }
+          },
+          {
+            // Supabase API - ネットワーク優先
             urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
             handler: 'NetworkFirst',
             options: {

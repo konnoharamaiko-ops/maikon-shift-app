@@ -665,9 +665,8 @@ export default function ShiftTableView({ selectedMonth, users, workShifts, store
     if (selectedWeek >= weeksInMonth.length) return [];
     const weekStart = weeksInMonth[selectedWeek];
     const weekEnd = endOfWeek(weekStart, { weekStartsOn: effectiveWeekStart });
-    return eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(d => 
-      d >= startOfMonth(selectedMonth) && d <= endOfMonth(selectedMonth)
-    );
+    // 月を跨ぐ週も正しく表示するため、フィルタリングを削除
+    return eachDayOfInterval({ start: weekStart, end: weekEnd });
   };
 
   const weekDays = viewMode === 'week' ? getWeekDays() : [];

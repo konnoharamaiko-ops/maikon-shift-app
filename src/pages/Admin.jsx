@@ -436,6 +436,7 @@ export default function Admin() {
   const [selectedStoreId, setSelectedStoreId] = useState('all');
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [viewType, setViewType] = useState('month');
+  const [localWeekStart, setLocalWeekStart] = useState(0);
   const [selectedUserId, setSelectedUserId] = useState(null);
 
   // 管理者表示/非表示設定
@@ -479,14 +480,15 @@ export default function Admin() {
   });
 
   const { data: shiftRequests = [], isLoading } = useQuery({
-    queryKey: ['allShiftRequests', format(selectedMonth, 'yyyy-MM')],
+    queryKey: ['allShiftRequests', format(selectedMonth, 'yyyy-MM'), localWeekStart],
     queryFn: async () => {
       const { data: dbRequests } = await supabase.from('ShiftRequest').select('*');
       const { data: allUsers } = await supabase.from('User').select('*');
       
-      const monthStart = startOfMonth(selectedMonth);
-      const monthEnd = endOfMonth(selectedMonth);
-      const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+      // 月の範囲に加え、週始まり設定に応じた拡張範囲でデフォルトシフトを生成
+      const fetchStart = startOfWeek(startOfMonth(selectedMonth), { weekStartsOn: localWeekStart });
+      const fetchEnd = endOfWeek(endOfMonth(selectedMonth), { weekStartsOn: localWeekStart });
+      const days = eachDayOfInterval({ start: fetchStart, end: fetchEnd });
       const dayMap = {
         0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday', 6: 'saturday'
       };
@@ -573,8 +575,8 @@ export default function Admin() {
     rangeStart = startOfMonth(selectedMonth);
     rangeEnd = endOfMonth(selectedMonth);
   } else if (viewType === 'week') {
-    rangeStart = startOfWeek(selectedDate, { weekStartsOn: 0 });
-    rangeEnd = endOfWeek(selectedDate, { weekStartsOn: 0 });
+    rangeStart = startOfWeek(selectedDate, { weekStartsOn: localWeekStart });
+    rangeEnd = endOfWeek(selectedDate, { weekStartsOn: localWeekStart });
   } else {
     rangeStart = startOfDay(selectedDate);
     rangeEnd = endOfDay(selectedDate);
@@ -762,6 +764,17 @@ export default function Admin() {
                   <SelectItem value="month">月ごと</SelectItem>
                 </SelectContent>
               </Select>
+              {(viewType === 'week' || viewType === 'day') && (
+                <Select value={String(localWeekStart)} onValueChange={(v) => setLocalWeekStart(parseInt(v))}>
+                  <SelectTrigger className="w-[110px] h-9 text-xs sm:text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">月曜始まり</SelectItem>
+                    <SelectItem value="0">日曜始まり</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3">

@@ -1,35 +1,7 @@
-import React, { createContext, useState, useContext, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { supabase } from '@/api/supabaseClient';
 
 const AuthContext = createContext();
-
-// Cache profile in sessionStorage for instant restore
-const PROFILE_CACHE_KEY = 'shift_app_profile_cache';
-
-const getCachedProfile = (email) => {
-  try {
-    const cached = sessionStorage.getItem(PROFILE_CACHE_KEY);
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (parsed.email === email && Date.now() - parsed.timestamp < 10 * 60 * 1000) {
-        return parsed.profile;
-      }
-    }
-  } catch { /* ignore */ }
-  return null;
-};
-
-const setCachedProfile = (email, profile) => {
-  try {
-    sessionStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({
-      email, profile, timestamp: Date.now(),
-    }));
-  } catch { /* ignore */ }
-};
-
-const clearCachedProfile = () => {
-  try { sessionStorage.removeItem(PROFILE_CACHE_KEY); } catch { /* ignore */ }
-};
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -38,190 +10,124 @@ export const AuthProvider = ({ children }) => {
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState(null);
   const [isInviteFlow, setIsInviteFlow] = useState(false);
-  const initRef = useRef(false);
-  const profileRef = useRef(null);
-  const sessionHandledRef = useRef(false);
+  const isMountedRef = useRef(true);
 
-  // Fetch User record with timeout and retry
-  const fetchUserRecord = useCallback(async (email, timeoutMs = 10000) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // Fetch user profile - standalone function, no dependencies
+  const fetchProfile = async (email) => {
     try {
-      console.log('[Auth] Fetching user record for:', email, 'timeout:', timeoutMs);
+      console.log('[Auth] Fetching profile for:', email);
       const { data, error } = await supabase
-        .from('User').select('*').eq('email', email).single()
-        .abortSignal(controller.signal);
-      clearTimeout(timeoutId);
+        .from('User').select('*').eq('email', email).single();
       if (error) {
-        console.warn('[Auth] fetchUserRecord error:', error.code, error.message);
-      } else {
-        console.log('[Auth] fetchUserRecord success:', data?.full_name);
+        console.log('[Auth] Profile query error:', error.code, error.message);
+        return null;
       }
-      return { data, error };
+      console.log('[Auth] Profile found:', data?.full_name);
+      return data;
     } catch (err) {
-      clearTimeout(timeoutId);
-      console.warn('[Auth] fetchUserRecord exception:', err.name, err.message);
-      return { data: null, error: err };
+      console.log('[Auth] Profile exception:', err.message);
+      return null;
     }
-  }, []);
+  };
 
-  // Fetch User record with retry logic
-  const fetchUserRecordWithRetry = useCallback(async (email, maxRetries = 3, timeoutMs = 10000) => {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      console.log(`[Auth] fetchUserRecord attempt ${attempt}/${maxRetries}`);
-      const result = await fetchUserRecord(email, timeoutMs);
-      
-      if (result.data) {
-        return result;
-      }
-      
-      // If it's a "not found" error (PGRST116), don't retry
-      if (result.error?.code === 'PGRST116') {
-        return result;
-      }
-      
-      // Wait before retry (exponential backoff)
-      if (attempt < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-        console.log(`[Auth] Retrying in ${delay}ms...`);
-        await new Promise(r => setTimeout(r, delay));
-      }
-    }
-    
-    // All retries failed
-    console.warn('[Auth] All retry attempts failed for:', email);
-    return { data: null, error: new Error('All retry attempts failed') };
-  }, [fetchUserRecord]);
-
-  // Create User from PendingInvitation (invite flow only)
-  const createUserFromInvitation = useCallback(async (email) => {
+  // Create user from PendingInvitation
+  const createFromInvitation = async (email) => {
     try {
-      const { data: pendingData, error: pendingError } = await supabase
+      const { data: pending } = await supabase
         .from('PendingInvitation').select('*').eq('email', email).limit(1).single();
-      
-      if (pendingError || !pendingData) return null;
+      if (!pending) return null;
 
-      console.log('[Auth] Found PendingInvitation, creating User for:', email);
-      const newUserRecord = {
+      console.log('[Auth] Creating user from invitation:', email);
+      const newUser = {
         id: crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '').slice(0, 24) : Math.random().toString(36).slice(2, 26),
         email,
-        full_name: pendingData.full_name,
-        user_role: pendingData.role || 'user',
-        store_ids: pendingData.store_ids || (pendingData.store_id ? [pendingData.store_id] : []),
+        full_name: pending.full_name,
+        user_role: pending.role || 'user',
+        store_ids: pending.store_ids || (pending.store_id ? [pending.store_id] : []),
         is_active: true,
-        metadata: { display_name: pendingData.full_name, employment_type: 'part_time' },
+        metadata: { display_name: pending.full_name, employment_type: 'part_time' },
       };
       
-      const { data: createdUser, error: createError } = await supabase
-        .from('User').insert(newUserRecord).select().single();
+      const { data: created, error } = await supabase
+        .from('User').insert(newUser).select().single();
       
-      if (createError) {
-        if (createError.code === '23505' || createError.message?.includes('duplicate')) {
-          const { data: existingUser } = await supabase
-            .from('User').select('*').eq('email', email).single();
-          if (existingUser) {
-            try { await supabase.from('PendingInvitation').delete().eq('id', pendingData.id); } catch {}
-            return existingUser;
-          }
-        }
+      if (error) {
+        if (error.code === '23505') return await fetchProfile(email);
         return null;
       }
       
-      if (createdUser) {
-        console.log('[Auth] User created:', createdUser.full_name);
-        try { await supabase.from('PendingInvitation').delete().eq('id', pendingData.id); } catch {}
-        return createdUser;
-      }
-    } catch (err) {
-      console.warn('[Auth] createUserFromInvitation error:', err.message);
+      try { await supabase.from('PendingInvitation').delete().eq('id', pending.id); } catch {}
+      return created;
+    } catch {
+      return null;
     }
-    return null;
-  }, []);
+  };
 
-  // Fetch profile - cache first, then network with retry
-  const fetchProfile = useCallback(async (email, options = {}) => {
-    const { isInvite = false } = options;
+  // Load profile and set state
+  const loadAndSetProfile = async (authUser) => {
+    const email = authUser.email;
     
-    console.log('[Auth] fetchProfile called for:', email, 'isInvite:', isInvite);
-    
-    // INSTANT: Check sessionStorage cache
-    const cached = getCachedProfile(email);
-    if (cached) {
-      console.log('[Auth] Profile from cache:', cached.full_name);
-      setProfile(cached);
-      profileRef.current = cached;
-      // Background refresh (no abort, longer timeout)
-      fetchUserRecord(email, 15000).then(({ data }) => {
-        if (data) { setProfile(data); profileRef.current = data; setCachedProfile(email, data); }
-      }).catch(() => {});
-      return cached;
+    // Attempt 1: fetch from User table
+    let profileData = await fetchProfile(email);
+
+    // Attempt 2: if no profile, always try to create from PendingInvitation
+    if (!profileData) {
+      console.log('[Auth] No profile found, trying PendingInvitation...');
+      profileData = await createFromInvitation(email);
     }
 
-    // NETWORK: Fetch from Supabase with retry
-    const { data, error } = await fetchUserRecordWithRetry(email, 3, 10000);
-    
-    if (!error && data) {
-      console.log('[Auth] Profile loaded:', data.full_name);
-      setProfile(data);
-      profileRef.current = data;
-      setCachedProfile(email, data);
-      return data;
+    // Attempt 3: retry fetch after 1s (in case of race condition)
+    if (!profileData) {
+      console.log('[Auth] Still no profile, retrying in 1s...');
+      await new Promise(r => setTimeout(r, 1000));
+      profileData = await fetchProfile(email);
     }
-    
-    // No User record found - try invite flow
-    if (error?.code === 'PGRST116' && isInvite) {
-      const createdUser = await createUserFromInvitation(email);
-      if (createdUser) {
-        setProfile(createdUser);
-        profileRef.current = createdUser;
-        setCachedProfile(email, createdUser);
-        return createdUser;
-      }
-    }
-    
-    console.warn('[Auth] fetchProfile failed for:', email, 'error:', error?.message || error?.code);
-    return null;
-  }, [fetchUserRecord, fetchUserRecordWithRetry, createUserFromInvitation]);
 
+    if (!isMountedRef.current) return false;
+
+    if (profileData) {
+      console.log('[Auth] Login complete:', profileData.full_name);
+      setUser(authUser);
+      setProfile(profileData);
+      setIsAuthenticated(true);
+      setIsLoadingAuth(false);
+      setAuthError(null);
+      setIsInviteFlow(false);
+      return true;
+    } else {
+      console.log('[Auth] No profile found');
+      setAuthError('このメールアドレスは登録されていません。\n管理者からの招待を受けてからログインしてください。');
+      try { await supabase.auth.signOut(); } catch {}
+      setUser(null);
+      setProfile(null);
+      setIsAuthenticated(false);
+      setIsLoadingAuth(false);
+      setIsInviteFlow(false);
+      return false;
+    }
+  };
+
+  // Initialize: check existing session on mount
   useEffect(() => {
-    if (initRef.current) return;
-    initRef.current = true;
+    isMountedRef.current = true;
 
-    let isMounted = true;
-
-    console.log('[Auth] Initializing...');
-
-    // Force Service Worker update on load
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistration().then(reg => {
-        if (reg) reg.update().catch(() => {});
-      }).catch(() => {});
-    }
-
-    // Detect invite/signup flow from URL
+    // Detect invite flow from URL
     const hashParams = new URLSearchParams(window.location.hash.substring(1));
     const queryParams = new URLSearchParams(window.location.search);
-    const hasAuthTokenInHash = hashParams.has('access_token') || hashParams.has('refresh_token');
-    const hasAuthCodeInQuery = queryParams.has('code');
-    const hasTokenHashInQuery = queryParams.has('token_hash');
+    const hasAuthToken = hashParams.has('access_token') || queryParams.has('code') || queryParams.has('token_hash');
     const authType = hashParams.get('type') || queryParams.get('type');
-    const isInviteOrSignup = hasAuthTokenInHash || hasAuthCodeInQuery || hasTokenHashInQuery;
-    
-    if (isInviteOrSignup) {
-      console.log('[Auth] Auth tokens in URL, type:', authType);
-      if (authType === 'invite' || authType === 'signup' || authType === 'magiclink') {
-        setIsInviteFlow(true);
-      }
-    }
+    const isInvite = hasAuthToken && (authType === 'invite' || authType === 'signup' || authType === 'magiclink');
+
+    if (isInvite) setIsInviteFlow(true);
 
     // Handle token_hash verification
-    if (hasTokenHashInQuery) {
+    if (queryParams.has('token_hash')) {
       const tokenHash = queryParams.get('token_hash');
       const type = queryParams.get('type') || 'invite';
       supabase.auth.verifyOtp({ token_hash: tokenHash, type })
         .then(({ error }) => {
-          if (error && isMounted) {
-            setAuthError('招待リンクの検証に失敗しました。リンクの有効期限が切れている可能性があります。');
+          if (error && isMountedRef.current) {
+            setAuthError('招待リンクの検証に失敗しました。');
             setIsLoadingAuth(false);
           } else {
             window.history.replaceState({}, document.title, window.location.pathname);
@@ -229,139 +135,63 @@ export const AuthProvider = ({ children }) => {
         });
     }
 
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('[Auth] State change:', event, session?.user?.email);
-      if (!isMounted) return;
+    // Check initial session
+    const initAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        console.log('[Auth] Initial session:', session?.user?.email || 'none');
+
+        if (session?.user) {
+          // Clean URL tokens
+          if (hasAuthToken) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+          await loadAndSetProfile(session.user);
+        } else {
+          if (isMountedRef.current) {
+            setIsLoadingAuth(false);
+          }
+        }
+      } catch (err) {
+        console.log('[Auth] Init error:', err.message);
+        if (isMountedRef.current) {
+          setIsLoadingAuth(false);
+        }
+      }
+    };
+
+    initAuth();
+
+    // Listen for auth state changes (sign out, token refresh only)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('[Auth] Event:', event);
+      if (!isMountedRef.current) return;
 
       if (event === 'SIGNED_OUT') {
-        sessionHandledRef.current = false;
         setUser(null);
         setProfile(null);
-        profileRef.current = null;
         setIsAuthenticated(false);
         setIsLoadingAuth(false);
         setIsInviteFlow(false);
-        clearCachedProfile();
-        return;
       }
 
-      // For TOKEN_REFRESHED, just update the user but don't re-fetch profile
-      if (event === 'TOKEN_REFRESHED') {
-        if (session?.user) {
-          setUser(session.user);
-        }
-        return;
-      }
-
-      // Skip duplicate SIGNED_IN handling if profile already loaded
-      if (sessionHandledRef.current && session?.user?.email) {
-        console.log('[Auth] Session already handled, profileRef:', profileRef.current?.full_name);
-        if (profileRef.current) {
-          // Profile already loaded, ensure authenticated state
-          setIsAuthenticated(true);
-          setIsLoadingAuth(false);
-          return;
-        }
-        // Profile not loaded yet, try again
-        console.log('[Auth] Profile missing, retrying fetch...');
-      }
-
-      if (session?.user) {
-        sessionHandledRef.current = true;
+      if (event === 'TOKEN_REFRESHED' && session?.user) {
         setUser(session.user);
-        setIsLoadingAuth(true);
-        
-        console.log('[Auth] Fetching profile for:', session.user.email);
-        let profileData = await fetchProfile(session.user.email, { 
-          isInvite: isInviteOrSignup
-        });
-        
-        if (!isMounted) return;
-        
-        // For invite flow, retry once if no profile found
-        if (!profileData && isInviteOrSignup) {
-          console.log('[Auth] Invite flow: retrying after 2s...');
-          await new Promise(r => setTimeout(r, 2000));
-          profileData = await fetchProfile(session.user.email, { 
-            isInvite: true
-          });
-          if (!isMounted) return;
-        }
-        
-        // For normal login, also retry once if failed
-        if (!profileData && !isInviteOrSignup) {
-          console.log('[Auth] Normal login: retrying after 2s...');
-          await new Promise(r => setTimeout(r, 2000));
-          profileData = await fetchProfile(session.user.email, { 
-            isInvite: false
-          });
-          if (!isMounted) return;
-        }
-        
-        if (!profileData) {
-          // Unregistered user - sign out
-          console.error('[Auth] Profile not found after all retries, signing out');
-          setAuthError('このメールアドレスは登録されていません。\n管理者からの招待を受けてからログインしてください。');
-          try { await supabase.auth.signOut(); } catch {}
-          setUser(null);
-          setProfile(null);
-          profileRef.current = null;
-          setIsAuthenticated(false);
-          setIsLoadingAuth(false);
-          setIsInviteFlow(false);
-          sessionHandledRef.current = false;
-          clearCachedProfile();
-          return;
-        }
-        
-        // Clean URL tokens
-        if (hasAuthTokenInHash || hasAuthCodeInQuery || hasTokenHashInQuery) {
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }
-        
-        console.log('[Auth] Authentication complete:', profileData.full_name);
-        setIsAuthenticated(true);
-        setIsLoadingAuth(false);
-        setIsInviteFlow(false);
-      } else {
-        // No session
-        setUser(null);
-        setProfile(null);
-        profileRef.current = null;
-        setIsAuthenticated(false);
-        setIsLoadingAuth(false);
       }
+
+      // We do NOT handle SIGNED_IN or INITIAL_SESSION here
+      // Login is handled by the login() function directly
+      // Initial session is handled by initAuth() above
     });
 
-    // Safety timeout: show login screen if nothing happens
-    const safetyMs = isInviteOrSignup ? 15000 : 8000;
-    const safetyTimeoutId = setTimeout(() => {
-      if (isMounted) {
-        console.warn(`[Auth] Safety timeout after ${safetyMs / 1000}s`);
-        setIsLoadingAuth(false);
-      }
-    }, safetyMs);
-
     return () => {
-      isMounted = false;
-      clearTimeout(safetyTimeoutId);
+      isMountedRef.current = false;
       subscription.unsubscribe();
     };
-  }, [fetchProfile]);
+  }, []);
 
-  const logout = async () => {
-    sessionHandledRef.current = false;
-    clearCachedProfile();
-    try { await supabase.auth.signOut(); } catch {}
-    setUser(null);
-    setProfile(null);
-    profileRef.current = null;
-    setIsAuthenticated(false);
-  };
-
+  // Login function - handles everything directly
   const login = async (email, password) => {
-    sessionHandledRef.current = false;
     setIsLoadingAuth(true);
     setAuthError(null);
     try {
@@ -370,11 +200,21 @@ export const AuthProvider = ({ children }) => {
         setIsLoadingAuth(false);
         throw error;
       }
+
+      // Directly load profile - don't rely on onAuthStateChange
+      await loadAndSetProfile(data.user);
       return data;
     } catch (error) {
       setIsLoadingAuth(false);
       throw error;
     }
+  };
+
+  const logout = async () => {
+    try { await supabase.auth.signOut(); } catch {}
+    setUser(null);
+    setProfile(null);
+    setIsAuthenticated(false);
   };
 
   // Combined user object
@@ -387,14 +227,6 @@ export const AuthProvider = ({ children }) => {
     user_role: profile.user_role || 'user',
     store_ids: profile.store_ids || [],
     email: profile.email || user?.email,
-  } : user ? {
-    id: user.id,
-    email: user.email,
-    full_name: user.email,
-    display_name: user.email,
-    user_role: 'user',
-    store_ids: [],
-    metadata: {},
   } : null;
 
   return (
@@ -408,7 +240,14 @@ export const AuthProvider = ({ children }) => {
       isInviteFlow,
       logout,
       login,
-      refreshProfile: () => user?.email ? fetchProfile(user.email) : Promise.resolve(null),
+      refreshProfile: async () => {
+        if (!user?.email) return null;
+        try {
+          const { data } = await supabase.from('User').select('*').eq('email', user.email).single();
+          if (data) setProfile(data);
+          return data;
+        } catch { return null; }
+      },
     }}>
       {children}
     </AuthContext.Provider>

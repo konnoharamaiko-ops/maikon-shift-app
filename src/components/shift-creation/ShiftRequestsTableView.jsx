@@ -236,18 +236,23 @@ export default function ShiftRequestsTableView({ selectedMonth, users, storeId, 
     return saved || 'month';
   });
   
+  // Week start day setting: local override > store setting
+  const storeWeekStart = store?.week_start_day ?? 0;
+  const [localWeekStart, setLocalWeekStart] = useState(null);
+  const effectiveWeekStart = localWeekStart !== null ? localWeekStart : storeWeekStart;
+
   // Calculate the week index that contains today
   const getInitialWeekIndex = () => {
     const today = new Date();
     const weeks = eachWeekOfInterval({
       start: startOfMonth(selectedMonth),
       end: endOfMonth(selectedMonth)
-    }, { locale: ja });
+    }, { weekStartsOn: effectiveWeekStart });
     
     if (isSameMonth(today, selectedMonth)) {
       for (let i = 0; i < weeks.length; i++) {
         const weekStart = weeks[i];
-        const weekEnd = endOfWeek(weekStart, { locale: ja });
+        const weekEnd = endOfWeek(weekStart, { weekStartsOn: effectiveWeekStart });
         if (isWithinInterval(today, { start: weekStart, end: weekEnd })) {
           return i;
         }
@@ -288,15 +293,14 @@ export default function ShiftRequestsTableView({ selectedMonth, users, storeId, 
   const weeksInMonth = eachWeekOfInterval({
     start: startOfMonth(selectedMonth),
     end: endOfMonth(selectedMonth)
-  }, { locale: ja });
+  }, { weekStartsOn: effectiveWeekStart });
 
   const getWeekDays = () => {
     if (selectedWeek >= weeksInMonth.length) return [];
     const weekStart = weeksInMonth[selectedWeek];
-    const weekEnd = endOfWeek(weekStart, { locale: ja });
-    return eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(d => 
-      d >= startOfMonth(selectedMonth) && d <= endOfMonth(selectedMonth)
-    );
+    const weekEnd = endOfWeek(weekStart, { weekStartsOn: effectiveWeekStart });
+    // 月を跨ぐ週も正しく表示するため、フィルタリングを削除
+    return eachDayOfInterval({ start: weekStart, end: weekEnd });
   };
 
   const weekDays = viewMode === 'week' ? getWeekDays() : [];
@@ -424,6 +428,18 @@ export default function ShiftRequestsTableView({ selectedMonth, users, storeId, 
                 <SelectItem value="day">日ごと</SelectItem>
               </SelectContent>
             </Select>
+
+            {(viewMode === 'week' || viewMode === 'day') && (
+              <Select value={String(effectiveWeekStart)} onValueChange={(v) => setLocalWeekStart(parseInt(v))}>
+                <SelectTrigger className="w-[110px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">月曜始まり</SelectItem>
+                  <SelectItem value="0">日曜始まり</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
             
             {viewMode === 'week' && (
               <div className="flex items-center gap-1">

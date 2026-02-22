@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format, startOfMonth, endOfMonth, parseISO, eachDayOfInterval } from 'date-fns';
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, parseISO, eachDayOfInterval } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { Shield, Calendar, ChevronLeft, ChevronRight, Store, Layout, Sparkles, Wand2, Copy, RotateCcw, Grid, List, GripVertical, ArrowRight, CheckCircle, Users, FileSpreadsheet, ClipboardList } from 'lucide-react';
 import ExportButton from '@/components/export/ExportButton';
@@ -170,6 +170,8 @@ export default function ShiftCreation() {
   }, [user, stores, selectedStoreId]);
 
   const primaryStoreId = selectedStoreId;
+  const primaryStore = stores.find(s => s.id === primaryStoreId);
+  const effectiveWeekStart = primaryStore?.week_start_day ?? 0;
 
   const handleCopyShifts = async () => {
     if (!window.confirm('前月のシフトを今月にコピーしますか？')) return;
@@ -321,20 +323,22 @@ export default function ShiftCreation() {
   };
 
   const { data: shiftRequests = [] } = useQuery({
-    queryKey: ['shiftRequests', primaryStoreId, format(selectedMonth, 'yyyy-MM')],
+    queryKey: ['shiftRequests', primaryStoreId, format(selectedMonth, 'yyyy-MM'), effectiveWeekStart],
     queryFn: async () => {
       if (!primaryStoreId) return [];
       
-      // Get shift requests for the specific month to reduce data transfer
+      // Get shift requests - extend range to cover cross-month weeks
       const monthStart = startOfMonth(selectedMonth);
       const monthEnd = endOfMonth(selectedMonth);
+      const fetchStart = startOfWeek(monthStart, { weekStartsOn: effectiveWeekStart });
+      const fetchEnd = endOfWeek(monthEnd, { weekStartsOn: effectiveWeekStart });
       
       const { data: dbRequests, error } = await supabase
         .from('ShiftRequest')
         .select('*')
         .eq('store_id', primaryStoreId)
-        .gte('date', format(monthStart, 'yyyy-MM-dd'))
-        .lte('date', format(monthEnd, 'yyyy-MM-dd'));
+        .gte('date', format(fetchStart, 'yyyy-MM-dd'))
+        .lte('date', format(fetchEnd, 'yyyy-MM-dd'));
       
       if (error) throw error;
       
@@ -342,7 +346,7 @@ export default function ShiftCreation() {
       const storeUsers = users;
       
       // Generate default shifts for each user based on their default_shift_settings
-      const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+      const days = eachDayOfInterval({ start: fetchStart, end: fetchEnd });
       const dayMap = {
         0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday', 6: 'saturday'
       };
@@ -419,18 +423,21 @@ export default function ShiftCreation() {
   });
 
   const { data: workShifts = [] } = useQuery({
-    queryKey: ['workShifts', primaryStoreId, format(selectedMonth, 'yyyy-MM')],
+    queryKey: ['workShifts', primaryStoreId, format(selectedMonth, 'yyyy-MM'), effectiveWeekStart],
     queryFn: async () => {
       if (!primaryStoreId) return [];
       const monthStart = startOfMonth(selectedMonth);
       const monthEnd = endOfMonth(selectedMonth);
+      // 週表示で月をまたぐ週のデータも取得するため、範囲を拡張
+      const fetchStart = startOfWeek(monthStart, { weekStartsOn: effectiveWeekStart });
+      const fetchEnd = endOfWeek(monthEnd, { weekStartsOn: effectiveWeekStart });
       
       const { data, error } = await supabase
         .from('WorkShift')
         .select('*')
         .eq('store_id', primaryStoreId)
-        .gte('date', format(monthStart, 'yyyy-MM-dd'))
-        .lte('date', format(monthEnd, 'yyyy-MM-dd'));
+        .gte('date', format(fetchStart, 'yyyy-MM-dd'))
+        .lte('date', format(fetchEnd, 'yyyy-MM-dd'));
         
       if (error) throw error;
       return data || [];
@@ -491,9 +498,12 @@ export default function ShiftCreation() {
     );
   }
 
+  // 週表示で月をまたぐ週のデータも含めるため、フィルタ範囲を拡張
   const monthlyRequests = shiftRequests.filter(req => {
     const reqDate = parseISO(req.date);
-    return reqDate >= startOfMonth(selectedMonth) && reqDate <= endOfMonth(selectedMonth);
+    const rangeStart = startOfWeek(startOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart });
+    const rangeEnd = endOfWeek(endOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart });
+    return reqDate >= rangeStart && reqDate <= rangeEnd;
   });
 
   const handleRequestClick = (request, date) => {
@@ -517,9 +527,30 @@ export default function ShiftCreation() {
 
   const handleDeleteRequest = async (id) => {
     try {
+      // 有給申請が紐付いている場合、自動取り消し
+      const targetShift = shiftRequests?.find(s => s.id === id);
+      if (targetShift?.is_paid_leave && targetShift?.date) {
+        try {
+          const existingLeave = await fetchFiltered('PaidLeaveRequest', {
+            user_email: targetShift.created_by,
+            date: targetShift.date,
+          });
+          if (existingLeave && existingLeave.length > 0) {
+            for (const leave of existingLeave) {
+              if (leave.status === 'pending' || leave.status === 'approved') {
+                await deleteRecord('PaidLeaveRequest', leave.id);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('有給申請の自動取り消しに失敗:', e);
+        }
+      }
       await deleteRecord('ShiftRequest', id);
       toast.success('シフト希望を削除しました');
       queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['myPaidLeaveRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['paidLeaveRequests'] });
       setEditRequestDialogOpen(false);
       setEditingRequest(null);
     } catch (error) {

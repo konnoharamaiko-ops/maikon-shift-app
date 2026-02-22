@@ -128,6 +128,7 @@ function UserAvatar({ user: u, isSelected, onClick, shiftSummary, isMe }) {
 
 // ============ USER CALENDAR COMPONENT ============
 function UserCalendarView({ userEmail, userName, allShiftRequests, currentMonth, onEditShift, isMe, isAdminOrManager, paidLeaveRequests, selectedStore }) {
+  // カレンダービューは常に日曜始まり固定
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 0 });
@@ -214,14 +215,18 @@ function UserCalendarView({ userEmail, userName, allShiftRequests, currentMonth,
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         {/* Week header */}
         <div className="grid grid-cols-7 bg-slate-50 border-b border-slate-200">
-          {weekDays.map((day, i) => (
-            <div key={day} className={cn(
-              "text-center py-1.5 sm:py-2 text-[10px] sm:text-xs font-bold",
-              i === 0 ? "text-red-500" : i === 6 ? "text-blue-500" : "text-slate-500"
-            )}>
-              {day}
-            </div>
-          ))}
+          {weekDays.map((day, i) => {
+            const isSunday = day === '日';
+            const isSaturday = day === '土';
+            return (
+              <div key={day} className={cn(
+                "text-center py-1.5 sm:py-2 text-[10px] sm:text-xs font-bold",
+                isSunday ? "text-red-500" : isSaturday ? "text-blue-500" : "text-slate-500"
+              )}>
+                {day}
+              </div>
+            );
+          })}
         </div>
 
         {/* Days grid */}
@@ -267,7 +272,7 @@ function UserCalendarView({ userEmail, userName, allShiftRequests, currentMonth,
                 {/* Shift content */}
                 {isCurrentMonth && shift && (
                   <div className="space-y-0.5 px-0.5">
-                    {paidLeave && (
+                    {paidLeave && (isAdminOrManager || isMe) && (
                       <div className={cn(
                         "text-[7px] sm:text-[9px] font-bold text-center rounded px-0.5 py-px leading-tight",
                         paidLeave.status === 'approved' ? "bg-emerald-500 text-white" : "bg-amber-300 text-amber-900"
@@ -346,27 +351,8 @@ export default function ShiftOverview() {
   const [expandedDate, setExpandedDate] = useState(null);
   const [selectedUserId, setSelectedUserId] = useState(null);
 
-  // Week selector
-  const getInitialWeekIndex = () => {
-    const today = new Date();
-    const weeks = eachWeekOfInterval({
-      start: startOfMonth(currentDate),
-      end: endOfMonth(currentDate)
-    }, { locale: ja });
-    if (isSameMonth(today, currentDate)) {
-      for (let i = 0; i < weeks.length; i++) {
-        const weekStart = weeks[i];
-        const weekEnd = endOfWeek(weekStart, { locale: ja });
-        if (isWithinInterval(today, { start: weekStart, end: weekEnd })) return i;
-      }
-    }
-    if (currentDate > today) return 0;
-    return Math.max(0, weeks.length - 1);
-  };
-  
-  const [selectedWeek, setSelectedWeek] = useState(getInitialWeekIndex);
+  const [selectedWeek, setSelectedWeek] = useState(0);
 
-  useEffect(() => { setSelectedWeek(getInitialWeekIndex()); }, [currentDate]);
   useEffect(() => { sessionStorage.setItem('shiftOverviewViewMode', viewMode); }, [viewMode]);
 
   const isAdmin = user?.user_role === 'admin' || user?.role === 'admin';
@@ -391,6 +377,31 @@ export default function ShiftOverview() {
   }, [stores, user, isAdmin]);
 
   const selectedStore = stores.find(s => s.id === selectedStoreId);
+
+  // Week start day setting: local override > store setting
+  const storeWeekStart = selectedStore?.week_start_day ?? 0;
+  const [localWeekStart, setLocalWeekStart] = useState(null);
+  const effectiveWeekStart = localWeekStart !== null ? localWeekStart : storeWeekStart;
+
+  // Week selector (must be after effectiveWeekStart is defined)
+  const getInitialWeekIndex = useCallback(() => {
+    const today = new Date();
+    const weeks = eachWeekOfInterval({
+      start: startOfMonth(currentDate),
+      end: endOfMonth(currentDate)
+    }, { weekStartsOn: effectiveWeekStart });
+    if (isSameMonth(today, currentDate)) {
+      for (let i = 0; i < weeks.length; i++) {
+        const ws = weeks[i];
+        const we = endOfWeek(ws, { weekStartsOn: effectiveWeekStart });
+        if (isWithinInterval(today, { start: ws, end: we })) return i;
+      }
+    }
+    if (currentDate > today) return 0;
+    return Math.max(0, weeks.length - 1);
+  }, [currentDate, effectiveWeekStart]);
+
+  useEffect(() => { setSelectedWeek(getInitialWeekIndex()); }, [currentDate, effectiveWeekStart, getInitialWeekIndex]);
 
   // Fetch all users
   const { data: allUsers = [] } = useQuery({ queryKey: ['allUsers'], queryFn: () => fetchAll('User') });
@@ -474,29 +485,30 @@ export default function ShiftOverview() {
 
   const selectedMonth = useMemo(() => startOfMonth(currentDate), [currentDate]);
   const monthDays = useMemo(() => eachDayOfInterval({ start: startOfMonth(selectedMonth), end: endOfMonth(selectedMonth) }), [selectedMonth]);
-  const weeksInMonth = useMemo(() => eachWeekOfInterval({ start: startOfMonth(selectedMonth), end: endOfMonth(selectedMonth) }, { locale: ja }), [selectedMonth]);
+  const weeksInMonth = useMemo(() => eachWeekOfInterval({ start: startOfMonth(selectedMonth), end: endOfMonth(selectedMonth) }, { weekStartsOn: effectiveWeekStart }), [selectedMonth, effectiveWeekStart]);
 
   const getWeekDays = () => {
     if (selectedWeek >= weeksInMonth.length) return [];
     const weekStart = weeksInMonth[selectedWeek];
-    const weekEnd = endOfWeek(weekStart, { locale: ja });
-    return eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(d =>
-      d >= startOfMonth(selectedMonth) && d <= endOfMonth(selectedMonth)
-    );
+    const weekEnd = endOfWeek(weekStart, { weekStartsOn: effectiveWeekStart });
+    // 月を跨ぐ週も正しく表示するため、フィルタリングを削除
+    return eachDayOfInterval({ start: weekStart, end: weekEnd });
   };
 
-  // Fetch shift requests
+  // Fetch shift requests - extend range to cover cross-month weeks
   const monthStart = format(startOfMonth(selectedMonth), 'yyyy-MM-dd');
   const monthEnd = format(endOfMonth(selectedMonth), 'yyyy-MM-dd');
+  const fetchStart = format(startOfWeek(startOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart }), 'yyyy-MM-dd');
+  const fetchEnd = format(endOfWeek(endOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart }), 'yyyy-MM-dd');
 
   const { data: allPaidLeaveRequests = [] } = useQuery({
-    queryKey: ['allPaidLeaveRequests', selectedStoreId, monthStart, monthEnd],
+    queryKey: ['allPaidLeaveRequests', selectedStoreId, fetchStart, fetchEnd],
     queryFn: async () => {
       if (!selectedStoreId) return [];
       const storeUserEmails = allUsers.filter(u => u.store_ids?.includes(selectedStoreId)).map(u => u.email);
       const { data, error } = await supabase.from('PaidLeaveRequest').select('*')
         .in('user_email', storeUserEmails.length > 0 ? storeUserEmails : ['__none__'])
-        .gte('date', monthStart).lte('date', monthEnd);
+        .gte('date', fetchStart).lte('date', fetchEnd);
       if (error) throw error;
       return (data || []).filter(r => r.status === 'approved' || r.status === 'pending');
     },
@@ -508,15 +520,17 @@ export default function ShiftOverview() {
   };
 
   const { data: allShiftRequests = [], isLoading: requestsLoading } = useQuery({
-    queryKey: ['storeShiftRequests', selectedStoreId, monthStart, monthEnd],
+    queryKey: ['storeShiftRequests', selectedStoreId, fetchStart, fetchEnd],
     queryFn: async () => {
       if (!selectedStoreId) return [];
       const { data, error } = await supabase.from('ShiftRequest').select('*')
-        .eq('store_id', selectedStoreId).gte('date', monthStart).lte('date', monthEnd);
+        .eq('store_id', selectedStoreId).gte('date', fetchStart).lte('date', fetchEnd);
       if (error) throw error;
       
       const stUsers = allUsers.filter(u => u.store_ids?.includes(selectedStoreId));
-      const days = eachDayOfInterval({ start: startOfMonth(selectedMonth), end: endOfMonth(selectedMonth) });
+      const fetchStartDate = startOfWeek(startOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart });
+      const fetchEndDate = endOfWeek(endOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart });
+      const days = eachDayOfInterval({ start: fetchStartDate, end: fetchEndDate });
       const dayMap = { 0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday', 6: 'saturday' };
       const dbData = data || [];
       const defaultShifts = [];
@@ -603,11 +617,33 @@ export default function ShiftOverview() {
     mutationFn: async () => {
       const dateStr = format(editingDate, 'yyyy-MM-dd');
       const myShift = getMyShift(dateStr);
-      if (myShift && !myShift.id?.toString().startsWith('default-')) return deleteRecord('ShiftRequest', myShift.id);
+      if (myShift && !myShift.id?.toString().startsWith('default-')) {
+        // 有給申請が紐付いている場合、自動取り消し
+        if (myShift.is_paid_leave && user?.email) {
+          try {
+            const existingLeave = await fetchFiltered('PaidLeaveRequest', {
+              user_email: user.email,
+              date: dateStr,
+            });
+            if (existingLeave && existingLeave.length > 0) {
+              for (const leave of existingLeave) {
+                if (leave.status === 'pending' || leave.status === 'approved') {
+                  await deleteRecord('PaidLeaveRequest', leave.id);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('有給申請の自動取り消しに失敗:', e);
+          }
+        }
+        return deleteRecord('ShiftRequest', myShift.id);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storeShiftRequests'] });
       queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['myPaidLeaveRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['paidLeaveRequests'] });
       toast.success('シフト希望を削除しました');
       setEditDialogOpen(false);
     },
@@ -619,7 +655,9 @@ export default function ShiftOverview() {
     const requests = allShiftRequests.filter(r => r.created_by === userEmail && r.date === dateStr);
     if (requests.length === 0) return null;
     const request = requests[0];
-    if (request.is_day_off) return { type: 'dayoff', label: '休', isPaidLeave: request.is_paid_leave };
+    // シフト提出者ユーザーは他人の有給申請予定を見れない（管理者・マネージャーまたは自分のシフトのみ表示）
+    const showPaidLeave = (isAdminOrManager || userEmail === user?.email) ? request.is_paid_leave : false;
+    if (request.is_day_off) return { type: 'dayoff', label: '休', isPaidLeave: showPaidLeave };
     if (request.is_full_day_available) return { type: 'fullday', label: '終日可', startTime: null, endTime: null };
     if (request.start_time && request.end_time) return { type: 'shift', startTime: request.start_time, endTime: request.end_time, isNegotiable: request.is_negotiable_if_needed, additionalTimes: request.additional_times || [] };
     return null;
@@ -897,7 +935,9 @@ export default function ShiftOverview() {
                   const reqUser = storeUsers.find(u => u.email === request.created_by);
                   const displayName = reqUser?.metadata?.display_name || reqUser?.full_name || request.created_by.split('@')[0];
                   const content = getRequestCellContent(request.created_by, dateStr);
-                  const paidLeave = isAdminOrManager ? getPaidLeaveForUserDate(request.created_by, dateStr) : null;
+                  const isOwnShift = request.created_by === user?.email;
+                  const paidLeave = (isAdminOrManager || isOwnShift) ? getPaidLeaveForUserDate(request.created_by, dateStr) : null;
+                  const showPaidLeaveLabel = isAdminOrManager || isOwnShift;
                   
                   return (
                     <div key={request.id} className={cn(
@@ -932,7 +972,7 @@ export default function ShiftOverview() {
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5">
                           {request.is_day_off 
-                            ? (request.is_paid_leave ? '休み（有給申請予定）' : '休み希望')
+                            ? ((showPaidLeaveLabel && request.is_paid_leave) ? '休み（有給申請予定）' : '休み希望')
                             : request.is_full_day_available 
                               ? '終日出勤可能'
                               : `${request.start_time?.slice(0,5)} - ${request.end_time?.slice(0,5)}`
@@ -979,14 +1019,18 @@ export default function ShiftOverview() {
         <div className="p-2 sm:p-3">
         <div>
           <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
-            {['日', '月', '火', '水', '木', '金', '土'].map((day, i) => (
-              <div key={i} className={cn(
-                "text-center font-semibold py-1.5 sm:py-2 text-[10px] sm:text-xs rounded-lg",
-                i === 0 ? 'text-red-500 bg-red-50/50' : i === 6 ? 'text-blue-500 bg-blue-50/50' : 'text-slate-600 bg-slate-50/50'
-              )}>
-                {day}
-              </div>
-            ))}
+            {['日', '月', '火', '水', '木', '金', '土'].map((day, i) => {
+              const isSunday = day === '日';
+              const isSaturday = day === '土';
+              return (
+                <div key={i} className={cn(
+                  "text-center font-semibold py-1.5 sm:py-2 text-[10px] sm:text-xs rounded-lg",
+                  isSunday ? 'text-red-500 bg-red-50/50' : isSaturday ? 'text-blue-500 bg-blue-50/50' : 'text-slate-600 bg-slate-50/50'
+                )}>
+                  {day}
+                </div>
+              );
+            })}
             {Array.from({ length: getDay(monthDays[0]) }).map((_, i) => (
               <div key={`pad-${i}`} className="border border-slate-100 rounded-xl p-1 min-h-[70px] sm:min-h-[110px] bg-slate-50/30" />
             ))}
@@ -1027,8 +1071,9 @@ export default function ShiftOverview() {
                   <div className="space-y-0.5">
                     {requests.slice(0, 3).map(request => {
                       const reqUser = storeUsers.find(u => u.email === request.created_by);
-                      const userName = reqUser?.metadata?.display_name || reqUser?.full_name?.split(' ')[0] || request.created_by.split('@')[0];
-                      const paidLeave = isAdminOrManager ? getPaidLeaveForUserDate(request.created_by, dateStr) : null;
+                      const userName = request.is_help_slot ? (request.help_name || 'ヘルプ') : (reqUser?.metadata?.display_name || reqUser?.full_name?.split(' ')[0] || request.created_by.split('@')[0]);
+                      const isOwnShiftInTable = request.created_by === user?.email;
+                      const paidLeave = (isAdminOrManager || isOwnShiftInTable) ? getPaidLeaveForUserDate(request.created_by, dateStr) : null;
                       if (request.is_day_off) {
                         return (
                           <div key={request.id} className="relative text-[8px] sm:text-[10px] px-1 py-0.5 rounded truncate font-medium bg-slate-200 text-slate-700">
@@ -1439,11 +1484,22 @@ export default function ShiftOverview() {
               ))}
             </div>
             {(viewMode === 'week' || viewMode === 'day') && (
-              <div className="flex items-center gap-1 bg-slate-50 rounded-lg px-1">
-                <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-white" disabled={selectedWeek === 0} onClick={() => setSelectedWeek(Math.max(0, selectedWeek - 1))}><ChevronLeft className="w-4 h-4" /></Button>
-                <span className="text-xs sm:text-sm font-medium px-1.5 text-slate-700">第{selectedWeek + 1}週</span>
-                <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-white" disabled={selectedWeek >= weeksInMonth.length - 1} onClick={() => setSelectedWeek(Math.min(weeksInMonth.length - 1, selectedWeek + 1))}><ChevronRight className="w-4 h-4" /></Button>
-              </div>
+              <>
+                <Select value={String(effectiveWeekStart)} onValueChange={(v) => setLocalWeekStart(parseInt(v))}>
+                  <SelectTrigger className="w-[110px] h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">月曜始まり</SelectItem>
+                    <SelectItem value="0">日曜始まり</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-1 bg-slate-50 rounded-lg px-1">
+                  <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-white" disabled={selectedWeek === 0} onClick={() => setSelectedWeek(Math.max(0, selectedWeek - 1))}><ChevronLeft className="w-4 h-4" /></Button>
+                  <span className="text-xs sm:text-sm font-medium px-1.5 text-slate-700">第{selectedWeek + 1}週</span>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-white" disabled={selectedWeek >= weeksInMonth.length - 1} onClick={() => setSelectedWeek(Math.min(weeksInMonth.length - 1, selectedWeek + 1))}><ChevronRight className="w-4 h-4" /></Button>
+                </div>
+              </>
             )}
             {isAdminOrManager && adminUsersList.length > 0 && (
               <AdminDropdown

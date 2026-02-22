@@ -559,9 +559,10 @@ export default function ShiftRequestEditor({ targetUser, stores, isAdmin }) {
           date: shift.date,
         });
         if (existingLeave && existingLeave.length > 0) {
-          const pendingLeave = existingLeave.find(l => l.status === 'pending');
-          if (pendingLeave) {
-            await deleteRecord('PaidLeaveRequest', pendingLeave.id);
+          for (const leave of existingLeave) {
+            if (leave.status === 'pending' || leave.status === 'approved') {
+              await deleteRecord('PaidLeaveRequest', leave.id);
+            }
           }
         }
       }
@@ -569,6 +570,8 @@ export default function ShiftRequestEditor({ targetUser, stores, isAdmin }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
+      queryClient.invalidateQueries({ queryKey: ['myPaidLeaveRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['paidLeaveRequests'] });
       toast.success('シフト希望を削除しました');
       setSelectedDate(null);
     },

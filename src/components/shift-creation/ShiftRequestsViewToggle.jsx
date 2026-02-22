@@ -6,6 +6,7 @@ import ViewModeSelector from './ViewModeSelector';
 import ShiftRequestsOverview from './ShiftRequestsOverview';
 import { Button } from '@/components/ui/button';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export default function ShiftRequestsViewToggle({ selectedMonth, users, shiftRequests, onRequestClick, store }) {
   const [viewMode, setViewMode] = useState(() => {
@@ -23,18 +24,22 @@ export default function ShiftRequestsViewToggle({ selectedMonth, users, shiftReq
     end: endOfMonth(selectedMonth)
   });
 
+  // Week start day setting: local override > store setting
+  const storeWeekStart = store?.week_start_day ?? 0;
+  const [localWeekStart, setLocalWeekStart] = useState(null);
+  const effectiveWeekStart = localWeekStart !== null ? localWeekStart : storeWeekStart;
+
   const weeksInMonth = eachWeekOfInterval({
     start: startOfMonth(selectedMonth),
     end: endOfMonth(selectedMonth)
-  }, { locale: ja });
+  }, { weekStartsOn: effectiveWeekStart });
 
   const getWeekDays = () => {
     if (selectedWeek >= weeksInMonth.length) return [];
     const weekStart = weeksInMonth[selectedWeek];
-    const weekEnd = endOfWeek(weekStart, { locale: ja });
-    return eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(d => 
-      d >= startOfMonth(selectedMonth) && d <= endOfMonth(selectedMonth)
-    );
+    const weekEnd = endOfWeek(weekStart, { weekStartsOn: effectiveWeekStart });
+    // 月を跨ぐ週も正しく表示するため、フィルタリングを削除
+    return eachDayOfInterval({ start: weekStart, end: weekEnd });
   };
 
   const weekDays = getWeekDays();
@@ -130,29 +135,40 @@ export default function ShiftRequestsViewToggle({ selectedMonth, users, shiftReq
           <div className="flex items-center gap-2">
             <ViewModeSelector viewMode={viewMode} onViewModeChange={setViewMode} />
             {(viewMode === 'week' || viewMode === 'day') && (
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  disabled={selectedWeek === 0}
-                  onClick={() => setSelectedWeek(Math.max(0, selectedWeek - 1))}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <span className="text-sm font-medium px-2">
-                  第{selectedWeek + 1}週
-                </span>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  disabled={selectedWeek >= weeksInMonth.length - 1}
-                  onClick={() => setSelectedWeek(Math.min(weeksInMonth.length - 1, selectedWeek + 1))}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
+              <>
+                <Select value={String(effectiveWeekStart)} onValueChange={(v) => setLocalWeekStart(parseInt(v))}>
+                  <SelectTrigger className="w-[110px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">月曜始まり</SelectItem>
+                    <SelectItem value="0">日曜始まり</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9"
+                    disabled={selectedWeek === 0}
+                    onClick={() => setSelectedWeek(Math.max(0, selectedWeek - 1))}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <span className="text-sm font-medium px-2">
+                    第{selectedWeek + 1}週
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9"
+                    disabled={selectedWeek >= weeksInMonth.length - 1}
+                    onClick={() => setSelectedWeek(Math.min(weeksInMonth.length - 1, selectedWeek + 1))}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </>
             )}
           </div>
         </div>

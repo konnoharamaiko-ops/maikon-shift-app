@@ -347,39 +347,32 @@ export default function UserManagement() {
         console.warn('[Invite] PendingInvitation creation failed (non-critical):', pendingErr.message);
       }
 
-      // Step 3: Send invite email via Supabase built-in (rate limited but automatic)
+      // Step 3: Generate invite link (type: 'invite' for password setup)
+      let inviteLink = null;
       let supabaseEmailSent = false;
       try {
-        const { error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-          redirectTo: appUrl + '/',
-          data: { full_name: fullName },
+        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+          type: 'invite',
+          email,
+          options: {
+            redirectTo: appUrl + '/',
+            data: { full_name: fullName }
+          },
         });
-        if (inviteError) {
-          // inviteUserByEmail fails if user already exists, try generateLink instead
-          console.warn('[Invite] inviteUserByEmail failed (user may already exist):', inviteError.message);
-          try {
-            const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-              type: 'magiclink',
-              email,
-              options: { redirectTo: appUrl + '/' },
-            });
-            if (!linkError) {
-              console.log('[Invite] Magic link generated as fallback');
-              supabaseEmailSent = true;
-            }
-          } catch (e) {
-            console.warn('[Invite] Magic link fallback failed:', e.message);
-          }
+        if (linkError) {
+          console.warn('[Invite] generateLink failed:', linkError.message);
         } else {
-          supabaseEmailSent = true;
-          console.log('[Invite] Supabase invite email sent to:', email);
+          inviteLink = linkData?.properties?.action_link || linkData?.action_link;
+          console.log('[Invite] Invite link generated for:', email);
+          // Note: Supabase does NOT automatically send email for generateLink
+          // We need to send it via Gmail API below
         }
       } catch (emailErr) {
-        console.warn('[Invite] Supabase email sending error:', emailErr.message);
+        console.warn('[Invite] Link generation error:', emailErr.message);
       }
 
       // Return data for onSuccess to use
-      return { email, fullName, role, storeIds, defaultPassword, appUrl, supabaseEmailSent };
+      return { email, fullName, role, storeIds, defaultPassword, appUrl, supabaseEmailSent, inviteLink };
     },
     onSuccess: (data) => {
       invalidateUserQueries(queryClient);
@@ -882,7 +875,9 @@ export default function UserManagement() {
                   onClick={async () => {
                     try {
                       const storeName = stores.find(s => lastInviteData.storeIds?.includes(s.id))?.store_name || '店舗';
-                      const emailContent = `${lastInviteData.fullName}さん\n\nシフト管理アプリへの招待です。\n\n以下の情報でログインしてください。\n\nアプリURL: ${lastInviteData.appUrl}\nメールアドレス: ${lastInviteData.email}\n初期パスワード: ${lastInviteData.defaultPassword}\n\n※ ログイン後、設定画面からパスワードを変更してください。\n\nよろしくお願いいたします。`;
+                      const emailContent = lastInviteData.inviteLink 
+                        ? `${lastInviteData.fullName}さん\n\nシフト管理アプリへの招待です。\n\n以下のリンクをクリックして、パスワードを設定してください：\n\n${lastInviteData.inviteLink}\n\nメールアドレス: ${lastInviteData.email}\n\n※ リンクの有効期限は24時間です。期限切れの場合は管理者にお問い合わせください。\n\nよろしくお願いいたします。`
+                        : `${lastInviteData.fullName}さん\n\nシフト管理アプリへの招待です。\n\n以下の情報でログインしてください。\n\nアプリURL: ${lastInviteData.appUrl}\nメールアドレス: ${lastInviteData.email}\n初期パスワード: ${lastInviteData.defaultPassword}\n\n※ ログイン後、設定画面からパスワードを変更してください。\n\nよろしくお願いいたします。`;
                       
                       // This will be handled by the MCP Gmail tool via the parent agent
                       // For now, store the email data and show a copy button

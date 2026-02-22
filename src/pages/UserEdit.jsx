@@ -56,6 +56,7 @@ export default function UserEdit() {
         max_work_days_per_week: meta.max_work_days_per_week || 0,
         max_work_hours_per_week: meta.max_work_hours_per_week || 0,
         dependent_income_limit: meta.dependent_income_limit || 0,
+        line_user_id: meta.line_user_id || '',
         default_start_time: meta.default_start_time || '',
         default_end_time: meta.default_end_time || '',
         weekly_days_normal: targetUser.weekly_days_normal || '',
@@ -108,6 +109,7 @@ export default function UserEdit() {
         dependent_income_limit: editedUser.dependent_income_limit,
         default_start_time: editedUser.default_start_time || null,
         default_end_time: editedUser.default_end_time || null,
+        line_user_id: editedUser.line_user_id || null,
       },
     };
     console.log('[UserEdit] Saving user data:', saveData);
@@ -332,6 +334,10 @@ export default function UserEdit() {
                     <p className="text-sm text-slate-500">扶養内の収入上限</p>
                     <p className="font-medium">{targetUser.metadata?.dependent_income_limit ? `${targetUser.metadata.dependent_income_limit.toLocaleString()}円/年` : '-'}</p>
                   </div>
+                  <div>
+                    <p className="text-sm text-slate-500">LINE User ID</p>
+                    <p className="font-medium">{targetUser.metadata?.line_user_id || '-'}</p>
+                  </div>
                 </div>
 
                 {/* シフト管理設定 */}
@@ -500,6 +506,16 @@ export default function UserEdit() {
                         placeholder="1030000"
                       />
                     </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-sm font-medium text-slate-700 mb-2 block">LINE User ID</Label>
+                    <Input
+                      value={editedUser?.line_user_id || ''}
+                      onChange={(e) => setEditedUser({ ...editedUser, line_user_id: e.target.value })}
+                      placeholder="U1234567890abcdef1234567890abcdef"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">LINE通知を受け取るためのLINE User IDを入力してください</p>
                   </div>
 
                   {/* シフト管理設定 */}
