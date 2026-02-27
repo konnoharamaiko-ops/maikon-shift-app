@@ -74,7 +74,8 @@ export const hrProductivityApi = {
       }
 
       const result = await response.json();
-      return result;
+      // resultは { success: true, data: [...] } の形式なので、dataプロパティを返す
+      return result.data || [];
     } catch (error) {
       if (error instanceof HRProductivityApiError) {
         throw error;
