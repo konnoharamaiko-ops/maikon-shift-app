@@ -77,7 +77,10 @@ export default function ProductivityDashboard() {
           <div className="flex items-center gap-4">
             <div>
               <span className="text-sm text-muted-foreground">対象日</span>
-              <p className="text-lg font-semibold">{format(new Date(), 'yyyy年MM月dd日（E）', { locale: ja })}</p>
+              <p className="text-lg font-semibold">
+                {format(new Date(), 'yyyy年MM月dd日', { locale: ja })}
+                （{format(new Date(), 'E', { locale: ja })}）
+              </p>
             </div>
           </div>
           {lastUpdated && (
