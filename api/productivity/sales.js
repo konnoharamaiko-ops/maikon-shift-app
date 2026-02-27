@@ -119,18 +119,19 @@ async function scrapeTempoVisorSales(username, password, date) {
       const stores = [];
       const storeMap = {
         '田辺店': { code: '10110', name: '田辺店' },
-        '大正店': { code: '10120', name: '大正店' },
-        '天下茶屋店': { code: '10130', name: '天下茶屋店' },
-        '天王寺店': { code: '10140', name: '天王寺店' },
         'アベノ店': { code: '10800', name: 'アベノ店' },
-        '心斎橋店': { code: '10900', name: '心斎橋店' },
-        'かがや店': { code: '11010', name: 'かがや店' },
-        'エキマル': { code: '11011', name: 'エキマル' },
-        '北摂店': { code: '11013', name: '北摂店' },
-        '堺東店': { code: '12200', name: '堺東店' },
-        'イオン松原店': { code: '12300', name: 'イオン松原店' },
-        'イオン守口店': { code: '12400', name: 'イオン守口店' },
-        '美和堂FC店': { code: '20000', name: '美和堂FC店' },
+        '住之江店': { code: '10210', name: '住之江店' },
+        '平野店': { code: '10220', name: '平野店' },
+        '東住吉店': { code: '10230', name: '東住吉店' },
+        '生野店': { code: '10310', name: '生野店' },
+        '東成店': { code: '10320', name: '東成店' },
+        '城東店': { code: '10410', name: '城東店' },
+        '鶴見店': { code: '10420', name: '鶴見店' },
+        '旭店': { code: '10510', name: '旭店' },
+        '都島店': { code: '10520', name: '都島店' },
+        '北区店': { code: '10610', name: '北区店' },
+        '福島店': { code: '10620', name: '福島店' },
+        '西区店': { code: '10710', name: '西区店' },
       };
 
       // テーブルから売上データを抽出
@@ -205,18 +206,19 @@ async function scrapeTempoVisorSales(username, password, date) {
 function generateDummySalesData(date) {
   const stores = [
     { code: '10110', name: '田辺店' },
-    { code: '10120', name: '大正店' },
-    { code: '10130', name: '天下茶屋店' },
-    { code: '10140', name: '天王寺店' },
     { code: '10800', name: 'アベノ店' },
-    { code: '10900', name: '心斎橋店' },
-    { code: '11010', name: 'かがや店' },
-    { code: '11011', name: 'エキマル' },
-    { code: '11013', name: '北摂店' },
-    { code: '12200', name: '堺東店' },
-    { code: '12300', name: 'イオン松原店' },
-    { code: '12400', name: 'イオン守口店' },
-    { code: '20000', name: '美和堂FC店' },
+    { code: '10210', name: '住之江店' },
+    { code: '10220', name: '平野店' },
+    { code: '10230', name: '東住吉店' },
+    { code: '10310', name: '生野店' },
+    { code: '10320', name: '東成店' },
+    { code: '10410', name: '城東店' },
+    { code: '10420', name: '鶴見店' },
+    { code: '10510', name: '旭店' },
+    { code: '10520', name: '都島店' },
+    { code: '10610', name: '北区店' },
+    { code: '10620', name: '福島店' },
+    { code: '10710', name: '西区店' },
   ];
 
   return stores.map(store => {
