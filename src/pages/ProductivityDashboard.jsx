@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
+import { ja } from 'date-fns/locale';
 import { RefreshCw, Activity } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Label } from '../components/ui/label';
@@ -76,7 +77,7 @@ export default function ProductivityDashboard() {
           <div className="flex items-center gap-4">
             <div>
               <span className="text-sm text-muted-foreground">対象日</span>
-              <p className="text-lg font-semibold">{format(new Date(), 'yyyy年MM月dd日（E）', { locale: require('date-fns/locale/ja') })}</p>
+              <p className="text-lg font-semibold">{format(new Date(), 'yyyy年MM月dd日（E）', { locale: ja })}</p>
             </div>
           </div>
           {lastUpdated && (
