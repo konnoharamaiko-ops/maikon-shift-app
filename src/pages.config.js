@@ -41,7 +41,7 @@ export const PAGES = {
     "UserManagement": UserManagement,
     "ShiftOverview": ShiftOverview,
     "EventManagement": EventManagement,
-    "ProductivityDashboard": ProductivityDashboard,
+    "productivity-dashboard": ProductivityDashboard,
 }
 
 export const pagesConfig = {
