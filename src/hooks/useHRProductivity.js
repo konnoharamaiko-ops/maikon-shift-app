@@ -25,33 +25,11 @@ export const useHRProductivity = (
 
   /**
    * トークンを取得または更新
+   * 新しいAPIではトークン不要（環境変数で認証）
    */
   const ensureToken = useCallback(async () => {
-    // 既存のトークンが有効ならそれを使用
-    if (tokenStorage.isValid()) {
-      const { token: cachedToken } = tokenStorage.get();
-      setToken(cachedToken);
-      return cachedToken;
-    }
-
-    // 新しいトークンを取得
-    try {
-      const email = import.meta.env.VITE_HR_API_EMAIL;
-      const password = import.meta.env.VITE_HR_API_PASSWORD;
-
-      if (!email || !password) {
-        throw new Error('API認証情報が設定されていません');
-      }
-
-      const result = await hrProductivityApi.login(email, password);
-      tokenStorage.save(result.token, result.expires_at);
-      setToken(result.token);
-      return result.token;
-    } catch (err) {
-      console.error('Token acquisition error:', err);
-      setError(err instanceof HRProductivityApiError ? err.message : 'トークン取得に失敗しました');
-      return null;
-    }
+    // ダミートークンを返す（実際には使用されない）
+    return 'dummy-token';
   }, []);
 
   /**
@@ -76,16 +54,9 @@ export const useHRProductivity = (
     setError(null);
 
     try {
-      // トークンを確保
-      const currentToken = await ensureToken();
-      if (!currentToken) {
-        throw new Error('認証トークンが取得できませんでした');
-      }
-
-      // データ取得
-      const result = await hrProductivityApi.getStoreProductivityData(
-        currentToken,
-        storeCode,
+      // データ取得（トークン不要）
+      const result = await hrProductivityApi.getProductivityData(
+        null, // tokenは不要
         searchFrom,
         searchTo
       );
