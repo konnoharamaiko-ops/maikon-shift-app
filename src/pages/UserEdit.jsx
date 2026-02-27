@@ -15,6 +15,7 @@ import ShiftRequestEditor from '@/components/user-edit/ShiftRequestEditor';
 import { fetchAll, fetchFiltered, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
 import { useAuth } from '@/lib/AuthContext';
 import { invalidateUserQueries } from '@/lib/invalidateHelpers';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 export default function UserEdit() {
   const [searchParams] = useSearchParams();
@@ -40,7 +41,10 @@ export default function UserEdit() {
 
   const { data: stores = [] } = useQuery({
     queryKey: ['stores'],
-    queryFn: () => fetchAll('Store'),
+    queryFn: async () => {
+      const allStores = await fetchAll('Store');
+      return sortStoresByOrder(allStores);
+    },
   });
 
   useEffect(() => {

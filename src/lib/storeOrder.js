@@ -9,7 +9,8 @@ export function sortStoresByOrder(stores) {
 
   try {
     // DBのsort_orderカラムが設定されている場合はそれを使用
-    const hasDbOrder = stores.some(s => s.sort_order != null && s.sort_order !== 0);
+    // sort_order=0も有効な値として扱う（最初の店舗）
+    const hasDbOrder = stores.some(s => s.sort_order != null);
     if (hasDbOrder) {
       return [...stores].sort((a, b) => {
         const orderA = a.sort_order ?? 9999;

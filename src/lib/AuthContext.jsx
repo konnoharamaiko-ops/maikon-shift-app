@@ -86,6 +86,17 @@ export const AuthProvider = ({ children }) => {
     if (!isMountedRef.current) return false;
 
     if (profileData) {
+      // Check if account is active
+      if (profileData.is_active === false) {
+        console.log('[Auth] Account is deactivated:', profileData.email);
+        const errMsg = 'このアカウントは無効化されています。\n管理者にお問い合わせください。';
+        setUser(null);
+        setProfile(null);
+        setIsAuthenticated(false);
+        setIsLoadingAuth(false);
+        setIsInviteFlow(false);
+        return { success: false, errorMessage: errMsg, needsSignOut: true };
+      }
       console.log('[Auth] Login complete:', profileData.full_name);
       setUser(authUser);
       setProfile(profileData);
@@ -93,17 +104,16 @@ export const AuthProvider = ({ children }) => {
       setIsLoadingAuth(false);
       setAuthError(null);
       setIsInviteFlow(false);
-      return true;
+      return { success: true };
     } else {
       console.log('[Auth] No profile found');
-      setAuthError('このメールアドレスは登録されていません。\n管理者からの招待を受けてからログインしてください。');
-      try { await supabase.auth.signOut(); } catch {}
+      const errMsg = 'このメールアドレスは登録されていません。\n管理者からの招待を受けてからログインしてください。';
       setUser(null);
       setProfile(null);
       setIsAuthenticated(false);
       setIsLoadingAuth(false);
       setIsInviteFlow(false);
-      return false;
+      return { success: false, errorMessage: errMsg, needsSignOut: true };
     }
   };
 
@@ -192,32 +202,34 @@ export const AuthProvider = ({ children }) => {
 
   // Login function - handles everything directly
   const login = async (email, password) => {
-    console.log('[Auth] Login attempt:', email);
-    setIsLoadingAuth(true);
+    // NOTE: Do NOT setIsLoadingAuth(true) here.
+    // App.jsx uses isLoadingAuth to show loading screen, which unmounts Login.jsx.
+    // If Login.jsx is unmounted, its error state is lost and error messages won't display.
     setAuthError(null);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      console.log('[Auth] signInWithPassword result:', { data: !!data, error: error?.message });
       if (error) {
-        console.log('[Auth] Login failed:', error.message);
-        setIsLoadingAuth(false);
         throw error;
       }
 
+      // Now that signIn succeeded, set loading to show loading screen
+      setIsLoadingAuth(true);
+
       // Directly load profile - don't rely on onAuthStateChange
-      console.log('[Auth] Loading profile for:', data.user.email);
-      const success = await loadAndSetProfile(data.user);
-      console.log('[Auth] Profile load result:', success);
-      
-      if (!success) {
-        // loadAndSetProfile already set authError, throw it
-        const errorMsg = 'このメールアドレスは登録されていません。\n管理者からの招待を受けてからログインしてください。';
-        throw new Error(errorMsg);
+      const result = await loadAndSetProfile(data.user);
+      if (result && !result.success) {
+        const errorMessage = result.errorMessage || 'ログインに失敗しました。';
+        
+        // Sign out silently in background
+        if (result.needsSignOut) {
+          supabase.auth.signOut().catch(() => {});
+        }
+        
+        setIsLoadingAuth(false);
+        throw new Error(errorMessage);
       }
-      
       return data;
     } catch (error) {
-      console.log('[Auth] Login exception:', error.message);
       setIsLoadingAuth(false);
       throw error;
     }

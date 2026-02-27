@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { fetchAll, fetchFiltered, insertRecord, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 const FEATURE_PERMISSIONS = [
   { id: 'shift_view', label: 'シフト閲覧', category: 'shift' },
@@ -27,7 +28,10 @@ export default function PermissionSettings({ user, currentUserEmail, onClose }) 
 
   const { data: stores = [] } = useQuery({
     queryKey: ['stores'],
-    queryFn: () => fetchAll('Store'),
+    queryFn: async () => {
+      const allStores = await fetchAll('Store');
+      return sortStoresByOrder(allStores);
+    },
   });
 
   const { data: permissions = [] } = useQuery({

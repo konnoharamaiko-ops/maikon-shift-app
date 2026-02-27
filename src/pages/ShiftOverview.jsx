@@ -62,7 +62,7 @@ function SortableUserHeader({ id, user }) {
         <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-0.5 hover:bg-slate-100 rounded touch-none">
           <GripVertical className="w-3 h-3 text-slate-300" />
         </div>
-        <span className="font-semibold text-xs sm:text-sm truncate text-slate-700">
+        <span className="font-bold text-xs sm:text-sm truncate text-slate-800">
           {user?.metadata?.display_name || user?.full_name || user?.email?.split('@')[0]}
         </span>
       </div>
@@ -110,16 +110,16 @@ function UserAvatar({ user: u, isSelected, onClick, shiftSummary, isMe }) {
         )}
       </div>
       <span className={cn(
-        "text-[9px] sm:text-[11px] font-medium truncate max-w-[52px] sm:max-w-[68px] leading-tight",
+        "text-[10px] sm:text-xs font-semibold truncate max-w-[56px] sm:max-w-[72px] leading-tight",
         isSelected ? "text-cyan-700 font-bold" : "text-slate-600"
       )}>
         {name}
       </span>
       {shiftSummary && (
         <div className="flex items-center gap-0.5">
-          <span className="text-[7px] sm:text-[8px] text-slate-400">{shiftSummary.workDays}日</span>
-          <span className="text-[7px] sm:text-[8px] text-slate-300">|</span>
-          <span className="text-[7px] sm:text-[8px] text-slate-400">{shiftSummary.totalHours}h</span>
+          <span className="text-[8px] sm:text-[9px] text-slate-500">{shiftSummary.workDays}日</span>
+          <span className="text-[8px] sm:text-[9px] text-slate-300">|</span>
+          <span className="text-[8px] sm:text-[9px] text-slate-500">{shiftSummary.totalHours}h</span>
         </div>
       )}
     </button>
@@ -220,7 +220,7 @@ function UserCalendarView({ userEmail, userName, allShiftRequests, currentMonth,
             const isSaturday = day === '土';
             return (
               <div key={day} className={cn(
-                "text-center py-1.5 sm:py-2 text-[10px] sm:text-xs font-bold",
+                "text-center py-1.5 sm:py-2 text-xs sm:text-sm font-bold",
                 isSunday ? "text-red-500" : isSaturday ? "text-blue-500" : "text-slate-500"
               )}>
                 {day}
@@ -256,7 +256,7 @@ function UserCalendarView({ userEmail, userName, allShiftRequests, currentMonth,
               >
                 {/* Date number */}
                 <div className={cn(
-                  "text-[10px] sm:text-xs font-bold text-center mb-0.5",
+                  "text-xs sm:text-sm font-bold text-center mb-0.5",
                   !isCurrentMonth && "text-slate-300",
                   isCurrentMonth && dayOfWeek === 0 && "text-red-500",
                   isCurrentMonth && dayOfWeek === 6 && "text-blue-500",
@@ -274,31 +274,36 @@ function UserCalendarView({ userEmail, userName, allShiftRequests, currentMonth,
                   <div className="space-y-0.5 px-0.5">
                     {paidLeave && (isAdminOrManager || isMe) && (
                       <div className={cn(
-                        "text-[7px] sm:text-[9px] font-bold text-center rounded px-0.5 py-px leading-tight",
+                        "text-[8px] sm:text-[10px] font-bold text-center rounded px-0.5 py-px leading-tight",
                         paidLeave.status === 'approved' ? "bg-emerald-500 text-white" : "bg-amber-300 text-amber-900"
                       )}>
                         {paidLeave.status === 'approved' ? '有給' : '申請中'}
                       </div>
                     )}
                     {shift.is_day_off ? (
-                      <div className="text-[7px] sm:text-[9px] font-bold text-center rounded px-0.5 py-px bg-slate-200/80 text-slate-600 leading-tight">
-                        休み
+                      <div className={cn(
+                        "text-[8px] sm:text-[10px] font-bold text-center rounded px-0.5 py-px leading-tight",
+                        shift.is_negotiable_if_needed
+                          ? "bg-amber-100 text-amber-700 border border-amber-300"
+                          : "bg-slate-200/80 text-slate-600"
+                      )}>
+                        {shift.is_negotiable_if_needed ? '休⚡' : '休み'}
                       </div>
                     ) : shift.is_full_day_available ? (
-                      <div className="text-[7px] sm:text-[9px] font-bold text-center rounded px-0.5 py-px bg-green-100 text-green-800 border border-green-300 leading-tight">
+                      <div className="text-[8px] sm:text-[10px] font-bold text-center rounded px-0.5 py-px bg-green-100 text-green-800 border border-green-300 leading-tight">
                         終日
                       </div>
                     ) : shift.start_time ? (
                       <>
                         <div className={cn(
-                          "text-[7px] sm:text-[9px] font-bold text-center rounded px-0.5 py-px border leading-tight",
+                          "text-[8px] sm:text-[10px] font-bold text-center rounded px-0.5 py-px border leading-tight",
                           getShiftColor(shift.start_time)
                         )}>
                           {shift.start_time?.substring(0, 5)}
                         </div>
                         {shift.additional_times && shift.additional_times.length > 0 && shift.additional_times.map((at, atIdx) => (
                           <div key={atIdx} className={cn(
-                            "text-[6px] sm:text-[8px] font-bold text-center rounded px-0.5 py-px border border-dashed leading-tight",
+                            "text-[7px] sm:text-[9px] font-bold text-center rounded px-0.5 py-px border border-dashed leading-tight",
                             getShiftColor(at.start_time)
                           )}>
                             +{at.start_time?.substring(0, 5)}
@@ -307,14 +312,14 @@ function UserCalendarView({ userEmail, userName, allShiftRequests, currentMonth,
                       </>
                     ) : null}
                     {shift.is_negotiable_if_needed && (
-                      <div className="text-[6px] sm:text-[7px] font-bold text-center text-amber-600 leading-tight">相談</div>
+                      <div className="text-[7px] sm:text-[8px] font-bold text-center text-amber-600 leading-tight">相談</div>
                     )}
                   </div>
                 )}
 
                 {/* Closed day */}
                 {isCurrentMonth && isClosed && !shift && (
-                  <div className="text-[7px] sm:text-[8px] text-red-400 text-center font-semibold">休業</div>
+                  <div className="text-[8px] sm:text-[9px] text-red-400 text-center font-semibold">休業</div>
                 )}
               </div>
             );
@@ -323,13 +328,14 @@ function UserCalendarView({ userEmail, userName, allShiftRequests, currentMonth,
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2 text-[9px] sm:text-[10px] text-slate-500">
+      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2 text-[10px] sm:text-xs text-slate-500">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-cyan-100 border border-cyan-300" /> 早番</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-lime-100 border border-lime-300" /> 中番</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-orange-100 border border-orange-300" /> 遅番</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-green-100 border border-green-300" /> 終日</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-slate-200" /> 休み</span>
-        {isMe && <span className="text-[8px] sm:text-[9px] text-cyan-500 ml-auto">タップで編集</span>}
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-amber-100 border border-amber-300" /> 要相談</span>
+        {isMe && <span className="text-[9px] sm:text-[10px] text-cyan-500 ml-auto">タップで編集</span>}
       </div>
     </div>
   );
@@ -359,13 +365,20 @@ export default function ShiftOverview() {
   const isManager = user?.user_role === 'manager';
   const isAdminOrManager = isAdmin || isManager;
 
-  // Fetch stores
-  const { data: stores = [] } = useQuery({ queryKey: ['stores'], queryFn: () => fetchAll('Store') });
+  // Fetch stores (sorted by store settings order)
+  const { data: stores = [] } = useQuery({
+    queryKey: ['stores'],
+    queryFn: async () => {
+      const allStores = await fetchAll('Store');
+      return sortStoresByOrder(allStores);
+    },
+  });
 
   useEffect(() => {
     if (selectedStoreId) return;
-    if (user?.store_ids?.[0]) {
-      setSelectedStoreId(user.store_ids[0]);
+    const userStoresSorted = stores.filter(s => user?.store_ids?.includes(s.id));
+    if (userStoresSorted.length > 0) {
+      setSelectedStoreId(userStoresSorted[0].id);
     } else if (stores.length > 0) {
       setSelectedStoreId(stores[0].id);
     }
@@ -657,7 +670,7 @@ export default function ShiftOverview() {
     const request = requests[0];
     // シフト提出者ユーザーは他人の有給申請予定を見れない（管理者・マネージャーまたは自分のシフトのみ表示）
     const showPaidLeave = (isAdminOrManager || userEmail === user?.email) ? request.is_paid_leave : false;
-    if (request.is_day_off) return { type: 'dayoff', label: '休', isPaidLeave: showPaidLeave };
+    if (request.is_day_off) return { type: 'dayoff', label: '休', isPaidLeave: showPaidLeave, isNegotiable: request.is_negotiable_if_needed };
     if (request.is_full_day_available) return { type: 'fullday', label: '終日可', startTime: null, endTime: null };
     if (request.start_time && request.end_time) return { type: 'shift', startTime: request.start_time, endTime: request.end_time, isNegotiable: request.is_negotiable_if_needed, additionalTimes: request.additional_times || [] };
     return null;
@@ -942,13 +955,13 @@ export default function ShiftOverview() {
                   return (
                     <div key={request.id} className={cn(
                       "flex items-center gap-3 p-3 rounded-xl border transition-colors cursor-pointer hover:bg-slate-50",
-                      request.is_day_off ? "border-slate-200" : "border-cyan-200"
+                      request.is_day_off ? (request.is_negotiable_if_needed ? "border-amber-200 bg-amber-50/30" : "border-slate-200") : "border-cyan-200"
                     )} onClick={() => {
                       if (request.created_by === user?.email) handleEditMyShift(date);
                     }}>
                       <div className={cn(
                         "relative w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold",
-                        request.is_day_off ? "bg-slate-100 text-slate-600" : "bg-cyan-100 text-cyan-700"
+                        request.is_day_off ? (request.is_negotiable_if_needed ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600") : "bg-cyan-100 text-cyan-700"
                       )}>
                         {request.is_day_off ? '休' : (request.is_full_day_available ? '全' : <Clock className="w-4 h-4" />)}
                         {paidLeave && (
@@ -970,14 +983,14 @@ export default function ShiftOverview() {
                             </span>
                           )}
                         </div>
-                        <div className="text-xs text-slate-500 mt-0.5">
+                        <div className={cn("text-xs mt-0.5", request.is_day_off && request.is_negotiable_if_needed ? "text-amber-600 font-semibold" : "text-slate-500")}>
                           {request.is_day_off 
                             ? ((showPaidLeaveLabel && request.is_paid_leave) ? '休み（有給申請予定）' : '休み希望')
                             : request.is_full_day_available 
                               ? '終日出勤可能'
                               : `${request.start_time?.slice(0,5)} - ${request.end_time?.slice(0,5)}`
                           }
-                          {request.is_negotiable_if_needed && ' (要相談)'}
+                          {request.is_negotiable_if_needed && ' ⚡要相談'}
                         </div>
                         {request.additional_times && request.additional_times.length > 0 && (
                           <div className="text-[10px] text-purple-600 mt-0.5">
@@ -1076,13 +1089,13 @@ export default function ShiftOverview() {
                       const paidLeave = (isAdminOrManager || isOwnShiftInTable) ? getPaidLeaveForUserDate(request.created_by, dateStr) : null;
                       if (request.is_day_off) {
                         return (
-                          <div key={request.id} className="relative text-[8px] sm:text-[10px] px-1 py-0.5 rounded truncate font-medium bg-slate-200 text-slate-700">
+                          <div key={request.id} className={cn("relative text-[8px] sm:text-[10px] px-1 py-0.5 rounded truncate font-medium", request.is_negotiable_if_needed ? "bg-amber-100 text-amber-800 border border-amber-300" : "bg-slate-200 text-slate-700")}>
                             {paidLeave && (
                               <span className={cn("inline-flex items-center justify-center w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full text-[6px] sm:text-[7px] font-bold mr-0.5 flex-shrink-0",
                                 paidLeave.status === 'approved' ? "bg-emerald-500 text-white" : "bg-amber-400 text-amber-900"
                               )}>有</span>
                             )}
-                            {userName} 休
+                            {userName} 休{request.is_negotiable_if_needed && <span className="text-amber-600 font-bold">⚡</span>}
                           </div>
                         );
                       }
@@ -1121,6 +1134,7 @@ export default function ShiftOverview() {
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-orange-100 border border-orange-300"></span> 遅番</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-green-100 border border-green-300"></span> 終日可</span>
             <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-slate-200 border border-slate-300"></span> 休み</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-amber-100 border border-amber-300 flex items-center justify-center"><span className="text-amber-600 text-[7px]">⚡</span></span> 要相談</span>
             {isAdminOrManager && (
               <>
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-emerald-500 flex items-center justify-center"><span className="text-white text-[5px] sm:text-[6px] font-bold">有</span></span> 有給承認</span>
@@ -1181,19 +1195,19 @@ export default function ShiftOverview() {
                       <td key={u.email} className={cn("border border-slate-300 p-0.5", isWeekend ? 'bg-red-50/50' : 'bg-white', isMe && 'bg-cyan-50/30', "cursor-pointer hover:bg-cyan-50/50 transition-colors")}
                         onClick={() => { if (u.email === user?.email) handleEditMyShift(date); }}>
                         {content ? (
-                          content.type === 'dayoff' ? (<div className="text-center text-slate-400 text-xs font-semibold">休</div>) :
-                          content.type === 'fullday' ? (<div className="bg-green-100 text-green-800 border border-green-300 rounded px-1 py-0.5 text-[10px] font-medium text-center leading-tight">終日可</div>) :
+                          content.type === 'dayoff' ? (<div className="text-center"><div className={cn("text-xs font-semibold rounded px-0.5 py-px", content.isNegotiable ? "bg-amber-100 text-amber-700 border border-amber-300" : "text-slate-400")}>{content.isNegotiable ? '休⚡' : '休'}</div>{content.isNegotiable && (<div className="text-[8px] text-amber-600 font-bold">要相談</div>)}{content.isPaidLeave && (<div className="text-[8px] text-emerald-600 font-bold">有給</div>)}</div>) :
+                          content.type === 'fullday' ? (<div className="bg-green-100 text-green-800 border border-green-300 rounded px-1 py-0.5 text-[11px] font-semibold text-center leading-tight">終日可</div>) :
                           content.type === 'shift' ? (
                              <div className="space-y-0.5">
-                               <div className={cn("border rounded px-1 py-0.5 text-[10px] font-medium text-center leading-tight", getShiftColor(content.startTime))}>
+                               <div className={cn("border rounded px-1 py-0.5 text-[11px] font-semibold text-center leading-tight", getShiftColor(content.startTime))}>
                                  {formatTimeJa(content.startTime)}-{formatTimeJa(content.endTime)}
                                </div>
                                {content.additionalTimes && content.additionalTimes.length > 0 && content.additionalTimes.map((at, idx) => (
-                                 <div key={idx} className={cn("border border-dashed rounded px-1 py-0.5 text-[9px] font-medium text-center leading-tight", getShiftColor(at.start_time))}>
+                                 <div key={idx} className={cn("border border-dashed rounded px-1 py-0.5 text-[10px] font-semibold text-center leading-tight", getShiftColor(at.start_time))}>
                                    {formatTimeJa(at.start_time)}-{formatTimeJa(at.end_time)}
                                  </div>
                                ))}
-                               {content.isNegotiable && (<div className="text-[8px] text-orange-500 text-center">要相談</div>)}
+                               {content.isNegotiable && (<div className="text-[9px] text-amber-600 font-bold text-center">⚡要相談</div>)}
                              </div>
                           ) : (<div className="text-center text-slate-300 text-xs">+</div>)
                         ) : (<div className="text-center text-slate-300 text-xs hover:text-blue-500">-</div>)}
@@ -1257,11 +1271,11 @@ export default function ShiftOverview() {
       return { leftPct: Math.max(0, startFrac * 100), widthPct: Math.max(2, durationFrac * 100) };
     };
     const getBarColor = (request) => {
-      if (request.is_full_day_available) return { bg: 'bg-green-200', text: 'text-green-900' };
+      if (request.is_full_day_available) return { bg: 'bg-green-300', text: 'text-green-950' };
       const hour = parseInt(request.start_time?.split(':')[0] || 9);
-      if (hour < 12) return { bg: 'bg-cyan-200', text: 'text-cyan-900' };
-      if (hour < 17) return { bg: 'bg-lime-200', text: 'text-lime-900' };
-      return { bg: 'bg-orange-200', text: 'text-orange-900' };
+      if (hour < 12) return { bg: 'bg-cyan-300', text: 'text-cyan-950' };
+      if (hour < 17) return { bg: 'bg-lime-300', text: 'text-lime-950' };
+      return { bg: 'bg-orange-300', text: 'text-orange-950' };
     };
 
     return (
@@ -1275,22 +1289,21 @@ export default function ShiftOverview() {
           return (
             <div key={dateStr} className={cn("border rounded-2xl p-4 shadow-sm", dayOfWeek === 0 || dayOfWeek === 6 ? 'bg-red-50/30 border-red-100' : 'bg-white border-slate-100', isToday && 'ring-2 ring-cyan-400')}>
               <div className="mb-3 flex items-center justify-between">
-                <h3 className={cn("text-lg font-bold", dayOfWeek === 0 ? 'text-red-600' : dayOfWeek === 6 ? 'text-blue-600' : 'text-slate-800')}>
+                <h3 className={cn("text-lg font-extrabold", dayOfWeek === 0 ? 'text-red-600' : dayOfWeek === 6 ? 'text-blue-600' : 'text-slate-800')}>
                   {format(day, 'M月d日(E)', { locale: ja })}
                   {isToday && <span className="text-xs text-cyan-500 ml-2 font-medium">今日</span>}
                 </h3>
-                <div className="flex items-center gap-3 text-sm text-slate-500">
+                <div className="flex items-center gap-3 text-sm text-slate-600 font-bold">
                   <span className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-full"><Users className="w-4 h-4" />{dayStaff}人</span>
                   <span className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-full"><Clock className="w-4 h-4" />{dayHours}h</span>
                 </div>
               </div>
-              <ZoomableWrapper>
-              <div style={{ minWidth: '500px' }}>
+              <div>
               <div className="flex border-b-2 border-slate-300 mb-2">
-                  <div className="w-28 sm:w-36 flex-shrink-0 sticky left-0 z-10"></div>
+                  <div className="w-20 sm:w-28 flex-shrink-0"></div>
                   <div className="flex-1 relative h-8">
                     {hours.map(hour => (
-                      <div key={hour} className="absolute text-xs text-slate-600 font-medium" style={{ left: `${((hour - timelineStart) / hourCount) * 100}%` }}>{hour}</div>
+                      <div key={hour} className="absolute text-xs sm:text-sm text-slate-700 font-bold" style={{ left: `${((hour - timelineStart) / hourCount) * 100}%` }}>{hour}</div>
                     ))}
                   </div>
                 </div>
@@ -1300,21 +1313,21 @@ export default function ShiftOverview() {
                     const isMe = u?.email === user?.email;
                     return (
                       <div key={u?.email} className={cn("flex items-center border-b border-slate-100 pb-2", isMe && "bg-cyan-50/50 rounded-lg px-2")}>
-                        <div className={cn("w-28 sm:w-36 flex-shrink-0 pr-2 sm:pr-3 text-sm sm:text-base font-medium truncate sticky left-0 z-10", isMe ? "text-cyan-700 font-bold bg-cyan-50/50" : "text-slate-700")}>
+                        <div className={cn("w-20 sm:w-28 flex-shrink-0 pr-1 sm:pr-2 text-xs sm:text-sm font-extrabold truncate", isMe ? "text-cyan-700 bg-cyan-50/50" : "text-slate-800")}>
                           {u?.metadata?.display_name || u?.full_name || u?.email?.split('@')[0]}
-                          {isMe && <span className="text-[10px] text-cyan-400 ml-1">(自分)</span>}
+                          {isMe && <span className="text-[10px] text-cyan-500 ml-1">(自分)</span>}
                         </div>
                         <div className="flex-1 relative h-10">
                           {hours.map(hour => (<div key={hour} className="absolute h-full border-l border-slate-200" style={{ left: `${((hour - timelineStart) / hourCount) * 100}%` }} />))}
                           {userRequests.length > 0 && userRequests.map((request, idx) => {
-                            if (request.is_day_off) return (<div key={idx} className="absolute inset-0 bg-slate-100/50 rounded flex items-center justify-center text-xs font-semibold text-slate-600">休希望</div>);
-                            if (request.is_full_day_available) return (<div key={idx} className="absolute inset-0 bg-green-200/50 rounded flex items-center justify-center text-xs font-semibold text-green-700">終日対応可</div>);
+                            if (request.is_day_off) return (<div key={idx} className={cn("absolute inset-0 rounded-md flex items-center justify-center text-sm sm:text-base font-extrabold", request.is_negotiable_if_needed ? "bg-amber-200/70 text-amber-800 border border-amber-400" : "bg-slate-200/50 text-slate-700")}>休希望{request.is_negotiable_if_needed && <span className="ml-1 text-amber-500">⚡要相談</span>}</div>);
+                            if (request.is_full_day_available) return (<div key={idx} className="absolute inset-0 bg-green-300/50 rounded-md flex items-center justify-center text-sm sm:text-base font-extrabold text-green-800">終日対応可</div>);
                             if (!request.start_time || !request.end_time) return null;
                             const { leftPct, widthPct } = getRequestPosition(request);
                             const colors = getBarColor(request);
                             return (
                               <React.Fragment key={idx}>
-                                <div className={`absolute h-8 ${colors.bg} ${colors.text} rounded px-2 flex items-center text-xs font-semibold shadow-sm cursor-default`}
+                                <div className={`absolute h-8 ${colors.bg} ${colors.text} rounded-md px-2 flex items-center text-sm sm:text-base font-extrabold shadow-sm cursor-default`}
                                   style={{ left: `${leftPct}%`, width: `${widthPct}%`, top: '4px' }}
                                   title={`希望: ${request.start_time?.slice(0, 5)} - ${request.end_time?.slice(0, 5)}${request.is_negotiable_if_needed ? ' (要相談)' : ''}`}>
                                   <span className="truncate">{request.start_time?.slice(0, 5)} - {request.end_time?.slice(0, 5)}{request.is_negotiable_if_needed && ' ⚡'}</span>
@@ -1323,7 +1336,7 @@ export default function ShiftOverview() {
                                   const atPos = getRequestPosition({ start_time: at.start_time, end_time: at.end_time });
                                   const atColors = getBarColor({ start_time: at.start_time });
                                   return (
-                                    <div key={`at-${idx}-${atIdx}`} className={`absolute h-6 ${atColors.bg} ${atColors.text} rounded px-1 flex items-center text-[10px] font-semibold shadow-sm cursor-default border border-dashed ${atColors.bg.replace('bg-', 'border-').replace('-200', '-400')}`}
+                                    <div key={`at-${idx}-${atIdx}`} className={`absolute h-6 ${atColors.bg} ${atColors.text} rounded-md px-1 flex items-center text-xs sm:text-sm font-extrabold shadow-sm cursor-default border border-dashed ${atColors.bg.replace('bg-', 'border-').replace('-300', '-500')}`}
                                       style={{ left: `${atPos.leftPct}%`, width: `${atPos.widthPct}%`, top: '5px' }}
                                       title={`追加: ${at.start_time?.slice(0, 5)} - ${at.end_time?.slice(0, 5)}`}>
                                       <span className="truncate">+{at.start_time?.slice(0, 5)}-{at.end_time?.slice(0, 5)}</span>
@@ -1345,7 +1358,6 @@ export default function ShiftOverview() {
                   </div>
                 )}
               </div>
-              </ZoomableWrapper>
             </div>
           );
         })}
@@ -1404,7 +1416,7 @@ export default function ShiftOverview() {
            </div>
          </div>
         <div className="flex items-center gap-2">
-          {userStores.length > 1 && (
+          {userStores.length > 0 && (
             <Select value={selectedStoreId} onValueChange={setSelectedStoreId}>
               <SelectTrigger className="w-40 bg-white border-slate-200 shadow-sm"><SelectValue placeholder="店舗を選択" /></SelectTrigger>
               <SelectContent>
@@ -1455,10 +1467,9 @@ export default function ShiftOverview() {
           <div className="flex items-center gap-2">
             <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
               <Button variant="ghost" size="sm" onClick={navigatePrev} className="h-8 w-8 p-0 hover:bg-white rounded-md"><ChevronLeft className="w-4 h-4" /></Button>
-              <Button variant="ghost" size="sm" onClick={goToToday} className="h-8 px-3 hover:bg-white rounded-md text-xs font-medium">今日</Button>
+              <h2 className="text-base sm:text-lg font-bold text-slate-800 px-2 sm:px-3 whitespace-nowrap">{format(currentDate, 'yyyy年\u3000M月', { locale: ja })}</h2>
               <Button variant="ghost" size="sm" onClick={navigateNext} className="h-8 w-8 p-0 hover:bg-white rounded-md"><ChevronRight className="w-4 h-4" /></Button>
             </div>
-            <h2 className="text-base sm:text-lg font-bold text-slate-800 ml-1">{format(currentDate, 'yyyy年M月', { locale: ja })}</h2>
             {selectedStore && (
               <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-50 text-cyan-700 border border-cyan-200">{selectedStore.store_name}</span>
             )}

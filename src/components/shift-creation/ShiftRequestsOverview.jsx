@@ -9,7 +9,9 @@ import { cn } from '@/lib/utils';
 // 色分け: 休みと出勤のみ。有給は休みとして表示
 function getRequestColor(request) {
   if (request.is_day_off) {
-    // 有給も休みもすべてグレー系（休み扱い）
+    if (request.is_negotiable_if_needed) {
+      return 'bg-amber-200 text-amber-900 border border-amber-400';
+    }
     return 'bg-slate-200 text-slate-800';
   }
   if (request.is_full_day_available) {
@@ -24,7 +26,7 @@ function getRequestColor(request) {
 
 function getRequestLabel(request) {
   if (request.is_day_off) {
-    return '休み';
+    return request.is_negotiable_if_needed ? '休み(相談)' : '休み';
   }
   if (request.is_full_day_available) {
     return '終日可';
@@ -113,7 +115,7 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
                     className={cn(
                       "flex items-center gap-3 p-3 rounded-xl border transition-colors",
                       !readOnly && "cursor-pointer hover:bg-slate-50",
-                      request.is_day_off ? "border-slate-200" : "border-indigo-200"
+                      request.is_day_off ? (request.is_negotiable_if_needed ? "border-amber-300 bg-amber-50/50" : "border-slate-200") : (request.is_negotiable_if_needed ? "border-orange-200" : "border-indigo-200")
                     )}
                     onClick={() => !readOnly && onRequestClick?.(request, date)}
                   >
@@ -121,10 +123,10 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
                     <div className={cn(
                       "w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold",
                       request.is_day_off 
-                        ? "bg-slate-100 text-slate-600"
-                        : "bg-indigo-100 text-indigo-700"
+                        ? (request.is_negotiable_if_needed ? "bg-amber-100 text-amber-700 ring-2 ring-amber-300" : "bg-slate-100 text-slate-600")
+                        : (request.is_negotiable_if_needed ? "bg-orange-100 text-orange-700" : "bg-indigo-100 text-indigo-700")
                     )}>
-                      {request.is_day_off ? '休' : (
+                      {request.is_day_off ? (request.is_negotiable_if_needed ? '相談' : '休') : (
                         request.is_full_day_available ? '全' : (
                           <Clock className="w-4 h-4" />
                         )
@@ -136,12 +138,12 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
                       <div className="font-semibold text-sm text-slate-800 truncate">{displayName}</div>
                       <div className="text-xs text-slate-500 mt-0.5">
                         {request.is_day_off 
-                          ? (request.is_paid_leave ? '休み（有給申請予定）' : '休み希望')
+                          ? (request.is_paid_leave ? '休み（有給申請予定）' : (request.is_negotiable_if_needed ? '休み希望（要相談）' : '休み希望'))
                           : request.is_full_day_available 
                             ? '終日出勤可能'
                             : `${request.start_time?.slice(0,5)} - ${request.end_time?.slice(0,5)}`
                         }
-                        {request.is_negotiable_if_needed && ' (要相談)'}
+                        {!request.is_day_off && request.is_negotiable_if_needed && ' (要相談)'}
                       </div>
                       {!request.is_day_off && request.additional_times && request.additional_times.length > 0 && (
                         <div className="text-xs text-purple-500 mt-0.5">
@@ -178,7 +180,7 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
         <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
           {['日', '月', '火', '水', '木', '金', '土'].map((day, i) => (
             <div key={i} className={cn(
-              "text-center font-semibold py-1.5 sm:py-2 text-[10px] sm:text-xs",
+              "text-center font-semibold py-1.5 sm:py-2 text-xs sm:text-sm",
               i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-slate-600'
             )}>
               {day}
@@ -207,7 +209,7 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
               >
                 <div className="flex items-center justify-between mb-0.5">
                   <span className={cn(
-                    "text-[10px] sm:text-sm font-bold",
+                    "text-xs sm:text-sm font-bold",
                     dayOfWeek === 0 ? 'text-red-600' : dayOfWeek === 6 ? 'text-blue-600' : 'text-slate-800',
                     today && 'text-blue-700'
                   )}>
@@ -215,14 +217,14 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
                     {today && <span className="text-[7px] sm:text-[9px] text-blue-500 ml-0.5">今日</span>}
                   </span>
                   {requests.length > 0 && (
-                    <span className="text-[8px] sm:text-[10px] text-slate-400 font-medium">
+                    <span className="text-[9px] sm:text-[11px] text-slate-500 font-medium">
                       {workingCount}/{requests.length}
                     </span>
                   )}
                 </div>
 
                 {isClosed && (
-                  <div className="text-[9px] sm:text-xs text-red-500 font-semibold text-center">休業日</div>
+                  <div className="text-[10px] sm:text-xs text-red-500 font-semibold text-center">休業日</div>
                 )}
 
                 {/* シフト希望表示 - 色分けは休みと出勤のみ */}
@@ -233,7 +235,7 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
                       <div
                         key={request.id}
                         className={cn(
-                          "text-[8px] sm:text-[10px] px-1 py-0.5 rounded truncate font-medium",
+                          "text-[9px] sm:text-[11px] px-1 py-0.5 rounded truncate font-semibold",
                           getRequestColor(request)
                         )}
                       >
@@ -246,7 +248,7 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
                     );
                   })}
                   {requests.length > 3 && (
-                    <div className="text-[8px] sm:text-[10px] text-slate-400 text-center font-medium">
+                    <div className="text-[9px] sm:text-[11px] text-slate-500 text-center font-medium">
                       +{requests.length - 3}人
                     </div>
                   )}
@@ -257,11 +259,12 @@ export default function ShiftRequestsOverview({ selectedMonth, users, shiftReque
         </div>
 
         {/* Legend - 休みと出勤のみ */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-3 text-[10px] sm:text-xs text-slate-500">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-3 text-[11px] sm:text-xs text-slate-500">
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-indigo-100 border border-indigo-200"></span> 出勤</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-green-200 border border-green-300"></span> 終日可</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-orange-200 border border-orange-300"></span> 要相談</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-slate-200 border border-slate-300"></span> 休み</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded bg-amber-200 border border-amber-400"></span> 休み(要相談)</span>
           <span className="text-[9px] sm:text-[10px] text-slate-400 ml-1">※日付をタップで詳細表示</span>
         </div>
       </div>

@@ -4,6 +4,7 @@ import { supabase } from '@/api/supabaseClient';
 import { differenceInMinutes, parseISO, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, format } from 'date-fns';
 import { notifyWorkHoursExceeded, notifyOvertimeExceeded, notifyDeadlineReminder, notifyStaffShortage } from './NotificationSystem';
 import { fetchAll, fetchFiltered } from '@/api/supabaseHelpers';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 // バックグラウンドで動作する通知モニター
 export default function NotificationMonitor({ user }) {
@@ -15,7 +16,10 @@ export default function NotificationMonitor({ user }) {
 
   const { data: stores = [] } = useQuery({
     queryKey: ['stores'],
-    queryFn: () => fetchAll('Store'),
+    queryFn: async () => {
+      const allStores = await fetchAll('Store');
+      return sortStoresByOrder(allStores);
+    },
   });
 
   const { data: users = [] } = useQuery({

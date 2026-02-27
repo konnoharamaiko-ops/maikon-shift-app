@@ -43,21 +43,43 @@ export default function Login() {
     setError(null);
 
     try {
-      console.log('[Login] Attempting login for:', email.trim());
-      await login(email.trim(), password);
-      console.log('[Login] Login successful');
-      // AuthContext handles the rest via onAuthStateChange
-    } catch (err) {
-      console.log('[Login] Login failed:', err.message);
-      if (err.message?.includes('Invalid login credentials')) {
-        setError('パスワードが違います');
-      } else if (err.message?.includes('Email not confirmed')) {
-        setError('メールアドレスの確認が完了していません。受信トレイをご確認ください。');
-      } else {
-        setError(err.message || 'ログイン中にエラーが発生しました。');
+      // まずUserテーブルでメールアドレスの存在を確認
+      const trimmedEmail = email.trim();
+      const { data: userRecord } = await supabase
+        .from('User')
+        .select('id')
+        .eq('email', trimmedEmail)
+        .maybeSingle();
+
+      const emailExists = !!userRecord;
+
+      try {
+        await login(trimmedEmail, password);
+        // AuthContext handles the rest via onAuthStateChange
+      } catch (err) {
+        const msg = err.message || '';
+        if (msg.includes('Invalid login credentials')) {
+          if (emailExists) {
+            // メールアドレスは存在するのでパスワードが違う
+            setError('パスワードが違います。');
+          } else {
+            // メールアドレスが存在しない
+            setError('このメールアドレスは登録されていません。');
+          }
+        } else if (msg.includes('Email not confirmed')) {
+          setError('メールアドレスの確認が完了していません。\n受信トレイをご確認ください。');
+        } else if (msg.includes('User not found') || msg.includes('user not found')) {
+          setError('このメールアドレスは登録されていません。');
+        } else if (msg.includes('too many requests') || msg.includes('rate limit')) {
+          setError('ログイン試行回数が上限に達しました。\nしばらく待ってから再度お試しください。');
+        } else if (msg.includes('network') || msg.includes('fetch')) {
+          setError('ネットワークエラーが発生しました。\nインターネット接続を確認してください。');
+        } else {
+          setError(`ログインに失敗しました。\n理由: ${msg || '不明なエラー'}`);
+        }
       }
-      // デバッグ用：エラーの詳細をアラート表示
-      alert('Login Error: ' + (err.message || 'Unknown error'));
+    } catch (outerErr) {
+      setError('ネットワークエラーが発生しました。\nインターネット接続を確認してください。');
     } finally {
       setIsLoading(false);
     }

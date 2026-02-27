@@ -13,28 +13,36 @@ export default defineConfig({
       includeAssets: ['favicon.ico', 'robots.txt', 'apple-touch-icon.png'],
       manifest: {
         name: '舞昆シフト提出アプリ',
-        short_name: 'シフト管理',
+        short_name: '舞昆シフト',
         description: '舞昆のこうはら店舗向けシフト管理システム',
-        theme_color: '#ffffff',
-        background_color: '#ffffff',
+        theme_color: '#1e3a5f',
+        background_color: '#1e3a5f',
         display: 'standalone',
         orientation: 'portrait',
         icons: [
           {
             src: '/pwa-192x192.png',
             sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: '/pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
           },
           {
             src: '/pwa-512x512.png',
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'any maskable'
+            purpose: 'any'
+          },
+          {
+            src: '/pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'maskable'
+          },
+          {
+            src: '/pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
           }
         ]
       },

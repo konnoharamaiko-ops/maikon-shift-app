@@ -46,7 +46,18 @@ export default function ShiftCalendar({ selectedDate, onSelectDate, shiftRequest
     });
   };
 
+  // HEXカラーコード対応 + レガシー色名対応
   const eventColorMap = {
+    // HEXカラーコード（EventManagement.jsxのEVENT_COLORSに対応）
+    '#ef4444': 'bg-red-100 text-red-700 border-red-200',
+    '#f97316': 'bg-orange-100 text-orange-700 border-orange-200',
+    '#f59e0b': 'bg-amber-100 text-amber-700 border-amber-200',
+    '#22c55e': 'bg-green-100 text-green-700 border-green-200',
+    '#3b82f6': 'bg-blue-100 text-blue-700 border-blue-200',
+    '#8b5cf6': 'bg-purple-100 text-purple-700 border-purple-200',
+    '#ec4899': 'bg-pink-100 text-pink-700 border-pink-200',
+    '#6b7280': 'bg-gray-100 text-gray-700 border-gray-200',
+    // レガシー色名（後方互換性）
     red: 'bg-red-100 text-red-700 border-red-200',
     blue: 'bg-blue-100 text-blue-700 border-blue-200',
     green: 'bg-green-100 text-green-700 border-green-200',
@@ -57,6 +68,14 @@ export default function ShiftCalendar({ selectedDate, onSelectDate, shiftRequest
   };
 
   const eventBorderColorMap = {
+    '#ef4444': 'border-b-red-400',
+    '#f97316': 'border-b-orange-400',
+    '#f59e0b': 'border-b-amber-400',
+    '#22c55e': 'border-b-green-400',
+    '#3b82f6': 'border-b-blue-400',
+    '#8b5cf6': 'border-b-purple-400',
+    '#ec4899': 'border-b-pink-400',
+    '#6b7280': 'border-b-gray-400',
     red: 'border-b-red-400',
     blue: 'border-b-blue-400',
     green: 'border-b-green-400',
@@ -67,6 +86,14 @@ export default function ShiftCalendar({ selectedDate, onSelectDate, shiftRequest
   };
 
   const eventDotColorMap = {
+    '#ef4444': 'bg-red-400',
+    '#f97316': 'bg-orange-400',
+    '#f59e0b': 'bg-amber-400',
+    '#22c55e': 'bg-green-400',
+    '#3b82f6': 'bg-blue-400',
+    '#8b5cf6': 'bg-purple-400',
+    '#ec4899': 'bg-pink-400',
+    '#6b7280': 'bg-gray-400',
     red: 'bg-red-400',
     blue: 'bg-blue-400',
     green: 'bg-green-400',

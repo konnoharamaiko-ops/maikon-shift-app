@@ -1,22 +1,24 @@
 /**
  * pages.config.js - Page routing configuration
- * All pages are eagerly loaded for maximum reliability.
+ * Pages are lazy-loaded for optimal performance.
  */
-import Dashboard from './pages/Dashboard';
-import Home from './pages/Home';
-import ShiftOverview from './pages/ShiftOverview';
-import Analytics from './pages/Analytics';
-import Settings from './pages/Settings';
-import Admin from './pages/Admin';
-import AdminSettings from './pages/AdminSettings';
-import AdminSettingsHub from './pages/AdminSettingsHub';
-import ShiftCreation from './pages/ShiftCreation';
-import ShiftDeadlineManagement from './pages/ShiftDeadlineManagement';
-import StoreSettings from './pages/StoreSettings';
-import SystemSettings from './pages/SystemSettings';
-import UserEdit from './pages/UserEdit';
-import UserManagement from './pages/UserManagement';
-import EventManagement from './pages/EventManagement';
+import { lazy } from 'react';
+
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Home = lazy(() => import('./pages/Home'));
+const ShiftOverview = lazy(() => import('./pages/ShiftOverview'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Admin = lazy(() => import('./pages/Admin'));
+const AdminSettings = lazy(() => import('./pages/AdminSettings'));
+const AdminSettingsHub = lazy(() => import('./pages/AdminSettingsHub'));
+const ShiftCreation = lazy(() => import('./pages/ShiftCreation'));
+const ShiftDeadlineManagement = lazy(() => import('./pages/ShiftDeadlineManagement'));
+const StoreSettings = lazy(() => import('./pages/StoreSettings'));
+const SystemSettings = lazy(() => import('./pages/SystemSettings'));
+const UserEdit = lazy(() => import('./pages/UserEdit'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+const EventManagement = lazy(() => import('./pages/EventManagement'));
 
 import __Layout from './Layout.jsx';
 

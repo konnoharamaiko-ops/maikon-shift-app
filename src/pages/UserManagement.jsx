@@ -120,12 +120,13 @@ export default function UserManagement() {
     queryKey: ['stores'],
     queryFn: async () => {
       const allStores = await fetchAll('Store');
+      const sortedStores = sortStoresByOrder(allStores);
       // Admins see all stores
       if (currentUser?.user_role === 'admin' || currentUser?.role === 'admin') {
-        return allStores;
+        return sortedStores;
       }
       // Non-admins only see their assigned stores
-      return allStores.filter(store => currentUser?.store_ids?.includes(store.id));
+      return sortedStores.filter(store => currentUser?.store_ids?.includes(store.id));
     },
   });
 

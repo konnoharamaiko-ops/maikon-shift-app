@@ -14,6 +14,7 @@ import DetailedStoreSettings from '@/components/store-settings/DetailedStoreSett
 import { fetchAll, insertRecord, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
 import { useAuth } from '@/lib/AuthContext';
 import { invalidateStoreQueries } from '@/lib/invalidateHelpers';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 export default function AdminSettings() {
   const queryClient = useQueryClient();
@@ -30,7 +31,10 @@ export default function AdminSettings() {
 
   const { data: stores = [] } = useQuery({
     queryKey: ['stores'],
-    queryFn: () => fetchAll('Store'),
+    queryFn: async () => {
+      const allStores = await fetchAll('Store');
+      return sortStoresByOrder(allStores);
+    },
   });
 
   // Initialize selectedStoreForDetails when stores load

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Plus, Edit, Trash2, X, Save, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, Plus, Edit, Trash2, X, Save, ChevronLeft, ChevronRight, Repeat, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,10 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, startOfWeek, endOfWeek, isSameDay, isToday } from 'date-fns';
+import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, startOfWeek, endOfWeek, isSameDay, isToday, addWeeks, addDays, getDay, setDay } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { fetchAll, insertRecord, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
 import { useAuth } from '@/lib/AuthContext';
+import { sortStoresByOrder } from '@/lib/storeOrder';
+import RecurringEventManager from '@/components/shift/RecurringEventManager';
 
 // イベントカラー選択肢
 const EVENT_COLORS = [
@@ -27,16 +29,122 @@ const EVENT_COLORS = [
   { value: '#6b7280', label: 'グレー', bg: 'bg-gray-100', text: 'text-gray-700', border: 'border-gray-300' },
 ];
 
+// 定期パターン選択肢
+const RECURRENCE_PATTERNS = [
+  { value: 'weekly', label: '毎週' },
+  { value: 'biweekly', label: '隔週' },
+  { value: 'monthly_date', label: '毎月（同じ日付）' },
+  { value: 'monthly_week', label: '毎月（同じ曜日）' },
+];
+
+const DAY_OF_WEEK_OPTIONS = [
+  { value: 0, label: '日曜日' },
+  { value: 1, label: '月曜日' },
+  { value: 2, label: '火曜日' },
+  { value: 3, label: '水曜日' },
+  { value: 4, label: '木曜日' },
+  { value: 5, label: '金曜日' },
+  { value: 6, label: '土曜日' },
+];
+
 function getColorStyle(colorValue) {
   const found = EVENT_COLORS.find(c => c.value === colorValue);
   if (found) return found;
-  // fallback: legacy color names
   const legacyMap = {
     red: EVENT_COLORS[0], orange: EVENT_COLORS[1], yellow: EVENT_COLORS[2],
     green: EVENT_COLORS[3], blue: EVENT_COLORS[4], purple: EVENT_COLORS[5],
     pink: EVENT_COLORS[6], gray: EVENT_COLORS[7],
   };
   return legacyMap[colorValue] || EVENT_COLORS[4];
+}
+
+// 定期イベントから指定月のイベントインスタンスを生成
+function generateRecurringInstances(event, monthStart, monthEnd) {
+  const instances = [];
+  const startDate = parseISO(event.event_date);
+  const endDate = event.recurrence_end_date ? parseISO(event.recurrence_end_date) : addMonths(monthEnd, 12);
+  const pattern = event.recurrence_pattern;
+  
+  if (!pattern) return instances;
+  
+  const monthStartDate = typeof monthStart === 'string' ? parseISO(monthStart) : monthStart;
+  const monthEndDate = typeof monthEnd === 'string' ? parseISO(monthEnd) : monthEnd;
+
+  if (pattern === 'weekly' || pattern === 'biweekly') {
+    const dayOfWeek = event.recurrence_day_of_week != null ? event.recurrence_day_of_week : getDay(startDate);
+    const weekInterval = pattern === 'biweekly' ? 2 : 1;
+    // Start from the event's start date, find the first occurrence
+    let current = startDate;
+    // Align to the correct day of week
+    const diff = dayOfWeek - getDay(current);
+    if (diff > 0) current = addDays(current, diff);
+    else if (diff < 0) current = addDays(current, diff + 7);
+    
+    while (current <= endDate && current <= monthEndDate) {
+      if (current >= monthStartDate && current <= monthEndDate) {
+        instances.push({
+          ...event,
+          id: `${event.id}-recurring-${format(current, 'yyyy-MM-dd')}`,
+          event_date: format(current, 'yyyy-MM-dd'),
+          event_end_date: null,
+          _isRecurringInstance: true,
+          _parentId: event.id,
+        });
+      }
+      current = addWeeks(current, weekInterval);
+    }
+  } else if (pattern === 'monthly_date') {
+    // 毎月同じ日付
+    const dayOfMonth = startDate.getDate();
+    let current = new Date(monthStartDate.getFullYear(), monthStartDate.getMonth(), dayOfMonth);
+    if (current < startDate) current = addMonths(current, 1);
+    
+    while (current <= endDate && current <= monthEndDate) {
+      if (current >= monthStartDate && current.getDate() === dayOfMonth) {
+        instances.push({
+          ...event,
+          id: `${event.id}-recurring-${format(current, 'yyyy-MM-dd')}`,
+          event_date: format(current, 'yyyy-MM-dd'),
+          event_end_date: null,
+          _isRecurringInstance: true,
+          _parentId: event.id,
+        });
+      }
+      current = addMonths(current, 1);
+      current = new Date(current.getFullYear(), current.getMonth(), Math.min(dayOfMonth, new Date(current.getFullYear(), current.getMonth() + 1, 0).getDate()));
+    }
+  } else if (pattern === 'monthly_week') {
+    // 毎月同じ週の同じ曜日（例: 第2火曜日）
+    const dayOfWeek = event.recurrence_day_of_week != null ? event.recurrence_day_of_week : getDay(startDate);
+    const weekOfMonth = event.recurrence_week_of_month || Math.ceil(startDate.getDate() / 7); // 第何週
+    
+    let checkMonth = new Date(monthStartDate.getFullYear(), monthStartDate.getMonth(), 1);
+    while (checkMonth <= endDate && checkMonth <= monthEndDate) {
+      // Find the nth dayOfWeek in this month
+      let firstOfMonth = new Date(checkMonth.getFullYear(), checkMonth.getMonth(), 1);
+      let firstDayOfWeek = firstOfMonth;
+      const diff = dayOfWeek - getDay(firstOfMonth);
+      if (diff >= 0) firstDayOfWeek = addDays(firstOfMonth, diff);
+      else firstDayOfWeek = addDays(firstOfMonth, diff + 7);
+      
+      const targetDate = addWeeks(firstDayOfWeek, weekOfMonth - 1);
+      
+      if (targetDate.getMonth() === checkMonth.getMonth() && 
+          targetDate >= startDate && targetDate >= monthStartDate && targetDate <= monthEndDate && targetDate <= endDate) {
+        instances.push({
+          ...event,
+          id: `${event.id}-recurring-${format(targetDate, 'yyyy-MM-dd')}`,
+          event_date: format(targetDate, 'yyyy-MM-dd'),
+          event_end_date: null,
+          _isRecurringInstance: true,
+          _parentId: event.id,
+        });
+      }
+      checkMonth = addMonths(checkMonth, 1);
+    }
+  }
+  
+  return instances;
 }
 
 export default function EventManagement() {
@@ -57,6 +165,10 @@ export default function EventManagement() {
     end_time: '',
     color: '#3b82f6',
     is_recurring: false,
+    recurrence_pattern: 'weekly',
+    recurrence_day_of_week: null,
+    recurrence_week_of_month: null,
+    recurrence_end_date: '',
     display_on_shift_table: true,
     display_on_shift_request: true,
     all_stores: true,
@@ -67,37 +179,73 @@ export default function EventManagement() {
   // Fetch stores
   const { data: stores = [] } = useQuery({
     queryKey: ['stores'],
-    queryFn: () => fetchAll('Store'),
+    queryFn: async () => {
+      const allStores = await fetchAll('Store');
+      return sortStoresByOrder(allStores);
+    },
   });
 
-  // Initialize selected store (with fallback)
+  // Initialize selected store
   React.useEffect(() => {
     if (selectedStoreId) return;
-    if (user?.store_ids?.[0]) {
-      setSelectedStoreId(user.store_ids[0]);
+    const userStoresSorted = stores.filter(s => user?.store_ids?.includes(s.id));
+    if (userStoresSorted.length > 0) {
+      setSelectedStoreId(userStoresSorted[0].id);
     } else if (stores.length > 0) {
       setSelectedStoreId(stores[0].id);
     }
   }, [user, stores, selectedStoreId]);
 
-  // Fetch events
+  // Fetch events (including recurring events from past months)
   const monthStart = format(startOfMonth(currentMonth), 'yyyy-MM-dd');
   const monthEnd = format(endOfMonth(currentMonth), 'yyyy-MM-dd');
 
-  const { data: events = [], isLoading } = useQuery({
+  const { data: rawEvents = [], isLoading } = useQuery({
     queryKey: ['events', monthStart, monthEnd],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // 通常イベント: 当月のイベント
+      const { data: normalEvents, error: err1 } = await supabase
         .from('Events')
         .select('*')
+        .or(`is_recurring.is.null,is_recurring.eq.false`)
         .gte('event_date', monthStart)
         .lte('event_date', monthEnd)
         .order('event_date', { ascending: true });
       
-      if (error) throw error;
-      return data || [];
+      if (err1) throw err1;
+
+      // 定期イベント: 開始日が当月以前のもの全て
+      const { data: recurringEvents, error: err2 } = await supabase
+        .from('Events')
+        .select('*')
+        .eq('is_recurring', true)
+        .lte('event_date', monthEnd)
+        .order('event_date', { ascending: true });
+      
+      if (err2) throw err2;
+
+      return { normalEvents: normalEvents || [], recurringEvents: recurringEvents || [] };
     },
   });
+
+  // 定期イベントのインスタンスを生成して通常イベントとマージ
+  const events = useMemo(() => {
+    const { normalEvents = [], recurringEvents = [] } = rawEvents;
+    const monthStartDate = startOfMonth(currentMonth);
+    const monthEndDate = endOfMonth(currentMonth);
+    
+    let allEvents = [...normalEvents];
+    
+    recurringEvents.forEach(event => {
+      const instances = generateRecurringInstances(event, monthStartDate, monthEndDate);
+      allEvents = allEvents.concat(instances);
+    });
+    
+    // 日付順にソート
+    allEvents.sort((a, b) => (a.event_date || '').localeCompare(b.event_date || ''));
+    
+    return allEvents;
+  }, [rawEvents, currentMonth]);
 
   // Create event mutation
   const createMutation = useMutation({
@@ -147,6 +295,10 @@ export default function EventManagement() {
       end_time: '',
       color: '#3b82f6',
       is_recurring: false,
+      recurrence_pattern: 'weekly',
+      recurrence_day_of_week: null,
+      recurrence_week_of_month: null,
+      recurrence_end_date: '',
       display_on_shift_table: true,
       display_on_shift_request: true,
       all_stores: true,
@@ -166,21 +318,29 @@ export default function EventManagement() {
       return;
     }
 
-    // event_typeフィールドを除外してDBに送信
-    const { event_type, recurrence_pattern, ...cleanData } = formData;
     const dataToSubmit = {
-      ...cleanData,
-      store_id: formData.all_stores ? null : (formData.store_id || selectedStoreId),
-      // 空文字列をnullに変換（DBのdate/time型制約対応）
-      event_end_date: formData.event_end_date || null,
+      title: formData.title,
+      event_date: formData.event_date,
+      event_end_date: formData.is_recurring ? null : (formData.event_end_date || null),
       start_time: formData.start_time || null,
       end_time: formData.end_time || null,
+      color: formData.color,
+      is_recurring: formData.is_recurring,
+      recurrence_pattern: formData.is_recurring ? formData.recurrence_pattern : null,
+      recurrence_day_of_week: formData.is_recurring ? (formData.recurrence_day_of_week != null ? parseInt(formData.recurrence_day_of_week) : null) : null,
+      recurrence_week_of_month: (formData.is_recurring && formData.recurrence_pattern === 'monthly_week') ? (formData.recurrence_week_of_month != null ? parseInt(formData.recurrence_week_of_month) : null) : null,
+      recurrence_end_date: formData.is_recurring ? (formData.recurrence_end_date || null) : null,
+      display_on_shift_table: formData.display_on_shift_table,
+      display_on_shift_request: formData.display_on_shift_request,
+      all_stores: formData.all_stores,
+      store_id: formData.all_stores ? null : (formData.store_id || selectedStoreId),
+      description: formData.description || null,
     };
 
     if (editingEvent) {
-      updateMutation.mutate({ id: editingEvent.id, data: dataToSubmit });
+      const eventId = editingEvent._parentId || editingEvent.id;
+      updateMutation.mutate({ id: eventId, data: dataToSubmit });
     } else {
-      // 新規作成時はcreated_byを追加
       createMutation.mutate({ ...dataToSubmit, created_by: user?.email || '' });
     }
   };
@@ -190,13 +350,11 @@ export default function EventManagement() {
     const dateStr = format(date, 'yyyy-MM-dd');
     const dayEvents = getEventsForDate(date);
     
-    if (dayEvents.length === 1) {
-      // 1件のイベントがある場合 → 編集モード
-      handleEditEvent(dayEvents[0]);
-    } else if (dayEvents.length > 1) {
-      // 複数イベントがある場合 → 日付を選択して一覧表示
+    if (dayEvents.length >= 1) {
+      // 1件以上のイベントがある場合 → 日付を選択して一覧表示（追加ボタンも表示）
       setSelectedDate(date);
       setShowForm(false);
+      setEditingEvent(null);
     } else {
       // イベントがない場合 → 新規作成
       setFormData({
@@ -207,6 +365,11 @@ export default function EventManagement() {
         start_time: '',
         end_time: '',
         color: '#3b82f6',
+        is_recurring: false,
+        recurrence_pattern: 'weekly',
+        recurrence_day_of_week: null,
+        recurrence_week_of_month: null,
+        recurrence_end_date: '',
         description: '',
       });
       setEditingEvent(null);
@@ -218,12 +381,16 @@ export default function EventManagement() {
   const handleEditEvent = (event) => {
     setFormData({
       title: event.title,
-      event_date: event.event_date,
+      event_date: event._isRecurringInstance ? (event._parentId ? events.find(e => e.id === event._parentId)?.event_date || event.event_date : event.event_date) : event.event_date,
       event_end_date: event.event_end_date || '',
       start_time: event.start_time || '',
       end_time: event.end_time || '',
       color: event.color || '#3b82f6',
       is_recurring: event.is_recurring || false,
+      recurrence_pattern: event.recurrence_pattern || 'weekly',
+      recurrence_day_of_week: event.recurrence_day_of_week != null ? event.recurrence_day_of_week : null,
+      recurrence_week_of_month: event.recurrence_week_of_month || null,
+      recurrence_end_date: event.recurrence_end_date || '',
       display_on_shift_table: event.display_on_shift_table !== false,
       display_on_shift_request: event.display_on_shift_request !== false,
       all_stores: event.all_stores !== false,
@@ -245,10 +412,26 @@ export default function EventManagement() {
       start_time: '',
       end_time: '',
       color: '#3b82f6',
+      is_recurring: false,
+      recurrence_pattern: 'weekly',
+      recurrence_day_of_week: null,
+      recurrence_week_of_month: null,
+      recurrence_end_date: '',
       description: '',
     });
     setEditingEvent(null);
     setShowForm(true);
+  };
+
+  const handleDeleteEvent = (event) => {
+    const eventId = event._parentId || event.id;
+    if (event._isRecurringInstance) {
+      if (confirm('この定期イベントの全ての繰り返しを削除しますか？')) {
+        deleteMutation.mutate(eventId);
+      }
+    } else {
+      deleteMutation.mutate(eventId);
+    }
   };
 
   // カレンダー表示用の日付配列
@@ -287,6 +470,10 @@ export default function EventManagement() {
               <p className="text-[10px] sm:text-sm text-slate-500">店舗イベント・催事の管理</p>
             </div>
           </div>
+          <RecurringEventManager
+            storeId={selectedStoreId}
+            onEventsChanged={() => queryClient.invalidateQueries({ queryKey: ['events'] })}
+          />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -340,12 +527,13 @@ export default function EventManagement() {
                             return (
                               <div
                                 key={event.id}
-                                className={`text-[9px] md:text-[11px] px-1 py-0.5 rounded truncate font-medium ${colorStyle.bg} ${colorStyle.text}`}
+                                className={`text-[9px] md:text-[11px] px-1 py-0.5 rounded truncate font-medium ${colorStyle.bg} ${colorStyle.text} ${event._isRecurringInstance ? 'border-l-2 border-l-current' : ''}`}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleEditEvent(event);
                                 }}
                               >
+                                {event._isRecurringInstance && <Repeat className="w-2 h-2 inline mr-0.5" />}
                                 {event.title}
                               </div>
                             );
@@ -370,7 +558,7 @@ export default function EventManagement() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg">
-                      {editingEvent ? 'イベントを編集' : '新規イベント'}
+                      {editingEvent ? (editingEvent._isRecurringInstance ? '定期イベントを編集' : 'イベントを編集') : '新規イベント'}
                     </CardTitle>
                     <Button variant="ghost" size="sm" onClick={resetForm}>
                       <X className="w-4 h-4" />
@@ -426,15 +614,17 @@ export default function EventManagement() {
                           required
                         />
                       </div>
-                      <div>
-                        <Label className="text-xs font-semibold text-slate-600">終了日</Label>
-                        <Input
-                          type="date"
-                          value={formData.event_end_date}
-                          onChange={(e) => setFormData({ ...formData, event_end_date: e.target.value })}
-                          className="mt-1"
-                        />
-                      </div>
+                      {!formData.is_recurring && (
+                        <div>
+                          <Label className="text-xs font-semibold text-slate-600">終了日</Label>
+                          <Input
+                            type="date"
+                            value={formData.event_end_date}
+                            onChange={(e) => setFormData({ ...formData, event_end_date: e.target.value })}
+                            className="mt-1"
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {/* 時刻 */}
@@ -459,6 +649,94 @@ export default function EventManagement() {
                       </div>
                     </div>
 
+                    {/* 定期設定 */}
+                    <div className="space-y-2 pt-2 border-t">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                          <span className="text-sm font-semibold text-slate-600">定期イベント</span>
+                        </div>
+                        <Switch
+                          checked={formData.is_recurring}
+                          onCheckedChange={(v) => setFormData({ ...formData, is_recurring: v })}
+                        />
+                      </div>
+                      
+                      {formData.is_recurring && (
+                        <div className="space-y-2 pl-2 border-l-2 border-purple-200 ml-1">
+                          {/* 繰り返しパターン */}
+                          <div>
+                            <Label className="text-xs font-semibold text-slate-500">繰り返しパターン</Label>
+                            <Select 
+                              value={formData.recurrence_pattern} 
+                              onValueChange={(v) => setFormData({ ...formData, recurrence_pattern: v })}
+                            >
+                              <SelectTrigger className="mt-1 h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {RECURRENCE_PATTERNS.map(p => (
+                                  <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          
+                          {/* 第N週選択（毎月同じ曜日の場合） */}
+                          {formData.recurrence_pattern === 'monthly_week' && (
+                            <div>
+                              <Label className="text-xs font-semibold text-slate-500">第何週</Label>
+                              <Select 
+                                value={formData.recurrence_week_of_month != null ? String(formData.recurrence_week_of_month) : ''} 
+                                onValueChange={(v) => setFormData({ ...formData, recurrence_week_of_month: parseInt(v) })}
+                              >
+                                <SelectTrigger className="mt-1 h-9">
+                                  <SelectValue placeholder="開始日から自動計算" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {[1,2,3,4,5].map(w => (
+                                    <SelectItem key={w} value={String(w)}>第{w}週</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                          
+                          {/* 曜日選択（毎週・隔週・毎月同じ曜日の場合） */}
+                          {(formData.recurrence_pattern === 'weekly' || formData.recurrence_pattern === 'biweekly' || formData.recurrence_pattern === 'monthly_week') && (
+                            <div>
+                              <Label className="text-xs font-semibold text-slate-500">曜日</Label>
+                              <Select 
+                                value={formData.recurrence_day_of_week != null ? String(formData.recurrence_day_of_week) : ''} 
+                                onValueChange={(v) => setFormData({ ...formData, recurrence_day_of_week: parseInt(v) })}
+                              >
+                                <SelectTrigger className="mt-1 h-9">
+                                  <SelectValue placeholder="開始日の曜日を使用" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {DAY_OF_WEEK_OPTIONS.map(d => (
+                                    <SelectItem key={d.value} value={String(d.value)}>{d.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                          
+                          {/* 終了日 */}
+                          <div>
+                            <Label className="text-xs font-semibold text-slate-500">繰り返し終了日（任意）</Label>
+                            <Input
+                              type="date"
+                              value={formData.recurrence_end_date}
+                              onChange={(e) => setFormData({ ...formData, recurrence_end_date: e.target.value })}
+                              className="mt-1 h-9"
+                              placeholder="未設定の場合は無期限"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     {/* 表示設定 */}
                     <div className="space-y-2 pt-2 border-t">
                       <Label className="text-xs font-semibold text-slate-600">表示設定</Label>
@@ -474,13 +752,6 @@ export default function EventManagement() {
                         <Switch
                           checked={formData.display_on_shift_request}
                           onCheckedChange={(v) => setFormData({ ...formData, display_on_shift_request: v })}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600">定期イベント</span>
-                        <Switch
-                          checked={formData.is_recurring}
-                          onCheckedChange={(v) => setFormData({ ...formData, is_recurring: v })}
                         />
                       </div>
                     </div>
@@ -545,7 +816,7 @@ export default function EventManagement() {
                           type="button"
                           variant="outline"
                           className="text-red-600 border-red-300 hover:bg-red-50"
-                          onClick={() => deleteMutation.mutate(editingEvent.id)}
+                          onClick={() => handleDeleteEvent(editingEvent)}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
@@ -584,10 +855,19 @@ export default function EventManagement() {
                             className={`p-3 rounded-lg border cursor-pointer hover:shadow-md transition-all ${colorStyle.bg} ${colorStyle.border}`}
                             onClick={() => handleEditEvent(event)}
                           >
-                            <div className={`font-bold ${colorStyle.text}`}>{event.title}</div>
+                            <div className="flex items-center gap-1.5">
+                              {event._isRecurringInstance && <Repeat className="w-3 h-3 flex-shrink-0" />}
+                              <span className={`font-bold ${colorStyle.text}`}>{event.title}</span>
+                            </div>
                             {(event.start_time || event.end_time) && (
                               <div className="text-xs text-slate-600 mt-1">
                                 {event.start_time?.substring(0, 5)}{event.end_time ? ` 〜 ${event.end_time.substring(0, 5)}` : ''}
+                              </div>
+                            )}
+                            {event.is_recurring && (
+                              <div className="text-xs text-purple-600 mt-0.5 flex items-center gap-1">
+                                <RefreshCw className="w-3 h-3" />
+                                {RECURRENCE_PATTERNS.find(p => p.value === event.recurrence_pattern)?.label || '定期'}
                               </div>
                             )}
                             {store && <div className="text-xs text-slate-500 mt-0.5">{store.store_name}</div>}
@@ -596,7 +876,7 @@ export default function EventManagement() {
                               <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); handleEditEvent(event); }}>
                                 <Edit className="w-3 h-3 mr-1" /> 編集
                               </Button>
-                              <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={(e) => { e.stopPropagation(); deleteMutation.mutate(event.id); }}>
+                              <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={(e) => { e.stopPropagation(); handleDeleteEvent(event); }}>
                                 <Trash2 className="w-3 h-3 mr-1" /> 削除
                               </Button>
                             </div>
@@ -639,7 +919,10 @@ export default function EventManagement() {
                             onClick={() => handleEditEvent(event)}
                           >
                             <div className="flex items-center justify-between">
-                              <div className={`font-bold text-sm ${colorStyle.text}`}>{event.title}</div>
+                              <div className="flex items-center gap-1.5">
+                                {event._isRecurringInstance && <Repeat className="w-3 h-3 flex-shrink-0" />}
+                                <span className={`font-bold text-sm ${colorStyle.text}`}>{event.title}</span>
+                              </div>
                               <div className="text-xs text-slate-500">
                                 {format(parseISO(event.event_date), 'M/d(E)', { locale: ja })}
                               </div>
@@ -647,6 +930,12 @@ export default function EventManagement() {
                             {(event.start_time || event.end_time) && (
                               <div className="text-xs text-slate-600 mt-0.5">
                                 {event.start_time?.substring(0, 5)}{event.end_time ? ` 〜 ${event.end_time.substring(0, 5)}` : ''}
+                              </div>
+                            )}
+                            {event.is_recurring && (
+                              <div className="text-xs text-purple-600 mt-0.5 flex items-center gap-1">
+                                <RefreshCw className="w-3 h-3" />
+                                {RECURRENCE_PATTERNS.find(p => p.value === event.recurrence_pattern)?.label || '定期'}
                               </div>
                             )}
                             {store && <div className="text-xs text-slate-500 mt-0.5">{store.store_name}</div>}

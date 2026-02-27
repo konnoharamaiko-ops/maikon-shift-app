@@ -5,7 +5,7 @@ import { formatTimeJa } from './ShiftTableView';
 import { getStoreSettingsForDate } from '@/hooks/useStoreSettings';
 
 // 読み取り専用の月ごと/週ごとテーブルビュー（ShiftTableViewの月ごと/週ごと表示と完全一致）
-export default function ReadOnlyTableView({ displayDays, users, workShifts, store, shiftRequests = [], visibleAdminIds = [] }) {
+export default function ReadOnlyTableView({ displayDays, users, workShifts, store, shiftRequests = [], visibleAdminIds = [], showNotes = false }) {
   const orderedUsers = users
     .filter(u => {
       const role = u.user_role || u.role;
@@ -15,7 +15,11 @@ export default function ReadOnlyTableView({ displayDays, users, workShifts, stor
     .sort((a, b) => (a.metadata?.sort_order ?? 999) - (b.metadata?.sort_order ?? 999));
 
   const getShiftForUserAndDate = (userEmail, dateStr) => {
-    return workShifts.filter(s => s.user_email === userEmail && s.date === dateStr);
+    return workShifts.filter(s => s.user_email === userEmail && s.date === dateStr && !s.is_help_slot);
+  };
+
+  const getHelpSlotsForDate = (dateStr) => {
+    return workShifts.filter(s => s.date === dateStr && s.is_help_slot);
   };
 
   const getShiftColor = (startTime) => {
@@ -26,7 +30,7 @@ export default function ReadOnlyTableView({ displayDays, users, workShifts, stor
   };
 
   const calculateDailyTotals = (dateStr) => {
-    const dayShifts = workShifts.filter(s => s.date === dateStr);
+    const dayShifts = workShifts.filter(s => s.date === dateStr && !s.is_help_slot);
     let totalHours = 0;
     let staffCount = new Set();
     dayShifts.forEach(shift => {
@@ -114,8 +118,11 @@ export default function ReadOnlyTableView({ displayDays, users, workShifts, stor
           const storeSettings = store ? getStoreSettingsForDate(store, dateStr) : null;
           const isClosed = storeSettings?.isClosedDay;
 
+          const helpSlots = getHelpSlotsForDate(dateStr);
+
           return (
-            <tr key={date.toString()} className={`${isClosed ? 'opacity-50' : ''} ${isToday ? 'ring-1 ring-inset ring-cyan-300' : ''}`}>
+            <React.Fragment key={date.toString()}>
+            <tr className={`${isClosed ? 'opacity-50' : ''} ${isToday ? 'ring-1 ring-inset ring-cyan-300' : ''}`}>
               <td className={`border border-slate-200 px-2 py-1 font-medium sticky left-0 z-10 ${
                 isClosed ? 'bg-slate-100' : isSun ? 'bg-red-50/60' : isSat ? 'bg-blue-50/60' : 'bg-white'
               }`}>
@@ -175,6 +182,11 @@ export default function ReadOnlyTableView({ displayDays, users, workShifts, stor
                                 ))}
                               </div>
                             )}
+                            {showNotes && shift.notes && (
+                              <div className="text-[7px] sm:text-[8px] text-indigo-500 text-center leading-tight mt-0.5 truncate">
+                                {shift.notes}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -189,6 +201,26 @@ export default function ReadOnlyTableView({ displayDays, users, workShifts, stor
                 <div className="text-[9px] sm:text-[10px] text-slate-500">{hours}h</div>
               </td>
             </tr>
+            {helpSlots.length > 0 && (
+              <tr className="bg-orange-50/40">
+                <td className="border border-slate-200 px-2 py-0.5 sticky left-0 z-10 bg-orange-50">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[9px] sm:text-[10px] font-bold text-orange-600">ヘルプ</span>
+                    <span className="text-[8px] sm:text-[9px] text-orange-400">{helpSlots.length}名</span>
+                  </div>
+                </td>
+                <td colSpan={orderedUsers.length + 1} className="border border-slate-200 px-1 py-0.5">
+                  <div className="flex flex-wrap gap-1">
+                    {helpSlots.map(hs => (
+                      <div key={hs.id} className="bg-orange-100 border border-dashed border-orange-300 rounded px-1.5 py-0.5 text-[8px] sm:text-[9px] text-orange-700 font-medium">
+                        {hs.help_name || 'ヘルプ'} {formatTimeJa(hs.start_time)}-{formatTimeJa(hs.end_time)}
+                      </div>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            )}
+            </React.Fragment>
           );
         })}
         <tr className="font-bold">

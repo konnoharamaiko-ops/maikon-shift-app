@@ -93,6 +93,8 @@ export default function ShiftRequestsViewToggle({ selectedMonth, users, shiftReq
                                 request.is_day_off
                                   ? request.is_paid_leave
                                     ? 'bg-blue-200 text-blue-900'
+                                    : request.is_negotiable_if_needed
+                                    ? 'bg-amber-200 text-amber-900 border border-amber-400'
                                     : 'bg-slate-200 text-slate-900'
                                   : request.is_full_day_available
                                   ? 'bg-green-200 text-green-900'
@@ -104,6 +106,8 @@ export default function ShiftRequestsViewToggle({ selectedMonth, users, shiftReq
                               {request.is_day_off
                                 ? request.is_paid_leave
                                   ? '有給'
+                                  : request.is_negotiable_if_needed
+                                  ? '休(相談)'
                                   : '休み'
                                 : request.is_full_day_available
                                 ? '終日可'

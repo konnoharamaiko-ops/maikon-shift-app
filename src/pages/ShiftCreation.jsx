@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, parseISO, eachDayOfInterval } from 'date-fns';
+import { format, startOfMonth, startOfDay, endOfMonth, startOfWeek, endOfWeek, parseISO, eachDayOfInterval, differenceInDays, isPast, isToday } from 'date-fns';
 import { ja } from 'date-fns/locale';
-import { Shield, Calendar, ChevronLeft, ChevronRight, Store, Layout, Sparkles, Wand2, Copy, RotateCcw, Grid, List, GripVertical, ArrowRight, CheckCircle, Users, FileSpreadsheet, ClipboardList } from 'lucide-react';
+import { Shield, Calendar, ChevronLeft, ChevronRight, Store, Layout, Sparkles, Wand2, Copy, RotateCcw, Grid, List, GripVertical, ArrowRight, CheckCircle, Users, FileSpreadsheet, ClipboardList, Clock, Edit3, AlertCircle, Plus, Trash2 } from 'lucide-react';
+import InlineDeadlineEditor from '@/components/shift/InlineDeadlineEditor';
 import ExportButton from '@/components/export/ExportButton';
 import {
   DndContext,
@@ -49,6 +50,7 @@ import { toast } from 'sonner';
 import { fetchAll, fetchFiltered, insertRecord, insertRecords, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
 import { useAuth } from '@/lib/AuthContext';
 import { cn } from '@/lib/utils';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { invalidateUserQueries } from '@/lib/invalidateHelpers';
 
 function SortableUserItem({ id, user, isSelected, onSelect }) {
@@ -109,6 +111,10 @@ export default function ShiftCreation() {
   const [isResetting, setIsResetting] = useState(false);
   const [resetSelectedUsers, setResetSelectedUsers] = useState([]);
   const [shiftConfirmDialogOpen, setShiftConfirmDialogOpen] = useState(false);
+  const [deadlineDialogOpen, setDeadlineDialogOpen] = useState(false);
+  const [confirmDeadlinePopoverOpen, setConfirmDeadlinePopoverOpen] = useState(false);
+  const [editingDeadlineId, setEditingDeadlineId] = useState(null);
+  const [deadlineDialogMode, setDeadlineDialogMode] = useState('add');
   
   const queryClient = useQueryClient();
 
@@ -132,31 +138,13 @@ export default function ShiftCreation() {
     queryKey: ['stores'],
     queryFn: async () => {
       const allStores = await fetchAll('Store');
-      let filteredStores = allStores;
+      const sortedStores = sortStoresByOrder(allStores);
       
       // Filter stores based on user permissions
       if (user?.user_role !== 'admin' && user?.role !== 'admin') {
-        filteredStores = allStores.filter(store => user?.store_ids?.includes(store.id));
+        return sortedStores.filter(store => user?.store_ids?.includes(store.id));
       }
-
-      // Apply store order from localStorage
-      const savedOrder = localStorage.getItem('storeOrder');
-      if (savedOrder) {
-        try {
-          const order = JSON.parse(savedOrder);
-          return [...filteredStores].sort((a, b) => {
-            const indexA = order.indexOf(a.id);
-            const indexB = order.indexOf(b.id);
-            if (indexA === -1 && indexB === -1) return 0;
-            if (indexA === -1) return 1;
-            if (indexB === -1) return -1;
-            return indexA - indexB;
-          });
-        } catch (e) {
-          console.error("Failed to parse storeOrder:", e);
-        }
-      }
-      return filteredStores;
+      return sortedStores;
     },
   });
 
@@ -170,6 +158,7 @@ export default function ShiftCreation() {
   }, [user, stores, selectedStoreId]);
 
   const primaryStoreId = selectedStoreId;
+  const selectedStore = stores?.find(s => s.id === selectedStoreId);
   const primaryStore = stores.find(s => s.id === primaryStoreId);
   const effectiveWeekStart = primaryStore?.week_start_day ?? 0;
 
@@ -484,6 +473,79 @@ export default function ShiftCreation() {
 
   const isAdminOrManager = !user ? true : (user?.user_role === 'admin' || user?.role === 'admin' || user?.user_role === 'manager');
 
+  // 提出期限データ取得
+  const { data: deadlines = [] } = useQuery({
+    queryKey: ['shiftDeadlines'],
+    queryFn: () => fetchAll('ShiftDeadline'),
+  });
+
+  // 現在の月に対応するアクティブな提出期限を取得
+  const activeStoreDeadlines = useMemo(() => {
+    if (!primaryStoreId || deadlines.length === 0) return [];
+    const monthStartStr = format(startOfMonth(selectedMonth), 'yyyy-MM-dd');
+    const monthEndStr = format(endOfMonth(selectedMonth), 'yyyy-MM-dd');
+    return deadlines.filter(d => {
+      if (d.store_id !== primaryStoreId) return false;
+      // 対象期間が選択月と重なる
+      const targetOverlaps = d.target_month_start <= monthEndStr && d.target_month_end >= monthStartStr;
+      // 確定締切日が選択月内にある
+      const confirmInMonth = d.confirm_deadline_date && d.confirm_deadline_date >= monthStartStr && d.confirm_deadline_date <= monthEndStr;
+      // 提出締切日が選択月内にある
+      const submissionInMonth = d.submission_deadline_date && d.submission_deadline_date >= monthStartStr && d.submission_deadline_date <= monthEndStr;
+      return targetOverlaps || confirmInMonth || submissionInMonth;
+    });
+  }, [deadlines, primaryStoreId, selectedMonth]);
+
+  // 後方互換性のためactiveDeadlineも維持（確定締切が設定されているものを優先）
+  const activeDeadline = useMemo(() => {
+    if (activeStoreDeadlines.length === 0) return null;
+    const withConfirm = activeStoreDeadlines.find(d => d.confirm_deadline_date);
+    return withConfirm || activeStoreDeadlines[0];
+  }, [activeStoreDeadlines]);
+
+  // シフト確定締切の詳細情報を計算
+  const confirmDeadlineInfo = useMemo(() => {
+    if (!activeDeadline?.confirm_deadline_date) return null;
+    const today = new Date();
+    const deadlineDate = parseISO(activeDeadline.confirm_deadline_date);
+    const daysLeft = differenceInDays(startOfDay(deadlineDate), startOfDay(today));
+    const isExpired = isPast(deadlineDate) && !isToday(deadlineDate);
+    const isUrgent = daysLeft <= 3 && !isExpired;
+    const isTodayDeadline = isToday(deadlineDate);
+    
+    let targetTitle = '';
+    if (activeDeadline.target_month_start && activeDeadline.target_month_end) {
+      try {
+        const startDate = parseISO(activeDeadline.target_month_start);
+        const endDate = parseISO(activeDeadline.target_month_end);
+        targetTitle = `${format(startDate, 'M/d(E)', { locale: ja })}〜${format(endDate, 'M/d(E)', { locale: ja })}分`;
+      } catch { targetTitle = ''; }
+    }
+    
+    return {
+      deadline: activeDeadline,
+      daysLeft,
+      isExpired,
+      isUrgent,
+      isTodayDeadline,
+      targetTitle,
+      deadlineDateStr: format(deadlineDate, 'M月d日', { locale: ja }),
+      deadlineDayOfWeek: format(deadlineDate, 'E', { locale: ja }),
+    };
+  }, [activeDeadline]);
+
+  // 全店舗の確定締切一覧（ポップオーバー用）
+  const allStoreConfirmDeadlines = useMemo(() => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    return (deadlines || [])
+      .filter(d => d.confirm_deadline_date && d.target_month_end >= todayStr)
+      .sort((a, b) => a.confirm_deadline_date.localeCompare(b.confirm_deadline_date))
+      .map(d => {
+        const store = (stores || []).find(s => s.id === d.store_id);
+        return { ...d, storeName: store?.store_name || '不明' };
+      });
+  }, [deadlines, stores]);
+
   if (!isAdminOrManager) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-red-50 flex items-center justify-center p-4">
@@ -638,7 +700,7 @@ export default function ShiftCreation() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
-      <header className="bg-white/80 backdrop-blur-sm border-b border-slate-100 sticky top-0 z-10">
+      <header className="bg-white/80 backdrop-blur-sm border-b border-slate-100 sticky top-0 z-40">
         <div className="w-full px-2 sm:px-4 lg:px-6 xl:px-8 py-2.5 sm:py-4">
           <div className="space-y-2 sm:space-y-3">
             <div className="flex items-center justify-between">
@@ -667,7 +729,8 @@ export default function ShiftCreation() {
               </div>
             </div>
             <div className="flex items-center justify-between gap-2">
-              {user?.store_ids && user?.store_ids.length > 1 && (
+              {/* 店舗選択 - 常に表示（1店舗でも表示） */}
+              {user?.store_ids && user?.store_ids.length > 0 && (
                 <div className="flex items-center gap-2">
                   <Store className="w-4 h-4 text-slate-400" />
                   <Select value={selectedStoreId} onValueChange={setSelectedStoreId}>
@@ -705,6 +768,64 @@ export default function ShiftCreation() {
                   <ChevronRight className="w-5 h-5" />
                 </Button>
               </div>
+            </div>
+            {/* シフト確定締切バッジ - ポップオーバー付き */}
+            <div className="flex items-center">
+              <Popover open={confirmDeadlinePopoverOpen} onOpenChange={setConfirmDeadlinePopoverOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    className={cn(
+                      "inline-flex items-center gap-1 sm:gap-2 text-white px-2 sm:px-4 py-1.5 sm:py-2 rounded-xl shadow-lg text-[11px] sm:text-sm transition-all font-semibold active:scale-95 w-full sm:w-auto",
+                      !confirmDeadlineInfo
+                        ? "bg-slate-400 hover:bg-slate-500"
+                        : confirmDeadlineInfo.isExpired
+                        ? "bg-gradient-to-r from-gray-400 to-gray-500 hover:from-gray-500 hover:to-gray-600"
+                        : confirmDeadlineInfo.isTodayDeadline
+                        ? "bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 animate-pulse"
+                        : confirmDeadlineInfo.isUrgent
+                        ? "bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600"
+                        : "bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700"
+                    )}
+                  >
+                    {confirmDeadlineInfo?.isTodayDeadline ? (
+                      <AlertCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                    ) : (
+                      <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                    )}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-0 sm:gap-1.5 text-left min-w-0">
+                      {confirmDeadlineInfo?.targetTitle && (
+                        <span className="opacity-90 font-medium text-[10px] sm:text-xs truncate">{confirmDeadlineInfo.targetTitle}</span>
+                      )}
+                      <span className="font-bold truncate">
+                        {confirmDeadlineInfo ? (
+                          confirmDeadlineInfo.isExpired
+                            ? `確定締切切れ (${confirmDeadlineInfo.deadlineDateStr})`
+                            : confirmDeadlineInfo.isTodayDeadline
+                            ? `確定締切は本日！`
+                            : `確定締切 ${confirmDeadlineInfo.deadlineDateStr}(${confirmDeadlineInfo.deadlineDayOfWeek})迄`
+                        ) : (
+                          'シフト確定締切を設定'
+                        )}
+                      </span>
+                    </div>
+                    {confirmDeadlineInfo && !confirmDeadlineInfo.isExpired && (
+                      <span className="text-[10px] sm:text-xs font-bold bg-white/25 px-1.5 sm:px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">
+                        {confirmDeadlineInfo.isTodayDeadline ? '今日' : `残り${confirmDeadlineInfo.daysLeft}日`}
+                      </span>
+                    )}
+                    <Edit3 className="w-3 h-3 sm:w-3.5 sm:h-3.5 opacity-70 flex-shrink-0" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-96 p-0" align="start">
+                  <InlineDeadlineEditor
+                    deadlines={deadlines}
+                    storeId={primaryStoreId}
+                    storeName={selectedStore?.store_name}
+                    type="confirm"
+                    isAdmin={true}
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
         </div>
@@ -1190,6 +1311,8 @@ export default function ShiftCreation() {
           </TabsContent>
         </Tabs>
       </main>
+
+
     </div>
   );
 }

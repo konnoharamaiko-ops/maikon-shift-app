@@ -13,6 +13,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { cn } from '@/lib/utils';
 import { getStoreSettingsForDate } from '@/hooks/useStoreSettings';
 import AdminDropdown from '@/components/ui/AdminDropdown';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 // ============ USER AVATAR COMPONENT ============
 function UserAvatar({ user: u, isSelected, onClick, shiftSummary, isMe }) {
@@ -107,6 +108,7 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
   const getShiftColor = (shift) => {
     if (!shift) return '';
     if (shift.is_day_off && shift.is_paid_leave) return 'bg-green-50 border-green-300';
+    if (shift.is_day_off && shift.is_negotiable_if_needed) return 'bg-amber-50 border-amber-300';
     if (shift.is_day_off) return 'bg-slate-50 border-slate-300';
     if (shift.is_full_day_available) return 'bg-indigo-50 border-indigo-200';
     return 'bg-blue-50 border-blue-200';
@@ -135,11 +137,11 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
         {shift ? (
           <div className="space-y-3">
             {shift.is_day_off ? (
-              <div className={`p-4 rounded-xl border-2 ${shift.is_paid_leave ? 'bg-green-50 border-green-300' : 'bg-slate-50 border-slate-300'}`}>
+              <div className={`p-4 rounded-xl border-2 ${shift.is_paid_leave ? 'bg-green-50 border-green-300' : shift.is_negotiable_if_needed ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-300'}`}>
                 <div className="flex items-center gap-2">
-                  {shift.is_paid_leave ? <Palmtree className="w-5 h-5 text-green-600" /> : <X className="w-5 h-5 text-slate-500" />}
-                  <span className={`font-bold text-base ${shift.is_paid_leave ? 'text-green-800' : 'text-slate-700'}`}>
-                    {shift.is_paid_leave ? '有給休暇' : '休み希望'}
+                  {shift.is_paid_leave ? <Palmtree className="w-5 h-5 text-green-600" /> : <X className={`w-5 h-5 ${shift.is_negotiable_if_needed ? 'text-amber-500' : 'text-slate-500'}`} />}
+                  <span className={`font-bold text-base ${shift.is_paid_leave ? 'text-green-800' : shift.is_negotiable_if_needed ? 'text-amber-800' : 'text-slate-700'}`}>
+                    {shift.is_paid_leave ? '有給休暇' : shift.is_negotiable_if_needed ? '休み希望（要相談）' : '休み希望'}
                   </span>
                 </div>
               </div>
@@ -171,9 +173,9 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
                 )}
               </div>
             )}
-            {shift.is_negotiable_if_needed && !shift.is_day_off && (
+            {shift.is_negotiable_if_needed && (
               <div className="px-3 py-2 bg-amber-50 rounded-lg border border-amber-200">
-                <span className="text-amber-800 font-semibold text-sm">要相談可</span>
+                <span className="text-amber-800 font-semibold text-sm">{shift.is_day_off ? '休み希望ですが相談可能' : '要相談可'}</span>
               </div>
             )}
             {shift.notes && (
@@ -211,7 +213,8 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
                 "flex items-center gap-3 p-3 rounded-lg border transition-all",
                 isClosed && "border-slate-200 bg-slate-100 opacity-60",
                 !isClosed && shift && shift.is_day_off && shift.is_paid_leave && "border-green-300 bg-green-50",
-                !isClosed && shift && shift.is_day_off && !shift.is_paid_leave && "border-slate-300 bg-slate-50",
+                !isClosed && shift && shift.is_day_off && !shift.is_paid_leave && shift.is_negotiable_if_needed && "border-amber-300 bg-amber-50",
+                !isClosed && shift && shift.is_day_off && !shift.is_paid_leave && !shift.is_negotiable_if_needed && "border-slate-300 bg-slate-50",
                 !isClosed && shift && !shift.is_day_off && "border-blue-200 bg-blue-50",
                 !isClosed && !shift && "border-slate-100 bg-white",
                 isTodayDate && "ring-2 ring-inset ring-purple-400"
@@ -229,8 +232,8 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
               <div className="flex-1">
                 {shift ? (
                   shift.is_day_off ? (
-                    <span className={`font-semibold text-sm ${shift.is_paid_leave ? 'text-green-700' : 'text-slate-600'}`}>
-                      {shift.is_paid_leave ? '有給休暇' : '休み希望'}
+                    <span className={`font-semibold text-sm ${shift.is_paid_leave ? 'text-green-700' : shift.is_negotiable_if_needed ? 'text-amber-700' : 'text-slate-600'}`}>
+                      {shift.is_paid_leave ? '有給休暇' : shift.is_negotiable_if_needed ? '休み(要相談)' : '休み希望'}
                     </span>
                   ) : shift.is_full_day_available ? (
                     <span className="text-indigo-700 font-semibold text-sm">終日勤務可能</span>
@@ -247,7 +250,7 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
                     {shift.additional_times.map((at, i) => `+${at.start_time?.slice(0,5)}-${at.end_time?.slice(0,5)}`).join(' ')}
                   </span>
                 )}
-                {shift?.is_negotiable_if_needed && !shift?.is_day_off && (
+                {shift?.is_negotiable_if_needed && (
                   <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">相談可</span>
                 )}
               </div>
@@ -354,7 +357,8 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
                 "aspect-square p-1.5 sm:p-2 rounded-lg border-2 transition-all text-center flex flex-col",
                 isClosed && "border-slate-200 bg-slate-100 opacity-60",
                 !isClosed && shift && shift.is_day_off && shift.is_paid_leave && "border-green-300 bg-green-50",
-                !isClosed && shift && shift.is_day_off && !shift.is_paid_leave && "border-slate-300 bg-slate-50",
+                !isClosed && shift && shift.is_day_off && !shift.is_paid_leave && shift.is_negotiable_if_needed && "border-amber-300 bg-amber-50",
+                !isClosed && shift && shift.is_day_off && !shift.is_paid_leave && !shift.is_negotiable_if_needed && "border-slate-300 bg-slate-50",
                 !isClosed && shift && !shift.is_day_off && "border-blue-200 bg-blue-50",
                 !isClosed && !shift && "border-slate-100 bg-white",
                 isTodayDate && "ring-2 ring-inset ring-purple-400 bg-purple-50"
@@ -375,9 +379,9 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
                 <div className="mt-0.5 flex-1 flex flex-col justify-center">
                   {shift.is_day_off ? (
                     <div className={`px-0.5 py-0.5 rounded text-xs sm:text-sm font-bold ${
-                      shift.is_paid_leave ? 'text-green-700 bg-green-200' : 'text-slate-600 bg-slate-200'
+                      shift.is_paid_leave ? 'text-green-700 bg-green-200' : shift.is_negotiable_if_needed ? 'text-amber-700 bg-amber-200' : 'text-slate-600 bg-slate-200'
                     }`}>
-                      {shift.is_paid_leave ? '有給' : '休み'}
+                      {shift.is_paid_leave ? '有給' : shift.is_negotiable_if_needed ? '休(相談)' : '休み'}
                     </div>
                   ) : shift.is_full_day_available ? (
                     <div className="px-0.5 py-0.5 bg-indigo-200 rounded text-xs sm:text-sm text-indigo-800 font-bold">
@@ -396,7 +400,7 @@ function UserCalendarView({ userEmail, userName, shifts, currentMonth, store, vi
                       ))}
                     </>
                   )}
-                  {shift.is_negotiable_if_needed && !shift.is_day_off && (
+                  {shift.is_negotiable_if_needed && (
                     <div className="text-[9px] sm:text-xs text-amber-700 font-bold bg-amber-100 rounded px-0.5 mt-0.5">相談可</div>
                   )}
                 </div>
@@ -458,24 +462,7 @@ export default function Admin() {
     queryKey: ['stores'],
     queryFn: async () => {
       const { data } = await supabase.from('Store').select('*');
-      let allStores = data || [];
-      const savedOrder = localStorage.getItem('storeOrder');
-      if (savedOrder) {
-        try {
-          const order = JSON.parse(savedOrder);
-          return [...allStores].sort((a, b) => {
-            const indexA = order.indexOf(a.id);
-            const indexB = order.indexOf(b.id);
-            if (indexA === -1 && indexB === -1) return 0;
-            if (indexA === -1) return 1;
-            if (indexB === -1) return -1;
-            return indexA - indexB;
-          });
-        } catch (e) {
-          console.error("Failed to parse storeOrder:", e);
-        }
-      }
-      return allStores;
+      return sortStoresByOrder(data || []);
     },
   });
 

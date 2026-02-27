@@ -15,6 +15,7 @@ import { ja } from 'date-fns/locale';
 import { fetchAll, fetchFiltered, insertRecord, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
 import { useAuth } from '@/lib/AuthContext';
 import { toast } from 'sonner';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
 
@@ -31,7 +32,10 @@ export default function Analytics() {
 
   const { data: stores = [] } = useQuery({
     queryKey: ['stores'],
-    queryFn: () => fetchAll('Store'),
+    queryFn: async () => {
+      const allStores = await fetchAll('Store');
+      return sortStoresByOrder(allStores);
+    },
   });
 
   const { data: allUsers = [] } = useQuery({
@@ -771,15 +775,21 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
   const [editDate, setEditDate] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editStatus, setEditStatus] = useState('');
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectTargetId, setRejectTargetId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
   const queryClient = useQueryClient();
 
   const targetEmail = isAdmin ? selectedTargetEmail : userEmail;
 
   const balance = useMemo(() => {
-    return allPaidLeaveBalances.find(b => b.user_email === targetEmail);
+    if (!targetEmail) return null;
+    return allPaidLeaveBalances.find(b => b.user_email === targetEmail) || null;
   }, [allPaidLeaveBalances, targetEmail]);
 
   const userRequests = useMemo(() => {
+    if (!targetEmail) return [];
     return allPaidLeaveRequests.filter(r => r.user_email === targetEmail).sort((a, b) => b.date.localeCompare(a.date));
   }, [allPaidLeaveRequests, targetEmail]);
 
@@ -858,12 +868,12 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
   };
 
   const handleDeleteRequest = async (requestId) => {
-    if (!window.confirm('この有給申請を削除しますか？')) return;
     try {
       await deleteRecord('PaidLeaveRequest', requestId);
       toast.success('有給申請を削除しました');
       queryClient.invalidateQueries({ queryKey: ['paidLeaveRequests'] });
       queryClient.invalidateQueries({ queryKey: ['pendingLeaveCount'] });
+      setDeleteConfirmId(null);
     } catch (error) { toast.error('削除に失敗しました: ' + error.message); }
   };
 
@@ -920,6 +930,9 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
       queryClient.invalidateQueries({ queryKey: ['paidLeaveRequests'] });
       queryClient.invalidateQueries({ queryKey: ['shiftRequests'] });
       queryClient.invalidateQueries({ queryKey: ['myPaidLeaveRequests'] });
+      setRejectDialogOpen(false);
+      setRejectTargetId(null);
+      setRejectReason('');
     } catch (error) { toast.error('処理に失敗しました'); }
   };
 
@@ -929,14 +942,19 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
   }, [allPaidLeaveRequests, isAdmin]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 sm:space-y-5">
       {/* ユーザー選択（管理者のみ） */}
       {isAdmin && (
-        <div className="flex items-center gap-2 bg-slate-50 rounded-xl p-3">
-          <Label className="text-xs font-medium text-slate-600 whitespace-nowrap">対象:</Label>
+        <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-xl p-3 sm:p-4 border border-indigo-100">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-6 h-6 rounded-lg bg-indigo-100 flex items-center justify-center">
+              <Activity className="w-3.5 h-3.5 text-indigo-600" />
+            </div>
+            <Label className="text-xs font-bold text-indigo-700">表示するスタッフを選択</Label>
+          </div>
           <Select value={selectedTargetEmail} onValueChange={setSelectedTargetEmail}>
-            <SelectTrigger className="w-48 h-8 text-xs rounded-lg">
-              <SelectValue placeholder="ユーザーを選択" />
+            <SelectTrigger className="w-full h-10 text-sm rounded-lg bg-white border-indigo-200 focus:ring-indigo-300">
+              <SelectValue placeholder="スタッフを選択してください" />
             </SelectTrigger>
             <SelectContent>
               {allUsers.filter(u => u.is_active !== false).map(u => (
@@ -952,37 +970,39 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
       {/* 未承認申請一覧（管理者のみ） */}
       {isAdmin && pendingRequests.length > 0 && (
         <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-3 sm:p-4">
-          <h3 className="text-xs font-bold text-amber-700 mb-2 flex items-center gap-1.5">
-            <AlertCircle className="w-3.5 h-3.5" />
+          <h3 className="text-sm font-bold text-amber-700 mb-3 flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
+              <AlertCircle className="w-4 h-4 text-amber-600" />
+            </div>
             未承認の有給申請
             <Badge className="bg-amber-500 text-white text-[10px] ml-auto">{pendingRequests.length}件</Badge>
           </h3>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {pendingRequests.map(req => {
               const reqUser = allUsers.find(u => u.email === req.user_email);
               const displayName = reqUser?.metadata?.display_name || reqUser?.full_name || req.user_email;
               return (
-                <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-2.5 bg-white rounded-lg border border-amber-100 gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                      <span className="text-amber-700 font-bold text-[10px]">{displayName.charAt(0)}</span>
+                <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-white rounded-xl border border-amber-100 shadow-sm gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center flex-shrink-0">
+                      <span className="text-amber-700 font-bold text-sm">{displayName.charAt(0)}</span>
                     </div>
                     <div>
-                      <span className="font-semibold text-xs text-slate-800">{displayName}</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-500 text-[10px]">{req.date}</span>
-                        {req.notes && <span className="text-[10px] text-slate-400">- {req.notes}</span>}
+                      <span className="font-bold text-sm text-slate-800">{displayName}</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-slate-600 text-xs font-medium">{format(parseISO(req.date), 'M月d日（E）', { locale: ja })}</span>
+                        {req.notes && <span className="text-xs text-slate-400">- {req.notes}</span>}
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-1.5 ml-9 sm:ml-0">
-                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-[10px] px-2 rounded-lg"
+                  <div className="flex gap-2 ml-11 sm:ml-0">
+                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-9 text-xs px-4 rounded-lg font-bold shadow-sm"
                       onClick={() => handleApproveReject(req.id, 'approved')}>
-                      <CheckCircle className="w-3 h-3 mr-0.5" />承認
+                      <CheckCircle className="w-4 h-4 mr-1" />承認
                     </Button>
-                    <Button size="sm" variant="outline" className="text-red-600 h-7 text-[10px] px-2 rounded-lg border-red-200"
-                      onClick={() => { const reason = window.prompt('却下理由（任意）'); handleApproveReject(req.id, 'rejected', reason || ''); }}>
-                      <XCircle className="w-3 h-3 mr-0.5" />却下
+                    <Button size="sm" variant="outline" className="text-red-600 h-9 text-xs px-4 rounded-lg border-red-200 font-bold"
+                      onClick={() => { setRejectTargetId(req.id); setRejectReason(''); setRejectDialogOpen(true); }}>
+                      <XCircle className="w-4 h-4 mr-1" />却下
                     </Button>
                   </div>
                 </div>
@@ -992,82 +1012,97 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
         </div>
       )}
 
+      {/* メインアクションボタン */}
+      <div className="grid grid-cols-2 gap-3">
+        <Button
+          onClick={() => setBalanceEditOpen(true)}
+          variant="outline"
+          className="h-14 sm:h-16 rounded-xl border-2 border-indigo-200 hover:bg-indigo-50 hover:border-indigo-300 transition-all flex flex-col items-center justify-center gap-1"
+        >
+          <Edit3 className="w-5 h-5 text-indigo-600" />
+          <span className="text-xs font-bold text-indigo-700">残高設定</span>
+        </Button>
+        <Button
+          onClick={() => setRequestDialogOpen(true)}
+          className="h-14 sm:h-16 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg shadow-emerald-200 transition-all flex flex-col items-center justify-center gap-1"
+        >
+          <Plus className="w-5 h-5" />
+          <span className="text-xs font-bold">有給申請</span>
+        </Button>
+      </div>
+
       {/* 有給残高カード */}
-      <div className="bg-gradient-to-br from-white to-emerald-50/30 rounded-xl border border-slate-100 p-3 sm:p-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-3">
-          <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center">
-              <CalendarDays className="w-4 h-4 text-emerald-600" />
-            </div>
-            有給残高
-          </h3>
-          <div className="flex gap-1.5 w-full sm:w-auto">
-            <Button variant="outline" size="sm" className="flex-1 sm:flex-none rounded-lg h-7 text-[10px] sm:text-xs" onClick={() => setBalanceEditOpen(true)}>
-              <Edit3 className="w-3 h-3 mr-0.5" />残高設定
-            </Button>
-            <Button size="sm" className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg h-7 text-[10px] sm:text-xs shadow-sm" onClick={() => setRequestDialogOpen(true)}>
-              <Plus className="w-3 h-3 mr-0.5" />有給申請
-            </Button>
+      <div className="bg-gradient-to-br from-white to-emerald-50/30 rounded-xl border border-slate-100 p-3 sm:p-5">
+        <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-3">
+          <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center">
+            <CalendarDays className="w-4 h-4 text-emerald-600" />
           </div>
-        </div>
+          有給残高
+        </h3>
 
         {currentBalance ? (
           <div className="space-y-3">
-            <div className="grid grid-cols-3 gap-2">
-              <div className="p-2.5 sm:p-3 bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-xl text-center border border-emerald-100">
-                <p className="text-[9px] sm:text-[10px] text-emerald-600 font-medium">残り</p>
-                <p className="text-2xl sm:text-3xl font-bold text-emerald-600">{currentBalance.remaining}</p>
-                <p className="text-[9px] sm:text-[10px] text-emerald-500">日</p>
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              <div className="p-3 sm:p-4 bg-gradient-to-br from-emerald-50 to-emerald-100/50 rounded-xl text-center border border-emerald-100">
+                <p className="text-[10px] sm:text-xs text-emerald-600 font-medium mb-1">残り</p>
+                <p className="text-3xl sm:text-4xl font-bold text-emerald-600">{currentBalance.remaining}</p>
+                <p className="text-[10px] sm:text-xs text-emerald-500 mt-0.5">日</p>
               </div>
-              <div className="p-2.5 sm:p-3 bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl text-center border border-blue-100">
-                <p className="text-[9px] sm:text-[10px] text-blue-600 font-medium">付与</p>
-                <p className="text-2xl sm:text-3xl font-bold text-blue-600">{currentBalance.total}</p>
-                <p className="text-[9px] sm:text-[10px] text-blue-500">日</p>
+              <div className="p-3 sm:p-4 bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl text-center border border-blue-100">
+                <p className="text-[10px] sm:text-xs text-blue-600 font-medium mb-1">付与</p>
+                <p className="text-3xl sm:text-4xl font-bold text-blue-600">{currentBalance.total}</p>
+                <p className="text-[10px] sm:text-xs text-blue-500 mt-0.5">日</p>
               </div>
-              <div className="p-2.5 sm:p-3 bg-gradient-to-br from-orange-50 to-orange-100/50 rounded-xl text-center border border-orange-100">
-                <p className="text-[9px] sm:text-[10px] text-orange-600 font-medium">使用済</p>
-                <p className="text-2xl sm:text-3xl font-bold text-orange-600">{currentBalance.used}</p>
-                <p className="text-[9px] sm:text-[10px] text-orange-500">日</p>
+              <div className="p-3 sm:p-4 bg-gradient-to-br from-orange-50 to-orange-100/50 rounded-xl text-center border border-orange-100">
+                <p className="text-[10px] sm:text-xs text-orange-600 font-medium mb-1">使用済</p>
+                <p className="text-3xl sm:text-4xl font-bold text-orange-600">{currentBalance.used}</p>
+                <p className="text-[10px] sm:text-xs text-orange-500 mt-0.5">日</p>
               </div>
             </div>
 
             <div className="bg-white/60 rounded-xl p-3 border border-slate-100">
-              <div className="flex justify-between text-[10px] text-slate-500 mb-1.5">
+              <div className="flex justify-between text-xs text-slate-500 mb-2">
                 <span className="font-medium">使用率</span>
                 <span className="font-bold text-slate-700">{currentBalance.total > 0 ? ((currentBalance.used / currentBalance.total) * 100).toFixed(0) : 0}%</span>
               </div>
-              <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                <div className="bg-gradient-to-r from-emerald-400 to-emerald-600 h-2.5 rounded-full transition-all duration-500"
+              <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                <div className="bg-gradient-to-r from-emerald-400 to-emerald-600 h-3 rounded-full transition-all duration-500"
                   style={{ width: `${currentBalance.total > 0 ? Math.min(100, (currentBalance.used / currentBalance.total) * 100) : 0}%` }} />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
               {[
-                { label: '残高基準日', value: currentBalance.balanceDate },
-                { label: '前回付与日', value: currentBalance.grantDate },
-                { label: '次回付与日', value: currentBalance.nextGrantDate, extra: daysUntilNextGrant !== null && daysUntilNextGrant > 0 ? `(あと${daysUntilNextGrant}日)` : null },
-                { label: '次回付与日数', value: currentBalance.nextGrantDays ? `${currentBalance.nextGrantDays}日` : null },
-              ].map(({ label, value, extra }) => (
-                <div key={label} className="p-2 bg-white/80 rounded-lg border border-slate-100">
-                  <p className="text-[9px] sm:text-[10px] text-slate-400 font-medium">{label}</p>
-                  <p className="font-semibold text-xs text-slate-700 mt-0.5">
-                    {value || '-'}
-                    {extra && <span className="text-[9px] text-indigo-500 ml-1 font-normal">{extra}</span>}
+                { label: '残高基準日', value: currentBalance.balanceDate, icon: '📅' },
+                { label: '前回付与日', value: currentBalance.grantDate, icon: '🎁' },
+                { label: '次回付与日', value: currentBalance.nextGrantDate, extra: daysUntilNextGrant !== null && daysUntilNextGrant > 0 ? `(あと${daysUntilNextGrant}日)` : null, icon: '📆' },
+                { label: '次回付与日数', value: currentBalance.nextGrantDays ? `${currentBalance.nextGrantDays}日` : null, icon: '✨' },
+              ].map(({ label, value, extra, icon }) => (
+                <div key={label} className="p-2.5 bg-white/80 rounded-lg border border-slate-100">
+                  <p className="text-[10px] sm:text-xs text-slate-400 font-medium flex items-center gap-1">
+                    <span>{icon}</span> {label}
+                  </p>
+                  <p className="font-semibold text-xs sm:text-sm text-slate-700 mt-0.5">
+                    {value || '未設定'}
+                    {extra && <span className="text-[10px] text-indigo-500 ml-1 font-normal">{extra}</span>}
                   </p>
                 </div>
               ))}
             </div>
           </div>
         ) : (
-          <div className="text-center py-8">
-            <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
-              <CalendarDays className="w-7 h-7 text-slate-300" />
+          <div className="text-center py-8 sm:py-10">
+            <div className="w-16 h-16 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-emerald-100">
+              <CalendarDays className="w-8 h-8 text-emerald-300" />
             </div>
-            <p className="text-xs text-slate-500 mb-1">有給残高が設定されていません</p>
-            <p className="text-[10px] text-slate-400 mb-3">残高を設定して有給休暇を管理しましょう</p>
-            <Button variant="outline" size="sm" className="rounded-lg h-7 text-xs" onClick={() => setBalanceEditOpen(true)}>
-              <Plus className="w-3 h-3 mr-1" />残高を設定
+            <p className="text-sm font-bold text-slate-600 mb-1">有給残高が設定されていません</p>
+            <p className="text-xs text-slate-400 mb-4 max-w-xs mx-auto">上の「残高設定」ボタンから、有給の付与日数や基準日を設定しましょう</p>
+            <Button
+              onClick={() => setBalanceEditOpen(true)}
+              className="bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white rounded-xl h-10 px-6 text-sm font-bold shadow-lg shadow-indigo-200"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              残高を設定する
             </Button>
           </div>
         )}
@@ -1075,70 +1110,88 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
 
       {/* 有給申請履歴 */}
       <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
-        <div className="p-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
-          <h3 className="text-xs font-bold text-slate-600 flex items-center gap-1.5">
-            <FileText className="w-3.5 h-3.5" />
+        <div className="p-3 sm:p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+          <h3 className="text-sm font-bold text-slate-600 flex items-center gap-2">
+            <FileText className="w-4 h-4" />
             有給申請履歴
           </h3>
           {userRequests.length > 0 && (
-            <Badge variant="outline" className="text-[10px]">{userRequests.length}件</Badge>
+            <Badge variant="outline" className="text-xs">{userRequests.length}件</Badge>
           )}
         </div>
         {userRequests.length === 0 ? (
-          <div className="text-center py-8">
-            <FileText className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-            <p className="text-xs text-slate-400">有給申請がありません</p>
+          <div className="text-center py-10">
+            <FileText className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+            <p className="text-sm text-slate-400 mb-1">有給申請がありません</p>
+            <p className="text-xs text-slate-300">「有給申請」ボタンから申請できます</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-50">
             {userRequests.map(req => {
               const statusConfig = req.status === 'approved'
-                ? { label: '承認済', bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> }
+                ? { label: '承認済', bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', icon: <CheckCircle className="w-4 h-4 text-emerald-500" /> }
                 : req.status === 'rejected'
-                ? { label: '却下', bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', icon: <XCircle className="w-3.5 h-3.5 text-red-500" /> }
-                : { label: '申請中', bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', icon: <Clock className="w-3.5 h-3.5 text-amber-500" /> };
+                ? { label: '却下', bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', icon: <XCircle className="w-4 h-4 text-red-500" /> }
+                : { label: '申請中', bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', icon: <Clock className="w-4 h-4 text-amber-500" /> };
               return (
-                <div key={req.id} className={`p-3 ${statusConfig.bg} hover:brightness-95 transition-all`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                    <div className="flex items-center gap-2">
+                <div key={req.id} className={`p-3 sm:p-4 ${statusConfig.bg} hover:brightness-[0.97] transition-all`}>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
                       {statusConfig.icon}
                       <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-semibold text-xs text-slate-800">{req.date}</span>
-                          <Badge variant="outline" className={`text-[9px] px-1.5 py-0 ${statusConfig.text} ${statusConfig.border}`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-sm text-slate-800">{format(parseISO(req.date), 'M月d日（E）', { locale: ja })}</span>
+                          <Badge variant="outline" className={`text-[10px] px-2 py-0.5 ${statusConfig.text} ${statusConfig.border} font-bold`}>
                             {statusConfig.label}
                           </Badge>
                         </div>
-                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           {req.approved_by && (
-                            <span className="text-[9px] text-slate-400">
+                            <span className="text-[10px] text-slate-400">
                               承認: {allUsers.find(u => u.email === req.approved_by)?.metadata?.display_name || req.approved_by}
                             </span>
                           )}
                           {(req.rejection_reason || req.notes) && (
-                            <span className="text-[9px] text-slate-400 truncate max-w-[180px]">{req.rejection_reason || req.notes}</span>
+                            <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{req.rejection_reason || req.notes}</span>
                           )}
                         </div>
                       </div>
                     </div>
-                    <div className="flex gap-1 ml-6 sm:ml-0 flex-shrink-0">
+                    <div className="flex gap-1.5 ml-7 sm:ml-0 flex-shrink-0">
                       {isAdmin && req.status === 'pending' && (
                         <>
-                          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-6 text-[10px] px-2 rounded-md"
-                            onClick={() => handleApproveReject(req.id, 'approved')}>承認</Button>
-                          <Button size="sm" variant="outline" className="text-red-600 h-6 text-[10px] px-2 rounded-md border-red-200"
-                            onClick={() => { const reason = window.prompt('却下理由'); handleApproveReject(req.id, 'rejected', reason || ''); }}>却下</Button>
+                          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs px-3 rounded-lg font-bold"
+                            onClick={() => handleApproveReject(req.id, 'approved')}>
+                            <CheckCircle className="w-3.5 h-3.5 mr-1" />承認
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-red-600 h-8 text-xs px-3 rounded-lg border-red-200 font-bold"
+                            onClick={() => { setRejectTargetId(req.id); setRejectReason(''); setRejectDialogOpen(true); }}>
+                            <XCircle className="w-3.5 h-3.5 mr-1" />却下
+                          </Button>
                         </>
                       )}
                       {isAdmin && (
-                        <Button size="sm" variant="outline" className="h-6 text-[10px] px-1.5 rounded-md" onClick={() => handleOpenEdit(req)}>
-                          <Edit3 className="w-2.5 h-2.5" />
+                        <Button size="sm" variant="outline" className="h-8 text-xs px-2 rounded-lg" onClick={() => handleOpenEdit(req)}>
+                          <Edit3 className="w-3.5 h-3.5" />
                         </Button>
                       )}
-                      <Button size="sm" variant="outline" className="text-red-500 hover:bg-red-50 h-6 text-[10px] px-1.5 rounded-md border-red-200"
-                        onClick={() => handleDeleteRequest(req.id)}>
-                        <Trash2 className="w-2.5 h-2.5" />
-                      </Button>
+                      {deleteConfirmId === req.id ? (
+                        <div className="flex gap-1">
+                          <Button size="sm" className="bg-red-600 hover:bg-red-700 text-white h-8 text-xs px-2 rounded-lg"
+                            onClick={() => handleDeleteRequest(req.id)}>
+                            削除
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-8 text-xs px-2 rounded-lg"
+                            onClick={() => setDeleteConfirmId(null)}>
+                            戻る
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button size="sm" variant="outline" className="text-red-500 hover:bg-red-50 h-8 text-xs px-2 rounded-lg border-red-200"
+                          onClick={() => setDeleteConfirmId(req.id)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1150,31 +1203,39 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
 
       {/* 有給申請ダイアログ */}
       <Dialog open={requestDialogOpen} onOpenChange={setRequestDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-emerald-700">
-              <CalendarDays className="w-5 h-5" />有給申請
+            <DialogTitle className="flex items-center gap-2 text-emerald-700 text-lg">
+              <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
+                <CalendarDays className="w-5 h-5 text-emerald-600" />
+              </div>
+              有給申請
             </DialogTitle>
-            <DialogDescription>有給休暇を申請します。管理者の承認後に反映されます。</DialogDescription>
+            <DialogDescription className="text-sm">有給休暇を申請します。管理者の承認後に反映されます。</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="space-y-5 py-4">
             <div>
-              <Label className="text-sm font-medium">取得希望日</Label>
-              <Input type="date" value={requestDate} onChange={(e) => setRequestDate(e.target.value)} className="mt-1" />
+              <Label className="text-sm font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                📅 取得希望日 <span className="text-red-500">*</span>
+              </Label>
+              <Input type="date" value={requestDate} onChange={(e) => setRequestDate(e.target.value)} className="h-11 rounded-lg text-base" />
             </div>
             <div>
-              <Label className="text-sm font-medium">理由・備考（任意）</Label>
-              <Input value={requestNotes} onChange={(e) => setRequestNotes(e.target.value)} placeholder="例: 通院のため" className="mt-1" />
+              <Label className="text-sm font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                📝 理由・備考（任意）
+              </Label>
+              <Input value={requestNotes} onChange={(e) => setRequestNotes(e.target.value)} placeholder="例: 通院のため" className="h-11 rounded-lg" />
             </div>
             {currentBalance && (
-              <div className="bg-emerald-50 rounded-lg p-3 text-sm">
-                <p className="text-emerald-700">現在の有給残高: <span className="font-bold">{currentBalance.remaining}日</span></p>
+              <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-4 border border-emerald-100">
+                <p className="text-sm text-emerald-700 font-medium">現在の有給残高</p>
+                <p className="text-2xl font-bold text-emerald-600 mt-1">{currentBalance.remaining}<span className="text-sm font-normal ml-1">日</span></p>
               </div>
             )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRequestDialogOpen(false)}>キャンセル</Button>
-            <Button onClick={handleSubmitRequest} disabled={isSaving} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setRequestDialogOpen(false)} className="rounded-lg h-10">キャンセル</Button>
+            <Button onClick={handleSubmitRequest} disabled={isSaving || !requestDate} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg h-10 font-bold">
               {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
               申請する
             </Button>
@@ -1182,90 +1243,222 @@ function PaidLeaveManagement({ userEmail, isAdmin, allUsers, allPaidLeaveBalance
         </DialogContent>
       </Dialog>
 
-      {/* 残高設定ダイアログ */}
+      {/* 残高設定ダイアログ - 大幅UI改善 */}
       <Dialog open={balanceEditOpen} onOpenChange={setBalanceEditOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-indigo-700">
-              <Edit3 className="w-5 h-5" />有給残高設定
-            </DialogTitle>
-            <DialogDescription>有給休暇の残高情報を設定します。</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div>
-              <Label className="text-sm font-medium">残高基準日</Label>
-              <Input type="date" value={balanceForm.balance_date} onChange={(e) => setBalanceForm(prev => ({ ...prev, balance_date: e.target.value }))} className="mt-1" />
-            </div>
-            <div>
-              <Label className="text-sm font-medium">残高日数</Label>
-              <Input type="number" step="0.5" min="0" value={balanceForm.balance_days} onChange={(e) => setBalanceForm(prev => ({ ...prev, balance_days: e.target.value }))} placeholder="例: 10" className="mt-1" />
-            </div>
-            <div>
-              <Label className="text-sm font-medium">前回付与日</Label>
-              <Input type="date" value={balanceForm.grant_date} onChange={(e) => setBalanceForm(prev => ({ ...prev, grant_date: e.target.value }))} className="mt-1" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-sm font-medium">次回付与日</Label>
-                <Input type="date" value={balanceForm.next_grant_date} onChange={(e) => setBalanceForm(prev => ({ ...prev, next_grant_date: e.target.value }))} className="mt-1" />
+        <DialogContent className="max-w-lg rounded-2xl max-h-[90vh] overflow-y-auto p-0">
+          {/* ヘッダー */}
+          <div className="bg-gradient-to-r from-indigo-600 to-blue-600 p-5 sm:p-6 rounded-t-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+                <Edit3 className="w-6 h-6 text-white" />
               </div>
               <div>
-                <Label className="text-sm font-medium">次回付与日数</Label>
-                <Input type="number" step="0.5" min="0" value={balanceForm.next_grant_days} onChange={(e) => setBalanceForm(prev => ({ ...prev, next_grant_days: e.target.value }))} placeholder="例: 11" className="mt-1" />
+                <h2 className="text-lg sm:text-xl font-bold text-white">有給残高の設定</h2>
+                <p className="text-sm text-indigo-100 mt-0.5">有給休暇の日数を登録・更新します</p>
               </div>
-            </div>
-            <div>
-              <Label className="text-sm font-medium">備考</Label>
-              <Input value={balanceForm.notes} onChange={(e) => setBalanceForm(prev => ({ ...prev, notes: e.target.value }))} placeholder="メモ" className="mt-1" />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBalanceEditOpen(false)}>キャンセル</Button>
-            <Button onClick={handleSaveBalance} disabled={isSaving} className="bg-indigo-600 hover:bg-indigo-700 text-white">
-              {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}保存
+
+          <div className="p-4 sm:p-6 space-y-6">
+            {/* STEP 1: 基本設定 */}
+            <div>
+              <div className="flex items-center gap-2.5 mb-4">
+                <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-sm font-bold shadow-md">1</div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">基本設定</h3>
+                  <p className="text-xs text-slate-400">必ず入力してください</p>
+                </div>
+                <span className="ml-auto text-[10px] font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded-full">必須</span>
+              </div>
+
+              <div className="space-y-4">
+                {/* 基準日 */}
+                <div className="bg-white rounded-xl border-2 border-indigo-100 p-4 hover:border-indigo-200 transition-colors">
+                  <Label className="text-sm sm:text-base font-bold text-slate-800 flex items-center gap-2 mb-1.5">
+                    <span className="text-lg">📅</span> 有給の基準日
+                  </Label>
+                  <p className="text-xs sm:text-sm text-slate-500 mb-3 leading-relaxed">
+                    いつ時点の残高かを示す日付です。<br/>
+                    <span className="text-indigo-500 font-medium">例：今日の日付や、直近の給与計算日など</span>
+                  </p>
+                  <Input type="date" value={balanceForm.balance_date} onChange={(e) => setBalanceForm(prev => ({ ...prev, balance_date: e.target.value }))} className="h-12 rounded-xl text-base sm:text-lg font-medium border-2 border-slate-200 focus:border-indigo-400" />
+                </div>
+
+                {/* 付与日数 */}
+                <div className="bg-white rounded-xl border-2 border-indigo-100 p-4 hover:border-indigo-200 transition-colors">
+                  <Label className="text-sm sm:text-base font-bold text-slate-800 flex items-center gap-2 mb-1.5">
+                    <span className="text-lg">🎯</span> 現在の有給日数
+                  </Label>
+                  <p className="text-xs sm:text-sm text-slate-500 mb-3 leading-relaxed">
+                    今持っている有給休暇の合計日数です。<br/>
+                    <span className="text-indigo-500 font-medium">例：10日、0.5日単位で入力OK</span>
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <Input type="number" step="0.5" min="0" value={balanceForm.balance_days} onChange={(e) => setBalanceForm(prev => ({ ...prev, balance_days: e.target.value }))} placeholder="10" className="h-12 rounded-xl text-xl sm:text-2xl font-bold text-center border-2 border-slate-200 focus:border-indigo-400 flex-1" />
+                    <span className="text-lg font-bold text-slate-500">日</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 区切り線 */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200"></div></div>
+              <div className="relative flex justify-center">
+                <span className="bg-white px-3 text-xs text-slate-400">ここから下は任意です</span>
+              </div>
+            </div>
+
+            {/* STEP 2: 詳細設定 */}
+            <div>
+              <div className="flex items-center gap-2.5 mb-4">
+                <div className="w-8 h-8 rounded-full bg-slate-400 text-white flex items-center justify-center text-sm font-bold">2</div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-700">詳細設定</h3>
+                  <p className="text-xs text-slate-400">入力しなくてもOKです</p>
+                </div>
+                <span className="ml-auto text-[10px] font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">任意</span>
+              </div>
+
+              <div className="space-y-3">
+                {/* 前回付与日 */}
+                <div className="bg-slate-50 rounded-xl border border-slate-200 p-3.5 hover:border-slate-300 transition-colors">
+                  <Label className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-1">
+                    <span className="text-base">🎁</span> 前回もらった日
+                  </Label>
+                  <p className="text-xs text-slate-400 mb-2.5">前回、有給が付与された日付</p>
+                  <Input type="date" value={balanceForm.grant_date} onChange={(e) => setBalanceForm(prev => ({ ...prev, grant_date: e.target.value }))} className="h-11 rounded-xl text-base border-2 border-slate-200 focus:border-indigo-400" />
+                </div>
+
+                {/* 次回付与日・日数 */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="bg-slate-50 rounded-xl border border-slate-200 p-3.5 hover:border-slate-300 transition-colors">
+                    <Label className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-1">
+                      <span className="text-base">📆</span> 次にもらう日
+                    </Label>
+                    <p className="text-xs text-slate-400 mb-2.5">次に有給がもらえる予定日</p>
+                    <Input type="date" value={balanceForm.next_grant_date} onChange={(e) => setBalanceForm(prev => ({ ...prev, next_grant_date: e.target.value }))} className="h-11 rounded-xl text-base border-2 border-slate-200 focus:border-indigo-400" />
+                  </div>
+                  <div className="bg-slate-50 rounded-xl border border-slate-200 p-3.5 hover:border-slate-300 transition-colors">
+                    <Label className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-1">
+                      <span className="text-base">✨</span> 次にもらう日数
+                    </Label>
+                    <p className="text-xs text-slate-400 mb-2.5">次回付与される予定の日数</p>
+                    <div className="flex items-center gap-2">
+                      <Input type="number" step="0.5" min="0" value={balanceForm.next_grant_days} onChange={(e) => setBalanceForm(prev => ({ ...prev, next_grant_days: e.target.value }))} placeholder="11" className="h-11 rounded-xl text-lg font-bold text-center border-2 border-slate-200 focus:border-indigo-400 flex-1" />
+                      <span className="text-sm font-bold text-slate-400">日</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 備考 */}
+                <div className="bg-slate-50 rounded-xl border border-slate-200 p-3.5 hover:border-slate-300 transition-colors">
+                  <Label className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-1">
+                    <span className="text-base">📝</span> メモ
+                  </Label>
+                  <Input value={balanceForm.notes} onChange={(e) => setBalanceForm(prev => ({ ...prev, notes: e.target.value }))} placeholder="自由にメモを入力" className="h-11 rounded-xl text-base border-2 border-slate-200 focus:border-indigo-400" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* フッター */}
+          <div className="p-4 sm:p-6 pt-0 flex gap-3">
+            <Button variant="outline" onClick={() => setBalanceEditOpen(false)} className="rounded-xl h-12 flex-1 text-sm font-bold border-2">キャンセル</Button>
+            <Button onClick={handleSaveBalance} disabled={isSaving || !balanceForm.balance_days} className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-xl h-12 flex-[2] text-sm font-bold shadow-lg shadow-indigo-200">
+              {isSaving ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Save className="w-5 h-5 mr-2" />}
+              保存する
             </Button>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* 有給申請編集ダイアログ */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-indigo-700">
-              <Edit3 className="w-5 h-5" />有給申請の編集
+            <DialogTitle className="flex items-center gap-2 text-indigo-700 text-lg">
+              <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
+                <Edit3 className="w-5 h-5 text-indigo-600" />
+              </div>
+              有給申請の編集
             </DialogTitle>
-            <DialogDescription>有給申請の内容を編集します。</DialogDescription>
+            <DialogDescription className="text-sm">有給申請の内容を編集します。</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="space-y-5 py-4">
             <div>
-              <Label className="text-sm font-medium">取得希望日</Label>
-              <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="mt-1" />
+              <Label className="text-sm font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                📅 取得希望日
+              </Label>
+              <Input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} className="h-11 rounded-lg text-base" />
             </div>
             <div>
-              <Label className="text-sm font-medium">ステータス</Label>
+              <Label className="text-sm font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                📋 ステータス
+              </Label>
               <Select value={editStatus} onValueChange={setEditStatus}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-11 rounded-lg"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pending">申請中</SelectItem>
-                  <SelectItem value="approved">承認済み</SelectItem>
-                  <SelectItem value="rejected">却下</SelectItem>
+                  <SelectItem value="pending">
+                    <span className="flex items-center gap-2"><Clock className="w-4 h-4 text-amber-500" /> 申請中</span>
+                  </SelectItem>
+                  <SelectItem value="approved">
+                    <span className="flex items-center gap-2"><CheckCircle className="w-4 h-4 text-emerald-500" /> 承認済み</span>
+                  </SelectItem>
+                  <SelectItem value="rejected">
+                    <span className="flex items-center gap-2"><XCircle className="w-4 h-4 text-red-500" /> 却下</span>
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label className="text-sm font-medium">備考</Label>
-              <Input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} placeholder="備考を入力" className="mt-1" />
+              <Label className="text-sm font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                📝 備考
+              </Label>
+              <Input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} placeholder="備考を入力" className="h-11 rounded-lg" />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>キャンセル</Button>
-            <Button onClick={handleSaveEdit} disabled={isSaving} className="bg-indigo-600 hover:bg-indigo-700 text-white">
-              {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}保存
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)} className="rounded-lg h-10">キャンセル</Button>
+            <Button onClick={handleSaveEdit} disabled={isSaving} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg h-10 font-bold">
+              {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+              保存する
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 却下理由ダイアログ（window.promptの代替） */}
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <XCircle className="w-5 h-5" />
+              有給申請を却下
+            </DialogTitle>
+            <DialogDescription>却下理由を入力してください（任意）</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="却下理由を入力（任意）"
+              className="h-11 rounded-lg"
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setRejectDialogOpen(false); setRejectTargetId(null); }} className="rounded-lg h-10">キャンセル</Button>
+            <Button
+              onClick={() => { if (rejectTargetId) handleApproveReject(rejectTargetId, 'rejected', rejectReason); }}
+              className="bg-red-600 hover:bg-red-700 text-white rounded-lg h-10 font-bold"
+            >
+              却下する
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 削除確認ダイアログ（window.confirmの代替） - インラインで実装済み */}
     </div>
   );
 }

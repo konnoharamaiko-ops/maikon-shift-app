@@ -31,6 +31,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { fetchAll, insertRecord, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
 import { useAuth } from '@/lib/AuthContext';
 import { invalidateStoreQueries } from '@/lib/invalidateHelpers';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 function SortableStoreCard({ id, store, color, isSelected, onSelect, onEdit, onDelete, onColorChange, showColorPicker, setShowColorPicker, canEdit, canDelete, colorOptions }) {
   const {
@@ -668,10 +669,11 @@ export default function StoreSettings() {
     queryKey: ['stores'],
     queryFn: async () => {
       const { data: allStores = [] } = await supabase.from('Store').select('*');
+      const sorted = sortStoresByOrder(allStores);
       if (!user || user?.user_role === 'admin' || user?.role === 'admin') {
-        return allStores;
+        return sorted;
       }
-      return allStores.filter(store => user?.store_ids?.includes(store.id));
+      return sorted.filter(store => user?.store_ids?.includes(store.id));
     },
   });
 
@@ -687,7 +689,6 @@ export default function StoreSettings() {
 
   useEffect(() => {
     if (stores.length > 0) {
-      const savedOrder = localStorage.getItem('storeOrder');
       const savedColors = localStorage.getItem('storeColors');
 
       if (savedColors) {
@@ -698,24 +699,34 @@ export default function StoreSettings() {
         }
       }
 
-      if (savedOrder) {
-        try {
-          const parsed = JSON.parse(savedOrder);
-          const currentStoreIds = new Set(stores.map(s => s.id));
-          const filteredOrder = parsed.filter(id => currentStoreIds.has(id));
-          const newStores = stores.filter(s => !filteredOrder.includes(s.id)).map(s => s.id);
-          const finalOrder = [...filteredOrder, ...newStores];
-          setStoreOrder(finalOrder);
-          if (newStores.length > 0) {
-            localStorage.setItem('storeOrder', JSON.stringify(finalOrder));
-          }
-        } catch (e) {
-          setStoreOrder(stores.map(s => s.id));
-        }
+      // DBのsort_orderを優先して並び順を決定
+      const hasDbOrder = stores.some(s => s.sort_order != null);
+      if (hasDbOrder) {
+        const dbSorted = [...stores].sort((a, b) => (a.sort_order ?? 9999) - (b.sort_order ?? 9999));
+        const dbOrder = dbSorted.map(s => s.id);
+        setStoreOrder(dbOrder);
+        localStorage.setItem('storeOrder', JSON.stringify(dbOrder));
       } else {
-        const defaultOrder = stores.map(s => s.id);
-        setStoreOrder(defaultOrder);
-        localStorage.setItem('storeOrder', JSON.stringify(defaultOrder));
+        const savedOrder = localStorage.getItem('storeOrder');
+        if (savedOrder) {
+          try {
+            const parsed = JSON.parse(savedOrder);
+            const currentStoreIds = new Set(stores.map(s => s.id));
+            const filteredOrder = parsed.filter(id => currentStoreIds.has(id));
+            const newStores = stores.filter(s => !filteredOrder.includes(s.id)).map(s => s.id);
+            const finalOrder = [...filteredOrder, ...newStores];
+            setStoreOrder(finalOrder);
+            if (newStores.length > 0) {
+              localStorage.setItem('storeOrder', JSON.stringify(finalOrder));
+            }
+          } catch (e) {
+            setStoreOrder(stores.map(s => s.id));
+          }
+        } else {
+          const defaultOrder = stores.map(s => s.id);
+          setStoreOrder(defaultOrder);
+          localStorage.setItem('storeOrder', JSON.stringify(defaultOrder));
+        }
       }
     }
   }, [stores]);

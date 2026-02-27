@@ -11,6 +11,7 @@ import { format, parseISO, isPast, isFuture, isToday, differenceInDays } from 'd
 import { ja } from 'date-fns/locale';
 import { fetchAll, insertRecord, updateRecord, deleteRecord } from '@/api/supabaseHelpers';
 import { useAuth } from '@/lib/AuthContext';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 export default function ShiftDeadlineManagement() {
   const queryClient = useQueryClient();
@@ -28,7 +29,10 @@ export default function ShiftDeadlineManagement() {
 
   const { data: stores = [] } = useQuery({
     queryKey: ['stores'],
-    queryFn: () => fetchAll('Store'),
+    queryFn: async () => {
+      const allStores = await fetchAll('Store');
+      return sortStoresByOrder(allStores);
+    },
   });
 
   const { data: deadlines = [], isLoading } = useQuery({

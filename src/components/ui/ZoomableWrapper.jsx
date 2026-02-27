@@ -6,6 +6,9 @@ import React, { useRef, useCallback, useEffect, useState } from 'react';
  * コンテンツの自然幅が画面幅を超える場合、transform:scale() で自動縮小する。
  * ユーザーによるピンチズームや＋/−ボタンは提供しない。
  * 縮小時は sticky を一括 relative に上書きする。
+ * 
+ * 縦スクロールはページ全体に任せ、横スクロールのみコンテナ内で処理する。
+ * これにより sticky 要素がナビバーと重なる問題を防ぐ。
  */
 
 let wrapperIdCounter = 0;
@@ -16,6 +19,7 @@ export default function ZoomableWrapper({
 }) {
   const containerRef = useRef(null);
   const contentRef = useRef(null);
+  const scrollRef = useRef(null);
   const [scale, setScale] = useState(1);
   const measuringRef = useRef(false);
   const measureTimersRef = useRef([]);
@@ -141,12 +145,19 @@ export default function ZoomableWrapper({
     };
   }, [measure]);
 
-  // children変更時に再計測
+  // children変更時に再計測 + スクロール位置リセット
   useEffect(() => {
     measureTimersRef.current.forEach(clearTimeout);
     measureTimersRef.current = [80, 300, 700].map(ms =>
       setTimeout(measure, ms)
     );
+
+    // スクロール位置をリセット
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft = 0;
+      scrollRef.current.scrollTop = 0;
+    }
+
     return () => {
       measureTimersRef.current.forEach(clearTimeout);
       measureTimersRef.current = [];
@@ -173,10 +184,11 @@ export default function ZoomableWrapper({
       ` : ''}</style>
 
       <div
+        ref={scrollRef}
         style={{
-          overflow: isScaledDown ? 'hidden' : 'auto',
+          overflowX: isScaledDown ? 'hidden' : 'auto',
+          overflowY: 'visible',
           WebkitOverflowScrolling: 'touch',
-          maxHeight: isScaledDown ? undefined : '85vh',
           height: isScaledDown && displayHeight > 0 ? `${displayHeight}px` : 'auto',
         }}
       >

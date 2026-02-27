@@ -30,6 +30,7 @@ import jsPDF from 'jspdf';
 import { ConfirmShiftPreview, WeekTimelineView } from './ShiftTableView';
 import ReadOnlyTableView from './ReadOnlyTableView';
 import { getStoreSettingsForDate } from '@/hooks/useStoreSettings';
+import ZoomableWrapper from '@/components/ui/ZoomableWrapper';
 
 export default function ShiftConfirmDialog({
   open,
@@ -50,6 +51,21 @@ export default function ShiftConfirmDialog({
   const [selectedUserEmails, setSelectedUserEmails] = useState([]);
   const [activeTab, setActiveTab] = useState('preview');
   const printRef = useRef(null);
+
+  // localStorageからvisibleAdminIdsを取得（ShiftTableViewと同期）
+  const visibleAdminIds = useMemo(() => {
+    try {
+      const saved = localStorage.getItem('shiftTable_visibleAdminIds');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  }, [open]);
+
+  // showNotes設定を取得
+  const showNotes = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem('shiftTable_showNotes') || 'false');
+    } catch { return false; }
+  }, [open]);
 
   const monthStart = startOfMonth(selectedMonth);
   const monthEnd = endOfMonth(selectedMonth);
@@ -99,9 +115,7 @@ export default function ShiftConfirmDialog({
       if (weekIdx >= 0 && weekIdx < weeksInMonth.length) {
         const weekStart = weeksInMonth[weekIdx];
         const weekEnd = endOfWeek(weekStart, { weekStartsOn: savedWeekStartsOn });
-        return eachDayOfInterval({ start: weekStart, end: weekEnd }).filter(d =>
-          d >= monthStart && d <= monthEnd
-        );
+        return eachDayOfInterval({ start: weekStart, end: weekEnd });
       }
       return days;
     }
@@ -142,6 +156,8 @@ export default function ShiftConfirmDialog({
             workShifts={workShifts}
             store={store}
             monthDays={displayDays}
+            visibleAdminIds={visibleAdminIds}
+            showNotes={showNotes}
           />
         );
       case 'day':
@@ -154,6 +170,8 @@ export default function ShiftConfirmDialog({
             onCellClick={() => {}}
             shiftRequests={[]}
             store={store}
+            visibleAdminIds={visibleAdminIds}
+            showNotes={showNotes}
           />
         );
       case 'month':
@@ -166,6 +184,8 @@ export default function ShiftConfirmDialog({
             workShifts={workShifts}
             store={store}
             shiftRequests={[]}
+            visibleAdminIds={visibleAdminIds}
+            showNotes={showNotes}
           />
         );
     }
@@ -195,7 +215,11 @@ export default function ShiftConfirmDialog({
     };
 
     const orderedUsers = users
-      .filter(u => (u.user_role || u.role) === 'user')
+      .filter(u => {
+        const role = u.user_role || u.role;
+        if (role === 'user') return true;
+        return visibleAdminIds.includes(u.id);
+      })
       .sort((a, b) => (a.metadata?.sort_order ?? 999) - (b.metadata?.sort_order ?? 999));
 
     let tableHtml = '';
@@ -223,12 +247,25 @@ export default function ShiftConfirmDialog({
           const isWeekend = dow === 0 || dow === 6;
           let bgColor = isWeekend ? '#f8fafc' : 'white';
           let content = '';
-          if (shift) {
+          if (shift && !shift.is_help_slot) {
             const startH = parseInt(shift.start_time?.split(':')[0] || '0');
             if (startH < 12) bgColor = '#ecfeff'; // cyan-50
             else if (startH < 17) bgColor = '#f7fee7'; // lime-50
             else bgColor = '#fff7ed'; // orange-50
-            content = `<div style="font-size:8px;line-height:1.2;font-weight:500;">${fmtT(shift.start_time)}-${fmtT(shift.end_time)}</div>`;
+            let shiftContent = `<div style="font-size:8px;line-height:1.2;font-weight:500;">${fmtT(shift.start_time)}-${fmtT(shift.end_time)}</div>`;
+            // additional_times
+            if (shift.additional_times && shift.additional_times.length > 0) {
+              shift.additional_times.forEach(at => {
+                shiftContent += `<div style="font-size:7px;line-height:1.2;font-weight:500;color:#7c3aed;">+${fmtT(at.start_time)}-${fmtT(at.end_time)}</div>`;
+              });
+            }
+            // work_details
+            if (shift.work_details && shift.work_details.length > 0) {
+              shift.work_details.forEach(d => {
+                shiftContent += `<div style="font-size:6px;line-height:1.1;color:#d97706;">${fmtT(d.start_time)}-${fmtT(d.end_time)} ${d.label || d.activity || ''}</div>`;
+              });
+            }
+            content = shiftContent;
           }
           return `<td style="border:1px solid #cbd5e1;text-align:center;background:${bgColor};padding:0 1px;height:32px;">${content}</td>`;
         }).join('');
@@ -273,7 +310,8 @@ export default function ShiftConfirmDialog({
       let dayBlocks = '';
       displayDays.forEach(day => {
         const dateStr = format(day, 'yyyy-MM-dd');
-        const dayShifts = workShifts.filter(s => s.date === dateStr);
+        const dayShifts = workShifts.filter(s => s.date === dateStr && !s.is_help_slot);
+        const helpSlots = workShifts.filter(s => s.date === dateStr && s.is_help_slot);
         const dayOfWeek = getDay(day);
         const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
@@ -291,7 +329,7 @@ export default function ShiftConfirmDialog({
 
         // Staff rows
         const staffRows = orderedUsers.map(user => {
-          const userShifts = dayShifts.filter(s => s.user_email === user?.email);
+          const userShifts = dayShifts.filter(s => s.user_email === user?.email && !s.is_help_slot);
           const name = user?.metadata?.display_name || user?.full_name || user?.email?.split('@')[0];
 
           let shiftBars = '';
@@ -326,7 +364,25 @@ export default function ShiftConfirmDialog({
             <div style="flex:1;position:relative;height:28px;">${timeHeaders}</div>
           </div>
           ${staffRows}
-          ${dayShifts.length === 0 ? '<div style="text-align:center;padding:16px;color:#94a3b8;font-size:13px;">この日のシフトはまだ登録されていません</div>' : ''}
+          ${helpSlots.length > 0 ? `
+            <div style="margin-top:8px;padding-top:8px;border-top:2px dashed #fb923c;">
+              <div style="font-size:11px;font-weight:600;color:#ea580c;margin-bottom:6px;">\u30D8\u30EB\u30D7 (${helpSlots.length}\u540D)</div>
+              ${helpSlots.map(hs => {
+                const [sH2, sM2] = hs.start_time.split(':').map(Number);
+                const [eH2, eM2] = hs.end_time.split(':').map(Number);
+                const leftPct2 = Math.max(0, ((sH2 - startHour) + sM2 / 60) / hourCount * 100);
+                const widthPct2 = ((eH2 - sH2) + (eM2 - sM2) / 60) / hourCount * 100;
+                return `<div style="display:flex;align-items:center;margin-bottom:4px;">
+                  <div style="width:130px;flex-shrink:0;padding-right:12px;font-size:13px;font-weight:600;color:#ea580c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${hs.help_name || '\u30D8\u30EB\u30D7'}</div>
+                  <div style="flex:1;position:relative;height:32px;">
+                    ${gridLines}
+                    <div style="position:absolute;left:${leftPct2}%;width:${widthPct2}%;height:28px;top:2px;background:#fed7aa;color:#9a3412;border:1px dashed #fb923c;border-radius:4px;padding:0 8px;display:flex;align-items:center;font-size:11px;font-weight:600;overflow:hidden;white-space:nowrap;">${hs.start_time?.slice(0, 5)} - ${hs.end_time?.slice(0, 5)}</div>
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>
+          ` : ''}
+          ${dayShifts.length === 0 && helpSlots.length === 0 ? '<div style="text-align:center;padding:16px;color:#94a3b8;font-size:13px;">\u3053\u306E\u65E5\u306E\u30B7\u30D5\u30C8\u306F\u307E\u3060\u767B\u9332\u3055\u308C\u3066\u3044\u307E\u305B\u3093</div>' : ''}
         </div>`;
       });
 
@@ -356,7 +412,7 @@ export default function ShiftConfirmDialog({
         let staffCount = 0;
 
         orderedUsers.forEach(user => {
-          const shifts = workShifts.filter(s => s.user_email === user.email && s.date === dateStr);
+          const shifts = workShifts.filter(s => s.user_email === user.email && s.date === dateStr && !s.is_help_slot);
           let content = '';
           let cellBg = isWeekend ? 'rgba(254,226,226,0.3)' : 'white';
           if (shifts.length > 0) {
@@ -391,6 +447,9 @@ export default function ShiftConfirmDialog({
         const rowOpacity = isClosed ? 'opacity:0.6;' : '';
         const closedBg = isClosed ? '#e2e8f0' : dateBg;
 
+        // ヘルプ枠を取得
+        const helpSlots = workShifts.filter(s => s.date === dateStr && s.is_help_slot);
+
         rows += `<tr style="${rowOpacity}">
           <td style="border:1px solid #cbd5e1;padding:4px 8px;font-weight:500;background:${closedBg};white-space:nowrap;">
             <div style="font-size:13px;">
@@ -405,6 +464,22 @@ export default function ShiftConfirmDialog({
             ${totalContent}
           </td>
         </tr>`;
+
+        // ヘルプ枠行を追加
+        if (helpSlots.length > 0) {
+          const helpContent = helpSlots.map(hs => 
+            `<span style="display:inline-block;background:#ffedd5;border:1px dashed #fb923c;border-radius:3px;padding:1px 6px;font-size:9px;color:#9a3412;font-weight:500;margin:1px 2px;">${hs.help_name || '\u30D8\u30EB\u30D7'} ${formatTimeJa(hs.start_time)}-${formatTimeJa(hs.end_time)}</span>`
+          ).join('');
+          rows += `<tr style="background:#fff7ed;">
+            <td style="border:1px solid #cbd5e1;padding:2px 8px;background:#fff7ed;white-space:nowrap;">
+              <span style="font-size:10px;font-weight:600;color:#ea580c;">\u30D8\u30EB\u30D7</span>
+              <span style="font-size:9px;color:#fb923c;margin-left:4px;">${helpSlots.length}\u540D</span>
+            </td>
+            <td colspan="${orderedUsers.length + 1}" style="border:1px solid #cbd5e1;padding:2px;background:#fff7ed;">
+              ${helpContent}
+            </td>
+          </tr>`;
+        }
       });
 
       // User totals row
@@ -480,11 +555,21 @@ export default function ShiftConfirmDialog({
     if (!printRef.current) return;
     setIsGeneratingPdf(true);
     try {
-      const canvas = await html2canvas(printRef.current, {
+      // hiddenクラスを一時的に解除してhtml2canvasでキャプチャ可能にする
+      const el = printRef.current;
+      el.classList.remove('hidden');
+      el.style.position = 'absolute';
+      el.style.left = '-9999px';
+      el.style.top = '0';
+      el.style.width = '1200px';
+      el.style.zIndex = '-1';
+      await new Promise(r => setTimeout(r, 300));
+      const canvas = await html2canvas(el, {
         scale: 2,
         useCORS: true,
         logging: false,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        width: 1200,
       });
       
       const imgData = canvas.toDataURL('image/png');
@@ -522,6 +607,16 @@ export default function ShiftConfirmDialog({
       console.error('PDF生成エラー:', error);
       toast.error('PDF生成に失敗しました');
     } finally {
+      // printRefを元のhidden状態に戻す
+      const el2 = printRef.current;
+      if (el2) {
+        el2.classList.add('hidden');
+        el2.style.position = '';
+        el2.style.left = '';
+        el2.style.top = '';
+        el2.style.width = '';
+        el2.style.zIndex = '';
+      }
       setIsGeneratingPdf(false);
     }
   }, [selectedMonth, currentViewMode]);
@@ -548,9 +643,11 @@ export default function ShiftConfirmDialog({
       // buildSnapshotHtml() を使用してHTMLを生成（html2canvasキャプチャではなく）
       const snapshotHtml = buildSnapshotHtml();
 
-      // 確定シフト表の期間情報を計算（displayDaysベース）
-      const periodStart = displayDays.length > 0 ? format(displayDays[0], 'M月d日') : format(monthStart, 'M月d日');
-      const periodEnd = displayDays.length > 0 ? format(displayDays[displayDays.length - 1], 'M月d日') : format(monthEnd, 'M月d日');
+      // 確定シフト表の期間情報を計算（displayDaysベース）- 月またぎ対応
+      const periodStartDate = displayDays.length > 0 ? displayDays[0] : monthStart;
+      const periodEndDate = displayDays.length > 0 ? displayDays[displayDays.length - 1] : monthEnd;
+      const periodStart = format(periodStartDate, 'M月d日');
+      const periodEnd = format(periodEndDate, 'M月d日');
       const periodStr = `${periodStart}〜${periodEnd}`;
 
       // Mark previous snapshots as not current
@@ -579,6 +676,11 @@ export default function ShiftConfirmDialog({
         date: s.date,
         start_time: s.start_time,
         end_time: s.end_time,
+        additional_times: s.additional_times || [],
+        work_details: s.work_details || [],
+        notes: s.notes || '',
+        is_help_slot: s.is_help_slot || false,
+        help_name: s.help_name || '',
       }));
       const snapshotUsersData = users.map(u => ({
         id: u.id,
@@ -587,12 +689,15 @@ export default function ShiftConfirmDialog({
         user_role: u.user_role || u.role,
         metadata: u.metadata ? { display_name: u.metadata.display_name, sort_order: u.metadata.sort_order } : {},
       }));
+      // visibleAdminIdsも保存して確定シフト表で同じ管理者表示を再現
+      const snapshotVisibleAdminIds = visibleAdminIds;
       const snapshotStoreData = {
         id: store?.id,
         name: store?.name || store?.store_name,
         business_hours: store?.business_hours || {},
         temporary_closures: store?.temporary_closures || [],
         holiday_exceptions: store?.holiday_exceptions || [],
+        visible_admin_ids: snapshotVisibleAdminIds,
       };
       const snapshotDisplayDays = displayDays.map(d => format(d, 'yyyy-MM-dd'));
 
@@ -631,11 +736,22 @@ export default function ShiftConfirmDialog({
       let pdfAttachment = null;
       if (printRef.current && (notifyMethods.email || notifyMethods.line)) {
         try {
-          const canvas = await html2canvas(printRef.current, {
+          // hiddenクラスを一時的に解除してhtml2canvasでキャプチャ可能にする
+          const el = printRef.current;
+          el.classList.remove('hidden');
+          el.style.position = 'absolute';
+          el.style.left = '-9999px';
+          el.style.top = '0';
+          el.style.width = '1200px';
+          el.style.zIndex = '-1';
+          // DOMの再描画を待つ
+          await new Promise(r => setTimeout(r, 300));
+          const canvas = await html2canvas(el, {
             scale: 2,
             useCORS: true,
             logging: false,
-            backgroundColor: '#ffffff'
+            backgroundColor: '#ffffff',
+            width: 1200,
           });
           const imgData = canvas.toDataURL('image/png');
           const isLandscape = currentViewMode === 'confirm' || currentViewMode === 'week';
@@ -662,17 +778,41 @@ export default function ShiftConfirmDialog({
           };
         } catch (e) {
           console.warn('PDF生成エラー（通知は続行）:', e);
+        } finally {
+          // printRefを元のhidden状態に戻す
+          const el2 = printRef.current;
+          if (el2) {
+            el2.classList.add('hidden');
+            el2.style.position = '';
+            el2.style.left = '';
+            el2.style.top = '';
+            el2.style.width = '';
+            el2.style.zIndex = '';
+          }
         }
       }
 
       // ---- Send notifications ----
+      // アプリのベースURL
+      const appBaseUrl = window.location.origin || 'https://shift-app-liart.vercel.app';
+
+      const notifTitle = `[シフト管理] ${storeName} ${monthStr}（${periodStr}）シフト確定`;
+      const notifMessage = [
+        `シフトが確定されました。確定シフト表アイコンにてシフト表をご確認ください。`,
+        ``,
+        `期間: ${periodStr}`,
+        `表示形式: ${getViewModeLabel()}`,
+        pdfAttachment ? `\nメール通知にシフト表PDFを添付しています。` : '',
+        `\nアプリで確認: ${appBaseUrl}`,
+      ].filter(Boolean).join('\n');
+
       for (const email of userEmails) {
         await createNotification({
           userEmail: email,
-          title: `${storeName} ${monthStr}（${periodStr}）シフト確定`,
-          message: `アプリの「確定シフト表」アイコンからご確認ください。`,
+          title: notifTitle,
+          message: notifMessage,
           type: 'shift_confirmed',
-          actionUrl: '/',
+          actionUrl: appBaseUrl,
           sendEmail: notifyMethods.email,
           sendLine: notifyMethods.line,
           notificationType: 'shift_confirm',
@@ -699,7 +839,7 @@ export default function ShiftConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto p-3 sm:p-6">
+      <DialogContent className="w-[calc(100vw-16px)] max-w-[calc(100vw-16px)] sm:max-w-5xl max-h-[90vh] overflow-y-auto overflow-x-hidden p-2 sm:p-6 box-border">
         <DialogHeader>
           <DialogTitle className="text-base sm:text-lg flex items-center gap-2 text-indigo-700">
             <CheckCircle className="w-5 h-5" />
@@ -707,9 +847,9 @@ export default function ShiftConfirmDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <Tabs defaultValue="preview" value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <Tabs defaultValue="preview" value={activeTab} onValueChange={setActiveTab} className="w-full overflow-hidden">
           {/* ===== 改善されたタブUI ===== */}
-          <div className="flex gap-2 mb-4 sm:mb-6 p-1 bg-slate-100 rounded-xl">
+          <div className="flex gap-1 sm:gap-2 mb-3 sm:mb-6 p-1 bg-slate-100 rounded-xl">
             {Object.entries(tabConfig).map(([key, config]) => {
               const Icon = config.icon;
               const isActive = activeTab === key;
@@ -750,7 +890,7 @@ export default function ShiftConfirmDialog({
             })}
           </div>
 
-          <TabsContent value="preview" className="space-y-3 sm:space-y-4">
+          <TabsContent value="preview" className="space-y-3 sm:space-y-4 overflow-hidden">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-2">
               <h3 className="text-xs sm:text-sm font-bold text-slate-700 flex flex-wrap items-center gap-1">
                 確定シフト表のプレビュー
@@ -785,19 +925,33 @@ export default function ShiftConfirmDialog({
               </div>
             </div>
             
-            <div className="border border-slate-200 rounded-xl p-2 sm:p-6 bg-white shadow-inner overflow-x-auto">
-              <div ref={printRef} className="min-w-[600px] p-2 sm:p-4 bg-white">
-                <div className="text-center mb-4 sm:mb-6">
-                  <h2 className="text-base sm:text-xl font-bold text-slate-800">{store?.name || store?.store_name} {format(selectedMonth, 'yyyy年M月')} 確定シフト表</h2>
-                  <p className="text-[10px] sm:text-xs text-slate-400 mt-1">
+            {/* PDF/印刷用の非表示コンテナ */}
+            <div ref={printRef} className="hidden">
+              <div className="p-4 bg-white">
+                <div className="text-center mb-6">
+                  <h2 className="text-xl font-bold text-slate-800">{store?.name || store?.store_name} {format(selectedMonth, 'yyyy年M月')} 確定シフト表</h2>
+                  <p className="text-xs text-slate-400 mt-1">
                     確定日: {format(new Date(), 'yyyy/MM/dd HH:mm')} | 表示形式: {getViewModeLabel()}
                     {getPeriodLabel() && ` | ${getPeriodLabel()}`}
                   </p>
                 </div>
-                
-                {/* ShiftTableViewと完全に同じReactコンポーネントを使用 */}
                 {renderPreviewContent()}
               </div>
+            </div>
+            {/* プレビュー表示: ZoomableWrapperで画面幅に収まるように */}
+            <div className="border border-slate-200 rounded-xl bg-white shadow-inner overflow-hidden w-full">
+              <ZoomableWrapper className="p-1 sm:p-2">
+                <div className="p-2 sm:p-4 bg-white">
+                  <div className="text-center mb-4 sm:mb-6">
+                    <h2 className="text-base sm:text-xl font-bold text-slate-800">{store?.name || store?.store_name} {format(selectedMonth, 'yyyy年M月')} 確定シフト表</h2>
+                    <p className="text-[10px] sm:text-xs text-slate-400 mt-1">
+                      確定日: {format(new Date(), 'yyyy/MM/dd HH:mm')} | 表示形式: {getViewModeLabel()}
+                      {getPeriodLabel() && ` | ${getPeriodLabel()}`}
+                    </p>
+                  </div>
+                  {renderPreviewContent()}
+                </div>
+              </ZoomableWrapper>
             </div>
             {/* プレビュータブ: 「次へ」ボタン → 通知対象タブへ */}
             <div className="mt-4 sm:mt-6 pt-4 border-t border-slate-200 flex justify-between items-center">
@@ -814,7 +968,7 @@ export default function ShiftConfirmDialog({
             </div>
           </TabsContent>
 
-          <TabsContent value="users" className="space-y-3 sm:space-y-4">
+          <TabsContent value="users" className="space-y-3 sm:space-y-4 overflow-hidden">
             <div className="flex justify-between items-center">
               <h3 className="text-xs sm:text-sm font-bold text-slate-700">通知を送信するスタッフを選択</h3>
               <div className="flex gap-1 sm:gap-2">
@@ -864,7 +1018,7 @@ export default function ShiftConfirmDialog({
             </div>
           </TabsContent>
 
-          <TabsContent value="settings" className="space-y-4 sm:space-y-6 py-2 sm:py-4">
+          <TabsContent value="settings" className="space-y-4 sm:space-y-6 py-2 sm:py-4 overflow-hidden">
             <div className="space-y-3 sm:space-y-4">
               <h3 className="text-xs sm:text-sm font-bold text-slate-700">通知方法</h3>
               <div className="grid gap-3 sm:gap-4">

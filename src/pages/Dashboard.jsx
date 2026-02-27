@@ -30,6 +30,7 @@ import { ja } from 'date-fns/locale';
 import { toast } from 'sonner';
 import DeadlineSettingDialog from '@/components/shift/DeadlineSettingDialog';
 import ConfirmedShiftViewer from '@/components/shift/ConfirmedShiftViewer';
+import { sortStoresByOrder } from '@/lib/storeOrder';
 
 function SortableCard({ id, children }) {
   const {
@@ -68,7 +69,7 @@ export default function Dashboard() {
     queryKey: ['stores'],
     queryFn: async () => {
       const data = await fetchAll('Store');
-      return data || [];
+      return sortStoresByOrder(data || []);
     },
   });
 
@@ -138,17 +139,26 @@ export default function Dashboard() {
     const results = [];
     for (const storeId of userStoreIds) {
       const store = stores.find(s => s.id === storeId);
-      const deadline = deadlines.find(d => 
+      const storeDeadlines = deadlines.filter(d => 
         d.store_id === storeId && d.target_month_end >= todayStr
       );
       const simpleDeadline = appSettings.find(s => 
         s.setting_key === 'submission_deadline' && s.store_id === storeId
       );
-      if (deadline || simpleDeadline) {
+      if (storeDeadlines.length > 0) {
+        for (const deadline of storeDeadlines) {
+          results.push({
+            storeId,
+            storeName: store?.store_name || '店舗',
+            deadline,
+            simpleDeadline,
+          });
+        }
+      } else if (simpleDeadline) {
         results.push({
           storeId,
           storeName: store?.store_name || '店舗',
-          deadline,
+          deadline: null,
           simpleDeadline,
         });
       }
@@ -161,14 +171,20 @@ export default function Dashboard() {
   // 提出期限のテキストを取得
   const getDeadlineText = () => {
     if (activeDeadlines.length === 0) return null;
-    const dl = activeDeadlines[0];
+    // 未来直近の締切日を優先
+    const today = new Date();
+    const todayStr = format(today, 'yyyy-MM-dd');
+    const futureDeadlines = activeDeadlines
+      .filter(dl => dl.deadline?.deadline_date >= todayStr)
+      .sort((a, b) => a.deadline.deadline_date.localeCompare(b.deadline.deadline_date));
+    const dl = futureDeadlines.length > 0 ? futureDeadlines[0] : activeDeadlines[0];
     const dateText = dl.deadline
       ? format(parseISO(dl.deadline.deadline_date), 'M/d')
       : dl.simpleDeadline
         ? dl.simpleDeadline.setting_value
         : null;
     if (!dateText) return null;
-    return `~${dateText}`;
+    return `締切${dateText}迄`;
   };
 
   const sensors = useSensors(
@@ -266,20 +282,26 @@ export default function Dashboard() {
 
             {/* Right: Quick action icons */}
             <div className="flex items-center gap-3">
-              <ConfirmedShiftViewer />
+              <div className="flex flex-col items-center gap-1">
+                <ConfirmedShiftViewer />
+                <span className="text-[8px] sm:text-[10px] font-medium text-white/80 whitespace-nowrap leading-none">確定シフト表</span>
+              </div>
               {isAdminOrManager && (
-                <button
-                  onClick={() => setPaidLeaveDialogOpen(true)}
-                  className="relative w-11 h-11 sm:w-13 sm:h-13 rounded-2xl bg-pink-400/40 backdrop-blur-sm border border-pink-200/40 flex items-center justify-center hover:bg-pink-400/55 transition-all shadow-lg hover:shadow-xl hover:scale-105"
-                  title="未承認の有給申請"
-                >
-                  <CalendarHeart className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
-                  {pendingRequests.length > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full px-1 shadow-md">
-                      {pendingRequests.length}
-                    </span>
-                  )}
-                </button>
+                <div className="flex flex-col items-center gap-1">
+                  <button
+                    onClick={() => setPaidLeaveDialogOpen(true)}
+                    className="relative w-11 h-11 sm:w-13 sm:h-13 rounded-2xl bg-pink-400/40 backdrop-blur-sm border border-pink-200/40 flex items-center justify-center hover:bg-pink-400/55 transition-all shadow-lg hover:shadow-xl hover:scale-105"
+                    title="未承認の有給申請"
+                  >
+                    <CalendarHeart className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+                    {pendingRequests.length > 0 && (
+                      <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center bg-red-500 text-white text-[10px] font-bold rounded-full px-1 shadow-md">
+                        {pendingRequests.length}
+                      </span>
+                    )}
+                  </button>
+                  <span className="text-[8px] sm:text-[10px] font-medium text-white/80 whitespace-nowrap leading-none">有給申請状況</span>
+                </div>
               )}
             </div>
           </div>
@@ -348,6 +370,38 @@ export default function Dashboard() {
 
                 // 通常カード
                 const isShiftSubmit = card.id === 'shift-submit';
+                const isShiftCreation = card.id === 'shift-creation';
+
+                // シフト作成カード用の確定締切テキストを取得（全期限から最も直近の確定締切を探す）
+                const getConfirmDeadlineText = () => {
+                  if (!isShiftCreation || activeDeadlines.length === 0) return null;
+                  const today = new Date();
+                  const todayStr = format(today, 'yyyy-MM-dd');
+                  // 未来直近の確定締切日を優先
+                  const futureConfirmDls = activeDeadlines
+                    .filter(dl => dl.deadline?.confirm_deadline_date && dl.deadline.confirm_deadline_date >= todayStr)
+                    .sort((a, b) => a.deadline.confirm_deadline_date.localeCompare(b.deadline.confirm_deadline_date));
+                  // 未来があれば最も近い未来、なければ最も近い過去
+                  let nearestConfirmDl = futureConfirmDls.length > 0 ? futureConfirmDls[0] : null;
+                  if (!nearestConfirmDl) {
+                    let closestDiff = Infinity;
+                    for (const dl of activeDeadlines) {
+                      if (dl.deadline?.confirm_deadline_date) {
+                        const confirmDate = parseISO(dl.deadline.confirm_deadline_date);
+                        const diff = Math.abs(confirmDate.getTime() - today.getTime());
+                        if (diff < closestDiff) {
+                          closestDiff = diff;
+                          nearestConfirmDl = dl;
+                        }
+                      }
+                    }
+                  }
+                  if (nearestConfirmDl) {
+                    return `確定${format(parseISO(nearestConfirmDl.deadline.confirm_deadline_date), 'M/d')}迄`;
+                  }
+                  return null;
+                };
+                const confirmDeadlineText = getConfirmDeadlineText();
 
                 return (
                   <SortableCard key={cardId} id={cardId}>
@@ -357,15 +411,22 @@ export default function Dashboard() {
                           <div className={`w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center shadow-md group-hover:scale-105 transition-transform`}>
                             <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
                           </div>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1">
                             {/* 提出期限バッジ - シフト希望提出カードの右側 */}
                             {isShiftSubmit && deadlineText && (
-                              <span className="inline-flex items-center gap-1 bg-red-50 border border-red-200 text-red-600 text-[10px] sm:text-xs font-bold rounded-full px-2 py-0.5">
-                                <Clock className="w-3 h-3" />
-                                {deadlineText}
+                              <span className="inline-flex items-center gap-0.5 bg-gradient-to-r from-red-500 to-pink-500 text-white text-[9px] sm:text-xs font-bold rounded-full px-1.5 sm:px-2.5 py-0.5 shadow-sm">
+                                <Clock className="w-2.5 h-2.5 sm:w-3 sm:h-3 flex-shrink-0" />
+                                <span className="whitespace-nowrap">{deadlineText}</span>
                               </span>
                             )}
-                            <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 group-hover:translate-x-0.5 transition-all" />
+                            {/* 確定締切バッジ - シフト作成カードの右側 */}
+                            {isShiftCreation && confirmDeadlineText && (
+                              <span className="inline-flex items-center gap-0.5 bg-gradient-to-r from-orange-500 to-red-500 text-white text-[9px] sm:text-xs font-bold rounded-full px-1.5 sm:px-2.5 py-0.5 shadow-sm">
+                                <Calendar className="w-2.5 h-2.5 sm:w-3 sm:h-3 flex-shrink-0" />
+                                <span className="whitespace-nowrap">{confirmDeadlineText}</span>
+                              </span>
+                            )}
+                            <ArrowRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
                           </div>
                         </div>
                         <h2 className="text-sm sm:text-base font-bold text-slate-800 mb-0.5">{card.label}</h2>
