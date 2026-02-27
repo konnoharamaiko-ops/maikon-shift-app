@@ -98,19 +98,84 @@ async function scrapeTempoVisorSales(username, password, date) {
     // ログイン完了を待つ
     await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
 
-    // 売上データページに移動（日付指定）
-    // TODO: 実際のTempoVisorのURL構造に合わせて調整
-    const targetDate = new Date(date);
-    const year = targetDate.getFullYear();
-    const month = targetDate.getMonth() + 1;
-    const day = targetDate.getDate();
+    // 売上管理 > 曜日・時間別ページに移動
+    await page.goto('https://www.tenpovisor.jp/alioth/servlet/SalesManagement', {
+      waitUntil: 'networkidle2',
+      timeout: 30000,
+    });
 
-    // 売上データを取得（ページ構造に応じて調整が必要）
+    // 日別・月別メニューをクリック
+    await page.waitForSelector('a[href*="DayMonth"]', { timeout: 10000 });
+    await page.click('a[href*="DayMonth"]');
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+
+    // 曜日・時間別ボタンをクリック
+    await page.waitForSelector('input[value="曜日・時間別"]', { timeout: 10000 });
+    await page.click('input[value="曜日・時間別"]');
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+
+    // 売上データを抽出
     const salesData = await page.evaluate(() => {
-      // TempoVisorのHTMLから売上データを抽出
-      // 実際のHTML構造に合わせて実装
       const stores = [];
-      // TODO: 実際のセレクタに置き換え
+      const storeMap = {
+        '田辺店': { code: '10110', name: '田辺店' },
+        '大正店': { code: '10120', name: '大正店' },
+        '天下茶屋店': { code: '10130', name: '天下茶屋店' },
+        '天王寺店': { code: '10140', name: '天王寺店' },
+        'アベノ店': { code: '10800', name: 'アベノ店' },
+        '心斎橋店': { code: '10900', name: '心斎橋店' },
+        'かがや店': { code: '11010', name: 'かがや店' },
+        'エキマル': { code: '11011', name: 'エキマル' },
+        '北摂店': { code: '11013', name: '北摂店' },
+        '堺東店': { code: '12200', name: '堺東店' },
+        'イオン松原店': { code: '12300', name: 'イオン松原店' },
+        'イオン守口店': { code: '12400', name: 'イオン守口店' },
+        '美和堂FC店': { code: '20000', name: '美和堂FC店' },
+      };
+
+      // テーブルから売上データを抽出
+      const table = document.querySelector('table');
+      if (!table) return [];
+
+      const rows = Array.from(table.querySelectorAll('tr'));
+      
+      // ヘッダー行から時間帯を取得
+      const headerRow = rows[0];
+      const timeSlots = Array.from(headerRow.querySelectorAll('th')).slice(1, -1).map(th => th.textContent.trim());
+
+      // 各店舗の行を処理
+      rows.slice(1).forEach(row => {
+        const cells = Array.from(row.querySelectorAll('td'));
+        if (cells.length < 2) return;
+
+        const storeName = cells[0].textContent.trim();
+        const storeInfo = storeMap[storeName];
+        if (!storeInfo) return; // 千林店など閉店した店舗を除外
+
+        const hourlySales = [];
+        let totalSales = 0;
+
+        // 時間帯別売上を抽出（最後のセルは合計なので除外）
+        cells.slice(1, -1).forEach((cell, index) => {
+          const salesText = cell.textContent.trim().replace(/,/g, '');
+          const sales = parseInt(salesText) || 0;
+          totalSales += sales;
+
+          hourlySales.push({
+            time: timeSlots[index] || `${10 + index}:00`,
+            sales: sales,
+          });
+        });
+
+        stores.push({
+          store_code: storeInfo.code,
+          store_name: storeInfo.name,
+          date: new Date().toISOString().split('T')[0],
+          total_sales: totalSales,
+          hourly_sales: hourlySales,
+        });
+      });
+
       return stores;
     });
 
@@ -139,20 +204,19 @@ async function scrapeTempoVisorSales(username, password, date) {
  */
 function generateDummySalesData(date) {
   const stores = [
-    { code: '001', name: '田辺店' },
-    { code: '002', name: 'アベノ店' },
-    { code: '003', name: '住之江店' },
-    { code: '004', name: '平野店' },
-    { code: '005', name: '東住吉店' },
-    { code: '006', name: '生野店' },
-    { code: '007', name: '東成店' },
-    { code: '008', name: '城東店' },
-    { code: '009', name: '鶴見店' },
-    { code: '010', name: '旭店' },
-    { code: '011', name: '都島店' },
-    { code: '012', name: '北区店' },
-    { code: '013', name: '福島店' },
-    { code: '014', name: '西区店' },
+    { code: '10110', name: '田辺店' },
+    { code: '10120', name: '大正店' },
+    { code: '10130', name: '天下茶屋店' },
+    { code: '10140', name: '天王寺店' },
+    { code: '10800', name: 'アベノ店' },
+    { code: '10900', name: '心斎橋店' },
+    { code: '11010', name: 'かがや店' },
+    { code: '11011', name: 'エキマル' },
+    { code: '11013', name: '北摂店' },
+    { code: '12200', name: '堺東店' },
+    { code: '12300', name: 'イオン松原店' },
+    { code: '12400', name: 'イオン守口店' },
+    { code: '20000', name: '美和堂FC店' },
   ];
 
   return stores.map(store => {

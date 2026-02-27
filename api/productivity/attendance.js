@@ -92,28 +92,107 @@ async function scrapeJobcanAttendance(companyId, loginId, password, date) {
     });
 
     // ログイン情報を入力
-    await page.type('input[name="client_id"]', companyId);
-    await page.type('input[name="client_login_id"]', loginId);
-    await page.type('input[name="client_password"]', password);
-    await page.click('button[type="submit"]');
+    await page.type('input#client_login_id', companyId);
+    await page.type('input#client_manager_login_id', loginId);
+    await page.type('input#client_login_password', password);
+    await page.click('button');
 
     // ログイン完了を待つ
     await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
 
-    // 勤務データページに移動
-    // TODO: 実際のジョブカンのURL構造に合わせて調整
-    const targetDate = new Date(date);
-    const year = targetDate.getFullYear();
-    const month = targetDate.getMonth() + 1;
-    const day = targetDate.getDate();
+    // 本日の勤務状況ページに移動
+    await page.goto('https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=30&group_where_type=main&retirement=work', {
+      waitUntil: 'networkidle2',
+      timeout: 30000,
+    });
 
-    // 勤怠データを取得（ページ構造に応じて調整が必要）
+    // 勤怠データを抽出
     const attendanceData = await page.evaluate(() => {
-      // ジョブカンのHTMLから勤怠データを抽出
-      // 実際のHTML構造に合わせて実装
-      const stores = [];
-      // TODO: 実際のセレクタに置き換え
-      return stores;
+      const storeCodeMap = {
+        '10110': '田辺店',
+        '10120': '大正店',
+        '10130': '天下茶屋店',
+        '10140': '天王寺店',
+        '10800': 'アベノ店',
+        '10900': '心斎橋店',
+        '11010': 'かがや店',
+        '11011': 'エキマル',
+        '11012': 'かがや工場',
+        '11013': '北摂店',
+        '12200': '堺東店',
+        '12300': 'イオン松原店',
+        '12400': 'イオン守口店',
+        '20000': '美和堂FC店',
+      };
+
+      // 店舗別データを集計
+      const storeData = {};
+      Object.keys(storeCodeMap).forEach(code => {
+        storeData[code] = {
+          store_code: code,
+          store_name: storeCodeMap[code],
+          date: new Date().toISOString().split('T')[0],
+          total_employees: 0,
+          total_hours: 0,
+          working_employees: 0,
+          employees: [],
+        };
+      });
+
+      // テーブルから従業員データを抽出
+      const table = document.querySelector('table');
+      if (!table) return Object.values(storeData);
+
+      const rows = Array.from(table.querySelectorAll('tr')).slice(1); // ヘッダーをスキップ
+
+      rows.forEach(row => {
+        const cells = Array.from(row.querySelectorAll('td'));
+        if (cells.length < 7) return;
+
+        // 従業員名と所属コードを抽出
+        const staffCell = cells[0].textContent.trim();
+        const staffMatch = staffCell.match(/([\u4e00-\u9fa5\u3040-\u309f\u30a0-\u30ff\s]+)\s+(\d{5})/);
+        if (!staffMatch) return;
+
+        const employeeName = staffMatch[1].trim();
+        const storeCode = staffMatch[2];
+
+        // 店舗コードが存在するか確認
+        if (!storeData[storeCode]) return;
+
+        // 出勤状況
+        const status = cells[2].textContent.trim();
+        const isWorking = status === '勤務中';
+        const hasWorked = status === '退勤済み' || isWorking;
+
+        // 労働時間をパース
+        const workHoursText = cells[6].textContent.trim();
+        const workHoursMatch = workHoursText.match(/(\d+)時間(\d+)分/);
+        let workHours = 0;
+        if (workHoursMatch) {
+          workHours = parseInt(workHoursMatch[1]) + parseInt(workHoursMatch[2]) / 60;
+        }
+
+        // 従業員データを追加
+        storeData[storeCode].employees.push({
+          employee_name: employeeName,
+          status: status,
+          clock_in: cells[4].textContent.trim() || '-',
+          clock_out: cells[5].textContent.trim() || '-',
+          work_hours: workHours,
+        });
+
+        // 集計
+        if (hasWorked) {
+          storeData[storeCode].total_employees++;
+          storeData[storeCode].total_hours += workHours;
+        }
+        if (isWorking) {
+          storeData[storeCode].working_employees++;
+        }
+      });
+
+      return Object.values(storeData);
     });
 
     await browser.close();
@@ -141,20 +220,20 @@ async function scrapeJobcanAttendance(companyId, loginId, password, date) {
  */
 function generateDummyAttendanceData(date) {
   const stores = [
-    { code: '001', name: '田辺店' },
-    { code: '002', name: 'アベノ店' },
-    { code: '003', name: '住之江店' },
-    { code: '004', name: '平野店' },
-    { code: '005', name: '東住吉店' },
-    { code: '006', name: '生野店' },
-    { code: '007', name: '東成店' },
-    { code: '008', name: '城東店' },
-    { code: '009', name: '鶴見店' },
-    { code: '010', name: '旭店' },
-    { code: '011', name: '都島店' },
-    { code: '012', name: '北区店' },
-    { code: '013', name: '福島店' },
-    { code: '014', name: '西区店' },
+    { code: '10110', name: '田辺店' },
+    { code: '10120', name: '大正店' },
+    { code: '10130', name: '天下茶屋店' },
+    { code: '10140', name: '天王寺店' },
+    { code: '10800', name: 'アベノ店' },
+    { code: '10900', name: '心斎橋店' },
+    { code: '11010', name: 'かがや店' },
+    { code: '11011', name: 'エキマル' },
+    { code: '11012', name: 'かがや工場' },
+    { code: '11013', name: '北摂店' },
+    { code: '12200', name: '堺東店' },
+    { code: '12300', name: 'イオン松原店' },
+    { code: '12400', name: 'イオン守口店' },
+    { code: '20000', name: '美和堂FC店' },
   ];
 
   return stores.map(store => {
