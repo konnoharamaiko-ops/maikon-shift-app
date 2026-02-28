@@ -576,9 +576,10 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
     const slotStartMinutes = hour * 60;
     const slotEndMinutes = (hour + 1) * 60;
 
-    // 現在時刻より未来の時間帯はスキップ
-    if (slotStartMinutes >= currentMinutes) {
-      break;
+    // 現在時刻より未来の時間帯は、売上データがなければスキップ
+    const isFutureSlot = slotStartMinutes >= currentMinutes;
+    if (isFutureSlot && (hourly[hour] === undefined || hourly[hour] === 0)) {
+      continue;
     }
 
     let personHours = 0;
@@ -589,9 +590,11 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
 
       const empStart = emp.clock_in_minutes;
       // 退勤済みは退勤時間、勤務中は現在時刻を終了とする
+      // 現在時刻が未来の場合はその時間帯の終了時刻を使用
+      const effectiveCurrentMinutes = isFutureSlot ? slotEndMinutes : currentMinutes;
       const empEnd = emp.status === '退勤済み' && emp.clock_out_minutes
         ? emp.clock_out_minutes
-        : currentMinutes;
+        : effectiveCurrentMinutes;
 
       // この時間帯との重複時間（分）を計算
       const overlapStart = Math.max(empStart, slotStartMinutes);
