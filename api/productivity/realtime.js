@@ -303,7 +303,18 @@ async function fetchAllStoresHourlySales(cookies, dateStr) {
     }
   });
 
-  console.log('[TV] Parsed hourly stores:', Object.keys(storeHourly).join(', '));
+  const parsedStoreNames = Object.keys(storeHourly);
+  console.log('[TV] Parsed hourly stores count:', parsedStoreNames.length);
+  console.log('[TV] Parsed hourly store names:', parsedStoreNames.join(' | '));
+  
+  // ALL_STORESとの一致確認
+  ALL_STORES.forEach(storeName => {
+    const hasData = storeHourly[storeName] && Object.keys(storeHourly[storeName]).length > 0;
+    if (!hasData) {
+      console.log('[TV] MISSING hourly data for:', storeName, '- available keys:', parsedStoreNames.filter(k => k.includes(storeName.slice(0,2))).join(', '));
+    }
+  });
+  
   return storeHourly;
 }
 
@@ -473,6 +484,9 @@ function mergeStoreData(sales, hourlyData, attendance) {
   const currentHour = jstNow.getHours();
   const currentMinutes = jstNow.getHours() * 60 + jstNow.getMinutes();
 
+  console.log('[MERGE] hourlyData keys:', Object.keys(hourlyData).join(' | '));
+  console.log('[MERGE] currentHour:', currentHour, 'currentMinutes:', currentMinutes);
+
   return ALL_STORES.map(storeName => {
     const salesInfo = sales.find(s => s.store_name === storeName) || {
       store_code: TEMPOVISOR_STORE_CODES[storeName] || '',
@@ -496,6 +510,11 @@ function mergeStoreData(sales, hourlyData, attendance) {
     const businessHours = STORE_BUSINESS_HOURS[storeName] || { open: 10, close: 18 };
 
     // 時間帯別人時生産性を計算
+    const hourlyKeys = Object.keys(hourly);
+    if (storeName === '田辺店' || storeName === 'かがや店') {
+      console.log(`[CALC] ${storeName}: hourly keys=${hourlyKeys.length}, employees=${storeEmployees.length}, currentMin=${currentMinutes}`);
+      if (hourlyKeys.length > 0) console.log(`[CALC] ${storeName}: hourly sample=`, JSON.stringify(hourly).slice(0, 100));
+    }
     const hourlyProductivity = calculateHourlyProductivity(
       storeEmployees,
       hourly,
