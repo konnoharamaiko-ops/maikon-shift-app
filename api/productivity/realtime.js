@@ -396,15 +396,29 @@ function mergeStoreData(sales, attendance) {
 
 /**
  * レスポンスからSet-CookieヘッダーをCookie文字列として抽出
+ * Vercel Node.js環境ではgetSetCookie()を使用
  */
 function extractCookies(response) {
-  // Node.js fetch APIではset-cookieヘッダーの取得方法が異なる
+  // Node.js 18+のfetch APIはgetSetCookie()をサポート
+  try {
+    if (response.headers.getSetCookie) {
+      const setCookies = response.headers.getSetCookie();
+      if (setCookies && setCookies.length > 0) {
+        return setCookies.map(c => c.split(';')[0].trim()).filter(c => c.includes('=')).join('; ');
+      }
+    }
+  } catch (e) {
+    // フォールバック
+  }
+  
+  // フォールバック: 単一のset-cookieヘッダー
   const raw = response.headers.get('set-cookie') || '';
   if (!raw) return '';
   
-  // カンマ区切りの複数Cookieを処理
+  // カンマ区切りの複数Cookieを処理（日付のカンマと区別）
   const cookies = [];
-  const parts = raw.split(/,(?=\s*[^;]+=[^;]+)/);
+  // 日付形式（Mon, 07 Mar）を考慮して分割
+  const parts = raw.split(/,(?=[^;]+=)/);
   parts.forEach(part => {
     const cookiePart = part.trim().split(';')[0].trim();
     if (cookiePart.includes('=')) {
