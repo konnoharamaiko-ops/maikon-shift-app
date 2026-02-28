@@ -212,10 +212,9 @@ async function fetchTempoVisorAllData(username, password) {
 
   // 時間別売上を全店舗一括取得（1リクエストで全店舗分を取得してタイムアウト回避）
   const today = new Date();
-  // 日本時間に変換
-  const jstOffset = 9 * 60;
-  const jstDate = new Date(today.getTime() + (jstOffset - today.getTimezoneOffset()) * 60000);
-  const dateStr = `${jstDate.getFullYear()}/${String(jstDate.getMonth()+1).padStart(2,'0')}/${String(jstDate.getDate()).padStart(2,'0')}`;
+  // 日本時間に変換（Vercel環境はUTCなのでgetUTCメソッドを使用）
+  const jstDate = new Date(today.getTime() + 9 * 60 * 60 * 1000);
+  const dateStr = `${jstDate.getUTCFullYear()}/${String(jstDate.getUTCMonth()+1).padStart(2,'0')}/${String(jstDate.getUTCDate()).padStart(2,'0')}`;
 
   const hourlyData = await fetchAllStoresHourlySales(cookies, dateStr);
   const hourlyKeys = Object.keys(hourlyData);
@@ -478,11 +477,13 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
  * 時間帯別人時生産性を計算して返す
  */
 function mergeStoreData(sales, hourlyData, attendance) {
-  // 現在の日本時間
+  // 現在の日本時間（Vercel環境はUTCなのでgetUTCHours/getUTCMinutesを使用）
   const now = new Date();
-  const jstNow = new Date(now.getTime() + (9 * 60 - now.getTimezoneOffset()) * 60000);
-  const currentHour = jstNow.getHours();
-  const currentMinutes = jstNow.getHours() * 60 + jstNow.getMinutes();
+  // UTC時刻に9時間を加算してJST時刻を表すDateオブジェクトを作成
+  // getUTCHours/getUTCMinutesで取得するとJSTの時刻が得られる
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const currentHour = jstNow.getUTCHours();
+  const currentMinutes = jstNow.getUTCHours() * 60 + jstNow.getUTCMinutes();
 
   console.log('[MERGE] hourlyData keys:', Object.keys(hourlyData).join(' | '));
   console.log('[MERGE] currentHour:', currentHour, 'currentMinutes:', currentMinutes);
