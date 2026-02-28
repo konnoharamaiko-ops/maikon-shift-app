@@ -329,8 +329,9 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     if (!storeAttendance[storeName]) {
       storeAttendance[storeName] = {
         store_name: storeName,
-        total_employees: 0,
-        working_employees: 0,
+        total_employees: 0,       // ジョブカン登録の全スタッフ数
+        attended_employees: 0,    // 本日出勤した延べ人数（勤務中＋退勤済み）
+        working_employees: 0,     // 現在稼働中の人数
         total_hours: 0,
         employees: [],
       };
@@ -340,8 +341,11 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     store.total_employees++;
 
     if (status === '勤務中' || status === '退勤済み') {
-      store.working_employees++;
+      store.attended_employees++;
       store.total_hours += netHours;
+    }
+    if (status === '勤務中') {
+      store.working_employees++;
     }
 
     store.employees.push(employee);
@@ -385,7 +389,8 @@ function mergeStoreData(sales, attendance) {
       code: salesInfo.store_code || TEMPOVISOR_STORE_CODES[storeName] || '',
       kingaku: todaySales.toString(),
       monthly_sales: salesInfo.monthly_sales || 0,
-      wk_cnt: attendInfo.working_employees,
+      wk_cnt: attendInfo.attended_employees || attendInfo.working_employees || 0,  // 本日出勤した延べ人数
+      working_now: attendInfo.working_employees || 0,  // 現在稼働中
       total_employees: attendInfo.total_employees,
       wk_tm: totalHours,
       spd: productivity.toString(),

@@ -13,6 +13,7 @@ export function StoreStatusCard({ store }) {
     store_name,
     total_sales = 0,
     total_employees = 0,
+    attended_employees = 0,
     total_hours = 0,
     working_employees = 0,
     productivity = 0,
@@ -115,11 +116,11 @@ export function StoreStatusCard({ store }) {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <Users className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">稼働/総人数</span>
+              <span className="text-xs text-muted-foreground">稼働中/本日出勤</span>
             </div>
             <div className="text-base font-semibold">
               <span className="text-green-600 dark:text-green-400">{working_employees}</span>
-              <span className="text-muted-foreground"> / {total_employees}人</span>
+              <span className="text-muted-foreground"> / {attended_employees}人</span>
             </div>
           </div>
 

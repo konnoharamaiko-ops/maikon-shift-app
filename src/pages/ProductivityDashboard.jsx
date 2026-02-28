@@ -17,7 +17,7 @@ function calcSummary(stores) {
   }
   const totalSales = stores.reduce((s, st) => s + (st.total_sales || 0), 0);
   const totalWorkHours = stores.reduce((s, st) => s + (st.total_hours || 0), 0);
-  const totalWorkers = stores.reduce((s, st) => s + (st.working_employees || 0), 0);
+  const totalWorkers = stores.reduce((s, st) => s + (st.attended_employees || 0), 0);  // 本日出勤した延べ人数
   const avgProductivity = totalWorkHours > 0 ? Math.round(totalSales / totalWorkHours) : 0;
   return { totalSales, totalWorkHours, totalWorkers, avgProductivity };
 }
@@ -33,8 +33,9 @@ function transformStoreData(apiData) {
     store_name: item.tenpo_name || item.store_name || '',
     total_sales: parseInt(item.kingaku || item.total_sales || 0),
     total_hours: parseFloat(item.wk_tm || item.total_hours || 0),
-    total_employees: parseInt(item.total_employees || item.wk_cnt || 0),
-    working_employees: parseInt(item.wk_cnt || item.working_employees || 0),
+    total_employees: parseInt(item.total_employees || 0),
+    attended_employees: parseInt(item.wk_cnt || item.attended_employees || 0),  // 本日出勤した延べ人数
+    working_employees: parseInt(item.working_now || item.working_employees || 0),  // 現在稼働中
     productivity: parseInt(item.spd || item.productivity || 0),
     customers: parseInt(item.customers || 0),
     update_time: item.update_time || '',
