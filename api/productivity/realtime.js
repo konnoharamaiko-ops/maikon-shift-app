@@ -1,9 +1,6 @@
 /**
  * Vercel Serverless Function: Real-time HR Productivity API
  * TempoVisor（売上）とジョブカン（勤怠）からリアルタイムデータを取得して人時生産性を計算
- * 
- * エンドポイント: GET /api/productivity/realtime
- * レスポンス: { success: true, data: [...], employees: [...] }
  */
 
 import * as cheerio from 'cheerio';
@@ -16,15 +13,13 @@ const STORE_DEPT_MAP = {
   '10140': { name: '天王寺店', tempovisor: '天王寺店' },
   '10800': { name: 'アベノ店', tempovisor: 'アベノ店' },
   '10150': { name: '心斎橋店', tempovisor: '心斎橋店' },
-  '10160': { name: 'かがや店', tempovisor: 'かがや店' },
+  '11010': { name: 'かがや店', tempovisor: 'かがや店' },
   '10170': { name: 'エキマル', tempovisor: 'エキマル' },
-  '10180': { name: '北摂店', tempovisor: '北摂店' },
+  '12010': { name: '北摂店', tempovisor: '北摂店' },
   '10190': { name: '堺東店', tempovisor: '堺東店' },
-  '10200': { name: 'イオン松原店', tempovisor: 'イオン松原店' },
   '12300': { name: 'イオン松原店', tempovisor: 'イオン松原店' },
   '10210': { name: 'イオン守口店', tempovisor: 'イオン守口店' },
   '20000': { name: '美和堂FC店', tempovisor: '美和堂FC店' },
-  '10220': { name: '美和堂FC店', tempovisor: '美和堂FC店' },
 };
 
 // TempoVisorの店舗名からコードへのマッピング
@@ -35,14 +30,21 @@ const TEMPOVISOR_STORE_CODES = {
   '天王寺店': '10140',
   'アベノ店': '10800',
   '心斎橋店': '10150',
-  'かがや店': '10160',
+  'かがや店': '11010',
   'エキマル': '10170',
-  '北摂店': '10180',
+  '北摂店': '12010',
   '堺東店': '10190',
-  'イオン松原店': '10200',
+  'イオン松原店': '12300',
   'イオン守口店': '10210',
-  '美和堂FC店': '10220',
+  '美和堂FC店': '20000',
 };
+
+// 全13店舗リスト（データがなくても表示する）
+const ALL_STORES = [
+  '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
+  '心斎橋店', 'かがや店', 'エキマル', '北摂店', '堺東店',
+  'イオン松原店', 'イオン守口店', '美和堂FC店'
+];
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', true);
@@ -63,15 +65,15 @@ export default async function handler(req, res) {
     const jobcanCompany = process.env.JOBCAN_COMPANY_ID || 'maikon';
 
     // 並行してデータ取得
-    const [salesData, attendanceData] = await Promise.allSettled([
+    const [salesResult, attendanceResult] = await Promise.allSettled([
       fetchTempoVisorSales(tempovisorUser, tempovisorPass),
       fetchJobcanAttendance(jobcanCompany, jobcanUser, jobcanPass),
     ]);
 
-    const sales = salesData.status === 'fulfilled' ? salesData.value : [];
-    const attendance = attendanceData.status === 'fulfilled' ? attendanceData.value : { stores: {}, employees: [] };
+    const sales = salesResult.status === 'fulfilled' ? salesResult.value : [];
+    const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : { stores: {}, employees: [] };
 
-    // 店舗ごとに統合
+    // 店舗ごとに統合（全13店舗を必ず含める）
     const storeData = mergeStoreData(sales, attendance.stores);
     const employees = attendance.employees || [];
 
@@ -81,8 +83,8 @@ export default async function handler(req, res) {
       employees: employees,
       timestamp: new Date().toISOString(),
       sources: {
-        tempovisor: salesData.status === 'fulfilled' ? 'live' : 'error',
-        jobcan: attendanceData.status === 'fulfilled' ? 'live' : 'error',
+        tempovisor: salesResult.status === 'fulfilled' ? 'live' : `error: ${salesResult.reason?.message}`,
+        jobcan: attendanceResult.status === 'fulfilled' ? 'live' : `error: ${attendanceResult.reason?.message}`,
       }
     });
 
@@ -96,141 +98,223 @@ export default async function handler(req, res) {
 }
 
 /**
- * TempoVisorから本日の売上データを取得
+ * TempoVisorから本日の売上データを取得（Shift_JIS対応）
  */
 async function fetchTempoVisorSales(username, password) {
   const loginUrl = 'https://www.tenpovisor.jp/alioth/servlet/LoginServlet?legacy=true';
-  const topUrl = 'https://www.tenpovisor.jp/alioth/board/topmenu';
 
-  // ログイン
-  const loginRes = await fetch(loginUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `loginId=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&submit=ログイン`,
+  // Step1: まずGETでログインページを取得してCookieを得る
+  const getRes = await fetch(loginUrl, {
+    method: 'GET',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
     redirect: 'manual',
   });
 
-  // セッションCookieを取得
-  const setCookieHeader = loginRes.headers.get('set-cookie') || '';
-  const cookies = extractCookies(setCookieHeader);
+  const initialCookies = extractCookiesFromResponse(getRes);
+
+  // Step2: POSTでログイン
+  const loginRes = await fetch(loginUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Cookie': initialCookies,
+    },
+    body: `loginId=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&submit=%83%8D%83O%83C%83%93`,
+    redirect: 'manual',
+  });
+
+  const loginCookies = extractCookiesFromResponse(loginRes);
+  const allCookies = mergeCookies(initialCookies, loginCookies);
 
   // リダイレクト先を取得
-  let location = loginRes.headers.get('location') || topUrl;
-  if (!location.startsWith('http')) {
-    location = 'https://www.tenpovisor.jp' + location;
+  let nextUrl = loginRes.headers.get('location');
+  if (!nextUrl) {
+    nextUrl = 'https://www.tenpovisor.jp/alioth/board/topmenu';
+  } else if (!nextUrl.startsWith('http')) {
+    nextUrl = 'https://www.tenpovisor.jp' + nextUrl;
   }
 
-  // トップメニューページを取得
-  const topRes = await fetch(location, {
-    headers: { 'Cookie': cookies },
+  // Step3: トップメニューページを取得
+  const topRes = await fetch(nextUrl, {
+    headers: {
+      'Cookie': allCookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
     redirect: 'follow',
   });
 
-  const html = await topRes.text();
+  // Shift_JISデコード
+  const buffer = await topRes.arrayBuffer();
+  const html = decodeShiftJIS(buffer);
+
   const $ = cheerio.load(html);
-
   const stores = [];
-  
+
   // sales_Listテーブルから店舗別売上を取得
-  $('#sales_List tr').each((i, row) => {
-    if (i === 0) return; // ヘッダー行スキップ
+  let tableFound = false;
+  
+  // テーブルを探す（IDまたはクラスで）
+  $('table').each((tableIdx, table) => {
+    const tableId = $(table).attr('id') || '';
+    const tableClass = $(table).attr('class') || '';
     
-    const cells = $(row).find('td');
-    if (cells.length < 8) return;
+    if (tableId === 'sales_List' || tableClass.includes('sales')) {
+      tableFound = true;
+      $(table).find('tr').each((i, row) => {
+        if (i === 0) return; // ヘッダー行スキップ
+        
+        const cells = $(row).find('td');
+        if (cells.length < 6) return;
 
-    const storeName = $(cells[0]).text().trim();
-    if (!storeName || storeName.startsWith('(') || storeName === '合計') return;
-    
-    // 千林店は除外
-    if (storeName === '千林店') return;
+        const storeName = $(cells[0]).text().trim();
+        if (!storeName || storeName === '合計' || storeName === '店舗名') return;
+        if (storeName === '千林店') return;
 
-    const storeCode = TEMPOVISOR_STORE_CODES[storeName];
-    if (!storeCode) return;
+        const storeCode = TEMPOVISOR_STORE_CODES[storeName];
+        if (!storeCode) return;
 
-    // セル[5]が前日売上、セル[6]が当日売上
-    const todaySalesText = $(cells[6]).text().trim().replace(/[¥,]/g, '');
-    const prevDaySalesText = $(cells[5]).text().trim().replace(/[¥,]/g, '');
-    const monthlySalesText = $(cells[1]).text().trim().replace(/[¥,]/g, '');
-    const customersText = $(cells[7]).text().trim().replace(/[人,]/g, '');
-    const updateTime = $(cells[9]).text().trim();
+        const todaySalesText = $(cells[6] || cells[cells.length - 1]).text().trim().replace(/[¥,￥\s]/g, '');
+        const prevDaySalesText = $(cells[5]).text().trim().replace(/[¥,￥\s]/g, '');
+        const monthlySalesText = $(cells[1]).text().trim().replace(/[¥,￥\s]/g, '');
+        const customersText = cells.length > 7 ? $(cells[7]).text().trim().replace(/[人,\s]/g, '') : '0';
+        const updateTime = cells.length > 9 ? $(cells[9]).text().trim() : '';
 
-    const todaySales = parseInt(todaySalesText) || 0;
-    const prevDaySales = parseInt(prevDaySalesText) || 0;
-    const monthlySales = parseInt(monthlySalesText) || 0;
-    const customers = parseInt(customersText) || 0;
-
-    stores.push({
-      store_code: storeCode,
-      store_name: storeName,
-      today_sales: todaySales,
-      prev_day_sales: prevDaySales,
-      monthly_sales: monthlySales,
-      customers: customers,
-      update_time: updateTime,
-    });
+        stores.push({
+          store_code: storeCode,
+          store_name: storeName,
+          today_sales: parseInt(todaySalesText) || 0,
+          prev_day_sales: parseInt(prevDaySalesText) || 0,
+          monthly_sales: parseInt(monthlySalesText) || 0,
+          customers: parseInt(customersText) || 0,
+          update_time: updateTime,
+        });
+      });
+    }
   });
+
+  // sales_Listが見つからない場合、全テーブルを探す
+  if (!tableFound || stores.length === 0) {
+    $('tr').each((i, row) => {
+      const cells = $(row).find('td');
+      if (cells.length < 3) return;
+      
+      const firstCell = $(cells[0]).text().trim();
+      if (TEMPOVISOR_STORE_CODES[firstCell]) {
+        const storeName = firstCell;
+        if (storeName === '千林店') return;
+        
+        const storeCode = TEMPOVISOR_STORE_CODES[storeName];
+        const todaySalesText = $(cells[Math.min(6, cells.length - 1)]).text().trim().replace(/[¥,￥\s]/g, '');
+        
+        stores.push({
+          store_code: storeCode,
+          store_name: storeName,
+          today_sales: parseInt(todaySalesText) || 0,
+          prev_day_sales: 0,
+          monthly_sales: 0,
+          customers: 0,
+          update_time: '',
+        });
+      }
+    });
+  }
 
   return stores;
 }
 
 /**
- * ジョブカンから本日の勤務状況を取得
+ * ジョブカンから本日の勤務状況を取得（CSRFトークン対応）
  */
 async function fetchJobcanAttendance(companyId, loginId, password) {
-  const loginUrl = 'https://ssl.jobcan.jp/login/client/';
+  const loginPageUrl = 'https://ssl.jobcan.jp/login/client/';
+
+  // Step1: GETでログインページを取得してCSRFトークンとCookieを得る
+  const getRes = await fetch(loginPageUrl, {
+    method: 'GET',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+  });
+
+  const initialCookies = extractCookiesFromResponse(getRes);
+  const loginHtml = await getRes.text();
   
-  // ログイン
-  const loginRes = await fetch(loginUrl, {
+  // CSRFトークンを取得
+  const $ = cheerio.load(loginHtml);
+  const csrfToken = $('input[name="_token"]').val() || 
+                    $('meta[name="csrf-token"]').attr('content') || '';
+
+  // Step2: POSTでログイン
+  const loginRes = await fetch(loginPageUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `client_login_id=${encodeURIComponent(loginId)}&client_login_password=${encodeURIComponent(password)}&client_company_id=${encodeURIComponent(companyId)}&_token=&login_type=client`,
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Cookie': initialCookies,
+      'Referer': loginPageUrl,
+    },
+    body: `client_login_id=${encodeURIComponent(loginId)}&client_login_password=${encodeURIComponent(password)}&client_company_id=${encodeURIComponent(companyId)}&_token=${encodeURIComponent(csrfToken)}&login_type=client`,
     redirect: 'manual',
   });
 
-  const setCookieHeader = loginRes.headers.get('set-cookie') || '';
-  const cookies = extractCookies(setCookieHeader);
-
-  // 勤務状況ページを取得（全スタッフ、本日）
-  const workStateUrl = 'https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=300&sort_order=&tags=&group_where_type=both&adit_group_id=0&retirement=work&employee_id=&work_kind%5B0%5D=0&group_id=0';
+  const loginCookies = extractCookiesFromResponse(loginRes);
+  const allCookies = mergeCookies(initialCookies, loginCookies);
   
+  const location = loginRes.headers.get('location') || '';
+  
+  // ログイン失敗チェック
+  if (location.includes('error') || location.includes('login')) {
+    throw new Error(`Jobcan login failed: redirected to ${location}`);
+  }
+
+  // Step3: 勤務状況ページを取得
+  const workStateUrl = 'https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=300&sort_order=&tags=&group_where_type=both&adit_group_id=0&retirement=work&employee_id=&work_kind%5B0%5D=0&group_id=0';
+
   const workRes = await fetch(workStateUrl, {
-    headers: { 'Cookie': cookies },
+    headers: {
+      'Cookie': allCookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://ssl.jobcan.jp/client/',
+    },
     redirect: 'follow',
   });
 
-  const html = await workRes.text();
-  const $ = cheerio.load(html);
+  const workHtml = await workRes.text();
+  const $work = cheerio.load(workHtml);
 
   const storeAttendance = {};
   const employees = [];
 
   // noteクラスのテーブルから勤務状況を取得
-  $('table.note tr').each((i, row) => {
-    if (i === 0) return; // ヘッダー行スキップ
+  $work('table.note tr, table tr').each((i, row) => {
+    if (i === 0) return;
     
-    const cells = $(row).find('td');
-    if (cells.length < 5) return;
+    const cells = $work(row).find('td');
+    if (cells.length < 4) return;
 
-    const staffCell = $(cells[0]);
+    const staffCell = $work(cells[0]);
     const staffName = staffCell.find('a').first().text().trim();
-    const deptText = staffCell.text().trim().replace(staffName, '').trim();
+    if (!staffName) return;
+    
+    const cellText = staffCell.text().trim();
     
     // 部署コードを抽出（例: "10110 店1018->田辺店"）
-    const deptMatch = deptText.match(/^(\d{5})/);
+    const deptMatch = cellText.match(/(\d{5})/);
     if (!deptMatch) return;
     
     const deptCode = deptMatch[1];
     const storeInfo = STORE_DEPT_MAP[deptCode];
-    if (!storeInfo) return; // 店舗以外（工場、通販部など）はスキップ
+    if (!storeInfo) return;
 
-    const status = $(cells[2]).text().trim();
-    const shift = $(cells[3]).text().trim().replace(/\t.*/,'').trim();
-    const startTime = $(cells[4]).text().trim();
-    const endTime = $(cells[5]).text().trim();
-    const workTimeText = $(cells[6]).text().trim();
-    const breakTimeText = $(cells[7]).text().trim();
+    const status = $work(cells[2]).text().trim();
+    const startTime = cells.length > 4 ? $work(cells[4]).text().trim() : '-';
+    const endTime = cells.length > 5 ? $work(cells[5]).text().trim() : '-';
+    const workTimeText = cells.length > 6 ? $work(cells[6]).text().trim() : '-';
+    const breakTimeText = cells.length > 7 ? $work(cells[7]).text().trim() : '-';
 
-    // 労働時間を分に変換
     const workMinutes = parseWorkTime(workTimeText);
     const breakMinutes = parseWorkTime(breakTimeText);
     const netWorkMinutes = Math.max(0, workMinutes - breakMinutes);
@@ -241,7 +325,6 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       dept_code: deptCode,
       store_name: storeInfo.name,
       status: status,
-      shift: shift,
       start_time: startTime === '-' ? null : startTime,
       end_time: endTime === '-' ? null : endTime,
       work_hours: parseFloat(netWorkHours.toFixed(2)),
@@ -250,10 +333,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
     employees.push(employee);
 
-    // 店舗別集計
     if (!storeAttendance[storeInfo.name]) {
       storeAttendance[storeInfo.name] = {
-        store_code: Object.keys(STORE_DEPT_MAP).find(k => STORE_DEPT_MAP[k].name === storeInfo.name),
         store_name: storeInfo.name,
         total_employees: 0,
         working_employees: 0,
@@ -277,26 +358,21 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 }
 
 /**
- * 売上データと勤怠データを統合
+ * 売上データと勤怠データを統合（全13店舗を必ず含める）
  */
 function mergeStoreData(sales, attendance) {
-  const allStoreNames = new Set([
-    ...sales.map(s => s.store_name),
-    ...Object.keys(attendance),
-  ]);
-
   const result = [];
 
-  allStoreNames.forEach(storeName => {
+  ALL_STORES.forEach(storeName => {
     const salesInfo = sales.find(s => s.store_name === storeName) || {
       store_code: TEMPOVISOR_STORE_CODES[storeName] || '',
       store_name: storeName,
       today_sales: 0,
       customers: 0,
+      update_time: '',
     };
 
     const attendInfo = attendance[storeName] || {
-      store_code: TEMPOVISOR_STORE_CODES[storeName] || '',
       store_name: storeName,
       total_employees: 0,
       working_employees: 0,
@@ -310,7 +386,7 @@ function mergeStoreData(sales, attendance) {
 
     result.push({
       tenpo_name: storeName,
-      code: salesInfo.store_code || attendInfo.store_code,
+      code: salesInfo.store_code || TEMPOVISOR_STORE_CODES[storeName] || '',
       kingaku: todaySales.toString(),
       wk_cnt: attendInfo.working_employees,
       total_employees: attendInfo.total_employees,
@@ -322,18 +398,64 @@ function mergeStoreData(sales, attendance) {
     });
   });
 
-  // 店舗コード順にソート
-  result.sort((a, b) => {
-    const codeA = parseInt(a.code) || 99999;
-    const codeB = parseInt(b.code) || 99999;
-    return codeA - codeB;
-  });
-
   return result;
 }
 
 /**
- * 労働時間テキストを分に変換（例: "8時間30分" → 510）
+ * ArrayBufferをShift_JISからUTF-8にデコード
+ */
+function decodeShiftJIS(buffer) {
+  try {
+    const decoder = new TextDecoder('shift_jis');
+    return decoder.decode(buffer);
+  } catch (e) {
+    // フォールバック: UTF-8として読む
+    const decoder = new TextDecoder('utf-8');
+    return decoder.decode(buffer);
+  }
+}
+
+/**
+ * レスポンスからCookieを抽出
+ */
+function extractCookiesFromResponse(response) {
+  const setCookieHeader = response.headers.get('set-cookie') || '';
+  if (!setCookieHeader) return '';
+  
+  // 複数のSet-Cookieヘッダーを処理
+  const cookies = setCookieHeader.split(/,(?=[^;]+=[^;]+)/).map(c => {
+    return c.trim().split(';')[0].trim();
+  }).filter(c => c.includes('='));
+  
+  return cookies.join('; ');
+}
+
+/**
+ * 既存のCookieと新しいCookieをマージ
+ */
+function mergeCookies(existing, newCookies) {
+  if (!existing) return newCookies;
+  if (!newCookies) return existing;
+  
+  const cookieMap = {};
+  
+  // 既存のCookieを解析
+  existing.split(';').forEach(c => {
+    const [key, ...vals] = c.trim().split('=');
+    if (key) cookieMap[key.trim()] = vals.join('=');
+  });
+  
+  // 新しいCookieで上書き
+  newCookies.split(';').forEach(c => {
+    const [key, ...vals] = c.trim().split('=');
+    if (key) cookieMap[key.trim()] = vals.join('=');
+  });
+  
+  return Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+/**
+ * 労働時間テキストを分に変換
  */
 function parseWorkTime(timeText) {
   if (!timeText || timeText === '-') return 0;
@@ -344,21 +466,15 @@ function parseWorkTime(timeText) {
   const hours = hoursMatch ? parseInt(hoursMatch[1]) : 0;
   const minutes = minutesMatch ? parseInt(minutesMatch[1]) : 0;
   
+  // "HH:MM" 形式にも対応
+  if (!hoursMatch && !minutesMatch) {
+    const colonMatch = timeText.match(/(\d+):(\d+)/);
+    if (colonMatch) {
+      return parseInt(colonMatch[1]) * 60 + parseInt(colonMatch[2]);
+    }
+  }
+  
   return hours * 60 + minutes;
-}
-
-/**
- * Set-Cookieヘッダーからcookie文字列を抽出
- */
-function extractCookies(setCookieHeader) {
-  if (!setCookieHeader) return '';
-  
-  const cookies = setCookieHeader.split(',').map(c => {
-    const parts = c.trim().split(';');
-    return parts[0].trim();
-  });
-  
-  return cookies.join('; ');
 }
 
 export const config = {
