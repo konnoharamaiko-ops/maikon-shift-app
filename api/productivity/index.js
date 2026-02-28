@@ -217,20 +217,19 @@ function getDayOfWeek(dateStr) {
  */
 function generateDummySalesData(date) {
   const stores = [
-    { code: '001', name: '田辺店' },
-    { code: '002', name: 'アベノ店' },
-    { code: '003', name: '住之江店' },
-    { code: '004', name: '平野店' },
-    { code: '005', name: '東住吉店' },
-    { code: '006', name: '生野店' },
-    { code: '007', name: '東成店' },
-    { code: '008', name: '城東店' },
-    { code: '009', name: '鶴見店' },
-    { code: '010', name: '旭店' },
-    { code: '011', name: '都島店' },
-    { code: '012', name: '北区店' },
-    { code: '013', name: '福島店' },
-    { code: '014', name: '西区店' },
+    { code: '10110', name: '田辺店' },
+    { code: '10120', name: '大正店' },
+    { code: '10130', name: '天下茶屋店' },
+    { code: '10140', name: '天王寺店' },
+    { code: '10800', name: 'アベノ店' },
+    { code: '10150', name: '心斎橋店' },
+    { code: '10160', name: 'かがや店' },
+    { code: '10170', name: 'エキマル' },
+    { code: '10180', name: '北摂店' },
+    { code: '10190', name: '堺東店' },
+    { code: '10200', name: 'イオン松原店' },
+    { code: '10210', name: 'イオン守口店' },
+    { code: '10220', name: '美和堂FC店' },
   ];
 
   return stores.map(store => {
@@ -262,20 +261,19 @@ function generateDummySalesData(date) {
  */
 function generateDummyAttendanceData(date) {
   const stores = [
-    { code: '001', name: '田辺店' },
-    { code: '002', name: 'アベノ店' },
-    { code: '003', name: '住之江店' },
-    { code: '004', name: '平野店' },
-    { code: '005', name: '東住吉店' },
-    { code: '006', name: '生野店' },
-    { code: '007', name: '東成店' },
-    { code: '008', name: '城東店' },
-    { code: '009', name: '鶴見店' },
-    { code: '010', name: '旭店' },
-    { code: '011', name: '都島店' },
-    { code: '012', name: '北区店' },
-    { code: '013', name: '福島店' },
-    { code: '014', name: '西区店' },
+    { code: '10110', name: '田辺店' },
+    { code: '10120', name: '大正店' },
+    { code: '10130', name: '天下茶屋店' },
+    { code: '10140', name: '天王寺店' },
+    { code: '10800', name: 'アベノ店' },
+    { code: '10150', name: '心斎橋店' },
+    { code: '10160', name: 'かがや店' },
+    { code: '10170', name: 'エキマル' },
+    { code: '10180', name: '北摂店' },
+    { code: '10190', name: '堺東店' },
+    { code: '10200', name: 'イオン松原店' },
+    { code: '10210', name: 'イオン守口店' },
+    { code: '10220', name: '美和堂FC店' },
   ];
 
   return stores.map(store => {
