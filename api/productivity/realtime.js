@@ -209,39 +209,26 @@ async function fetchTempoVisorAllData(username, password) {
     });
   });
 
-  // 時間別売上を全店舗分並列取得
+  // 時間別売上を全店舗一括取得（1リクエストで全店舗分を取得してタイムアウト回避）
   const today = new Date();
   // 日本時間に変換
   const jstOffset = 9 * 60;
   const jstDate = new Date(today.getTime() + (jstOffset - today.getTimezoneOffset()) * 60000);
   const dateStr = `${jstDate.getFullYear()}/${String(jstDate.getMonth()+1).padStart(2,'0')}/${String(jstDate.getDate()).padStart(2,'0')}`;
 
-  const hourlyResults = await Promise.allSettled(
-    ALL_STORES.map(storeName => {
-      const storeCode = TEMPOVISOR_STORE_CODES[storeName];
-      if (!storeCode) return Promise.resolve({ storeName, hourly: {} });
-      return fetchHourlySalesForStore(cookies, storeCode, storeName, dateStr);
-    })
-  );
-
-  const hourlyData = {};
-  hourlyResults.forEach((result, i) => {
-    if (result.status === 'fulfilled') {
-      hourlyData[result.value.storeName] = result.value.hourly;
-    } else {
-      hourlyData[ALL_STORES[i]] = {};
-    }
-  });
+  const hourlyData = await fetchAllStoresHourlySales(cookies, dateStr);
 
   return { stores, hourly: hourlyData };
 }
 
 /**
- * 特定店舗の時間別売上をN3D1Servletから取得
- * @returns { storeName, hourly: { '10': 36756, '11': 48108, ... } }
+ * 全店舗の時間別売上をN3D1Servletから1リクエストで取得
+ * scode1=0001&scode2=2000 で全店舗範囲指定
+ * @returns { '田辺店': { '10': 36756, '11': 48108, ... }, '大正店': {...}, ... }
  */
-async function fetchHourlySalesForStore(cookies, storeCode, storeName, dateStr) {
-  const url = `https://www.tenpovisor.jp/alioth/rep/N3D1Servlet?chkcsv=false&scode1=${storeCode}&scode2=${storeCode}&time_type=1&interval=1&tani=1&yyyymmdd1=${dateStr}&yyyymmdd2=${dateStr}&pscode=${storeCode}`;
+async function fetchAllStoresHourlySales(cookies, dateStr) {
+  // 全店舗一括取得（scode1=0001〜scode2=2000）
+  const url = `https://www.tenpovisor.jp/alioth/rep/N3D1Servlet?chkcsv=false&scode1=0001&scode2=2000&time_type=1&interval=1&tani=1&yyyymmdd1=${dateStr}&yyyymmdd2=${dateStr}`;
 
   const res = await fetch(url, {
     headers: {
@@ -253,21 +240,23 @@ async function fetchHourlySalesForStore(cookies, storeCode, storeName, dateStr) 
   });
 
   if (!res.ok) {
-    return { storeName, hourly: {} };
+    // フォールバック：全店舗空データ
+    const empty = {};
+    ALL_STORES.forEach(s => { empty[s] = {}; });
+    return empty;
   }
 
   const buffer = await res.arrayBuffer();
   const html = new TextDecoder('shift_jis').decode(buffer);
   const $ = cheerio.load(html);
 
-  const hourly = {};
+  const storeHourly = {};
 
-  // Table 20（店舗名 | 10:00～ | 11:00～ | ... | 合計）を探す
+  // 「店舗名 | 10:00～ | 11:00～ | ...」形式のテーブルを探す
   $('table').each((i, table) => {
     const headerRow = $(table).find('tr').first();
     const headerText = headerRow.text();
-    // 時間帯ヘッダーを含むテーブルを特定
-    if (!headerText.includes('店舗名') && !headerText.includes('合計')) return;
+    if (!headerText.includes('店舗名')) return;
     if (!headerText.match(/\d+:\d+～/)) return;
 
     // ヘッダー行から時間帯を抽出
@@ -276,13 +265,14 @@ async function fetchHourlySalesForStore(cookies, storeCode, storeName, dateStr) 
       headers.push($(cell).text().trim());
     });
 
-    // データ行（店舗名が含まれる行）を解析
+    // データ行を解析（各店舗の時間別売上）
     $(table).find('tr').each((rowIdx, row) => {
       if (rowIdx === 0) return; // ヘッダー行スキップ
       const cells = $(row).find('td');
       const rowStoreName = $(cells[0]).text().trim();
       if (!rowStoreName || rowStoreName === '合計') return;
 
+      const hourly = {};
       cells.each((cellIdx, cell) => {
         if (cellIdx === 0) return; // 店舗名列スキップ
         const header = headers[cellIdx] || '';
@@ -292,18 +282,21 @@ async function fetchHourlySalesForStore(cookies, storeCode, storeName, dateStr) 
         const hour = parseInt(timeMatch[1]);
         const salesText = $(cell).text().trim().replace(/[\\¥,￥\s]/g, '');
         const sales = parseInt(salesText) || 0;
-
-        // 同じ時間帯が複数あれば加算
-        if (hourly[hour] === undefined) {
-          hourly[hour] = sales;
-        } else {
-          hourly[hour] += sales;
-        }
+        hourly[hour] = sales;
       });
+
+      storeHourly[rowStoreName] = hourly;
     });
   });
 
-  return { storeName, hourly };
+  // 取得できなかった店舗は空データで補完
+  ALL_STORES.forEach(storeName => {
+    if (!storeHourly[storeName]) {
+      storeHourly[storeName] = {};
+    }
+  });
+
+  return storeHourly;
 }
 
 /**
