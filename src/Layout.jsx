@@ -71,7 +71,7 @@ export default function Layout({ children, currentPageName }) {
       { name: 'Home', label: 'シフト希望', icon: Calendar, show: true, mobileBottom: true, badgeCount: 0 },
       { name: 'ShiftOverview', label: 'シフト一覧表', icon: Eye, show: true, mobileBottom: true, badgeCount: 0 },
       { name: 'Analytics', label: '有給管理・勤務分析', icon: CalendarHeart, show: true, mobileBottom: true, badgeCount: 0 },
-      { name: 'ProductivityDashboard', label: '人時生産性', icon: TrendingUp, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
+      { name: 'productivity-dashboard', label: '人時生産性', icon: TrendingUp, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'Admin', label: 'シフト提出状況', icon: Shield, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'ShiftCreation', label: 'シフト作成', icon: FileEdit, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'StoreSettings', label: '店舗設定', icon: Shield, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },

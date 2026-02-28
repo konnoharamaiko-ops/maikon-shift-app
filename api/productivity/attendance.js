@@ -110,19 +110,18 @@ async function scrapeJobcanAttendance(companyId, loginId, password, date) {
     const attendanceData = await page.evaluate(() => {
       const storeCodeMap = {
         '10110': '田辺店',
+        '10120': '大正店',
+        '10130': '天下茶屋店',
+        '10140': '天王寺店',
         '10800': 'アベノ店',
-        '10210': '住之江店',
-        '10220': '平野店',
-        '10230': '東住吉店',
-        '10310': '生野店',
-        '10320': '東成店',
-        '10410': '城東店',
-        '10420': '鶴見店',
-        '10510': '旭店',
-        '10520': '都島店',
-        '10610': '北区店',
-        '10620': '福島店',
-        '10710': '西区店',
+        '10150': '心斎橋店',
+        '10160': 'かがや店',
+        '10170': 'エキマル',
+        '10180': '北摂店',
+        '10190': '堺東店',
+        '10200': 'イオン松原店',
+        '10210': 'イオン守口店',
+        '10220': '美和堂FC店',
       };
 
       // 店舗別データを集計
@@ -221,19 +220,18 @@ async function scrapeJobcanAttendance(companyId, loginId, password, date) {
 function generateDummyAttendanceData(date) {
   const stores = [
     { code: '10110', name: '田辺店' },
+    { code: '10120', name: '大正店' },
+    { code: '10130', name: '天下茶屋店' },
+    { code: '10140', name: '天王寺店' },
     { code: '10800', name: 'アベノ店' },
-    { code: '10210', name: '住之江店' },
-    { code: '10220', name: '平野店' },
-    { code: '10230', name: '東住吉店' },
-    { code: '10310', name: '生野店' },
-    { code: '10320', name: '東成店' },
-    { code: '10410', name: '城東店' },
-    { code: '10420', name: '鶴見店' },
-    { code: '10510', name: '旭店' },
-    { code: '10520', name: '都島店' },
-    { code: '10610', name: '北区店' },
-    { code: '10620', name: '福島店' },
-    { code: '10710', name: '西区店' },
+    { code: '10150', name: '心斎橋店' },
+    { code: '10160', name: 'かがや店' },
+    { code: '10170', name: 'エキマル' },
+    { code: '10180', name: '北摂店' },
+    { code: '10190', name: '堺東店' },
+    { code: '10200', name: 'イオン松原店' },
+    { code: '10210', name: 'イオン守口店' },
+    { code: '10220', name: '美和堂FC店' },
   ];
 
   return stores.map(store => {
