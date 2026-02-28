@@ -105,50 +105,55 @@ export default async function handler(req, res) {
     // 日付範囲のリストを生成
     const dates = getDateRange(date_from, endDate);
 
-    // 各日付のデータを取得
+    // 各日付のデータを並列取得（Promise.allで高速化）
+    const dateResults = await Promise.allSettled(
+      dates.map(async (date) => {
+        const attendanceResult = await fetchJobcanAttendanceForDate(jobcanCookies, date);
+        return { date, attendanceResult };
+      })
+    );
+
     const allData = [];
 
-    for (const date of dates) {
-      try {
-        // ジョブカンから勤怠データを取得
-        const attendanceResult = await fetchJobcanAttendanceForDate(jobcanCookies, date);
-
-        // 全店舗のデータを生成
-        const dayData = ALL_STORES.map(storeName => {
-          const attendInfo = attendanceResult[storeName] || {
-            store_name: storeName,
-            total_employees: 0,
-            attended_employees: 0,
-            working_employees: 0,
-            total_hours: 0,
-            employees: [],
-          };
-
-          const totalHours = attendInfo.total_hours || 0;
-          const attendedEmployees = attendInfo.attended_employees || 0;
-
-          return {
-            tenpo_name: storeName,
-            code: TEMPOVISOR_STORE_CODES[storeName] || '',
-            wk_date: date,
-            dayweek: getDayOfWeek(date),
-            kingaku: '0', // 過去売上はTempoVisorから取得できないため0
-            monthly_sales: 0,
-            wk_cnt: attendedEmployees,
-            working_now: attendInfo.working_employees || 0,
-            total_employees: attendInfo.total_employees || 0,
-            wk_tm: totalHours,
-            spd: '0', // 売上データなしのため0
-            update_time: '',
-            employees: attendInfo.employees || [],
-          };
-        });
-
-        allData.push(...dayData);
-      } catch (dateError) {
-        console.error(`Error fetching data for ${date}:`, dateError.message);
-        // エラーがあっても継続（その日のデータはスキップ）
+    for (const result of dateResults) {
+      if (result.status === 'rejected') {
+        console.error(`Error fetching data:`, result.reason?.message);
+        continue;
       }
+      const { date, attendanceResult } = result.value;
+
+      // 全店舗のデータを生成
+      const dayData = ALL_STORES.map(storeName => {
+        const attendInfo = attendanceResult[storeName] || {
+          store_name: storeName,
+          total_employees: 0,
+          attended_employees: 0,
+          working_employees: 0,
+          total_hours: 0,
+          employees: [],
+        };
+
+        const totalHours = attendInfo.total_hours || 0;
+        const attendedEmployees = attendInfo.attended_employees || 0;
+
+        return {
+          tenpo_name: storeName,
+          code: TEMPOVISOR_STORE_CODES[storeName] || '',
+          wk_date: date,
+          dayweek: getDayOfWeek(date),
+          kingaku: '0', // 過去売上はTempoVisorから取得できないため0
+          monthly_sales: 0,
+          wk_cnt: attendedEmployees,
+          working_now: attendInfo.working_employees || 0,
+          total_employees: attendInfo.total_employees || 0,
+          wk_tm: totalHours,
+          spd: '0', // 売上データなしのため0
+          update_time: '',
+          employees: attendInfo.employees || [],
+        };
+      });
+
+      allData.push(...dayData);
     }
 
     return res.status(200).json({
