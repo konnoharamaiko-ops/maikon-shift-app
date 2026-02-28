@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -6,20 +6,74 @@ import { useQuery } from '@tanstack/react-query';
 import {
   RefreshCw, Activity, Wifi, WifiOff, TrendingUp, TrendingDown,
   Users, Clock, DollarSign, ChevronRight, X, BarChart3, Target,
-  AlertTriangle, CheckCircle, Zap, Building2
+  AlertTriangle, CheckCircle, Zap, Building2, ChevronDown, ChevronUp,
+  Sun, Moon, LayoutGrid, LineChart as LineChartIcon, Timer
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceLine, Cell
+  ReferenceLine, Cell, ComposedChart, Line, Legend, Area, AreaChart
 } from 'recharts';
-import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 
-// 人時生産性の目標値（円/時間）
+// ===== 定数 =====
 const PRODUCTIVITY_TARGET = 3000;
 const PRODUCTIVITY_GOOD = 2500;
 const PRODUCTIVITY_WARNING = 2000;
+
+// 舞昆ブランドカラー
+const BRAND = {
+  primary: '#8B0000',    // 深紅
+  secondary: '#C8960C',  // 金
+  accent: '#2D5016',     // 深緑
+};
+
+const LEVEL_CONFIG = {
+  excellent: {
+    label: '優秀',
+    color: '#16a34a',
+    gradient: 'from-emerald-500 to-green-600',
+    bg: 'bg-emerald-50 dark:bg-emerald-950/20',
+    border: 'border-emerald-400 dark:border-emerald-600',
+    text: 'text-emerald-700 dark:text-emerald-400',
+    badge: 'bg-emerald-500',
+    ring: 'ring-emerald-400',
+    icon: CheckCircle,
+  },
+  good: {
+    label: '良好',
+    color: '#2563eb',
+    gradient: 'from-blue-500 to-indigo-600',
+    bg: 'bg-blue-50 dark:bg-blue-950/20',
+    border: 'border-blue-400 dark:border-blue-600',
+    text: 'text-blue-700 dark:text-blue-400',
+    badge: 'bg-blue-500',
+    ring: 'ring-blue-400',
+    icon: TrendingUp,
+  },
+  warning: {
+    label: '注意',
+    color: '#d97706',
+    gradient: 'from-amber-500 to-orange-500',
+    bg: 'bg-amber-50 dark:bg-amber-950/20',
+    border: 'border-amber-400 dark:border-amber-600',
+    text: 'text-amber-700 dark:text-amber-400',
+    badge: 'bg-amber-500',
+    ring: 'ring-amber-400',
+    icon: AlertTriangle,
+  },
+  danger: {
+    label: '要改善',
+    color: '#dc2626',
+    gradient: 'from-red-500 to-rose-600',
+    bg: 'bg-red-50 dark:bg-red-950/20',
+    border: 'border-red-400 dark:border-red-600',
+    text: 'text-red-700 dark:text-red-400',
+    badge: 'bg-red-500',
+    ring: 'ring-red-400',
+    icon: TrendingDown,
+  },
+};
 
 function getProductivityLevel(prod) {
   if (prod >= PRODUCTIVITY_TARGET) return 'excellent';
@@ -28,48 +82,7 @@ function getProductivityLevel(prod) {
   return 'danger';
 }
 
-const LEVEL_CONFIG = {
-  excellent: {
-    label: '優秀',
-    color: '#22c55e',
-    bg: 'bg-emerald-50 dark:bg-emerald-950/30',
-    border: 'border-emerald-400',
-    text: 'text-emerald-700 dark:text-emerald-300',
-    badge: 'bg-emerald-500',
-    icon: CheckCircle,
-  },
-  good: {
-    label: '良好',
-    color: '#3b82f6',
-    bg: 'bg-blue-50 dark:bg-blue-950/30',
-    border: 'border-blue-400',
-    text: 'text-blue-700 dark:text-blue-300',
-    badge: 'bg-blue-500',
-    icon: TrendingUp,
-  },
-  warning: {
-    label: '注意',
-    color: '#f59e0b',
-    bg: 'bg-amber-50 dark:bg-amber-950/30',
-    border: 'border-amber-400',
-    text: 'text-amber-700 dark:text-amber-300',
-    badge: 'bg-amber-500',
-    icon: AlertTriangle,
-  },
-  danger: {
-    label: '要改善',
-    color: '#ef4444',
-    bg: 'bg-red-50 dark:bg-red-950/30',
-    border: 'border-red-400',
-    text: 'text-red-700 dark:text-red-300',
-    badge: 'bg-red-500',
-    icon: TrendingDown,
-  },
-};
-
-/**
- * APIレスポンスをダッシュボード用データに変換
- */
+// ===== データ変換 =====
 function transformStoreData(apiData) {
   if (!apiData || apiData.length === 0) return [];
   return apiData.map(item => ({
@@ -83,6 +96,8 @@ function transformStoreData(apiData) {
     productivity: parseInt(item.spd || item.productivity || 0),
     update_time: item.update_time || '',
     employees: item.employees || [],
+    hourly_productivity: item.hourly_productivity || [],
+    business_hours: item.business_hours || { open: 10, close: 18 },
   }));
 }
 
@@ -98,9 +113,6 @@ function calcSummary(stores) {
   return { totalSales, totalWorkHours, totalWorkers, avgProductivity, workingNow };
 }
 
-/**
- * リアルタイムデータをAPIから取得
- */
 async function fetchRealtimeData() {
   const response = await fetch('/api/productivity/realtime', {
     method: 'GET',
@@ -115,30 +127,110 @@ async function fetchRealtimeData() {
   };
 }
 
+// ===== ダークモード =====
+function useDarkMode() {
+  const [dark, setDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return document.documentElement.classList.contains('dark') ||
+        window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
+
+  const toggle = useCallback(() => {
+    setDark(d => {
+      const next = !d;
+      document.documentElement.classList.toggle('dark', next);
+      return next;
+    });
+  }, []);
+
+  return [dark, toggle];
+}
+
+// ===== サブコンポーネント =====
+
 /**
- * 人時生産性ゲージ（プログレスバー形式）
+ * 人時生産性ゲージ（プログレスバー）
  */
-function ProductivityGauge({ value, target = PRODUCTIVITY_TARGET }) {
+function ProductivityGauge({ value, target = PRODUCTIVITY_TARGET, compact = false }) {
   const percentage = Math.min(100, Math.round((value / target) * 100));
   const level = getProductivityLevel(value);
   const config = LEVEL_CONFIG[level];
 
   return (
-    <div className="mt-2">
-      <div className="flex justify-between items-center mb-1">
-        <span className="text-xs text-muted-foreground">目標達成率</span>
-        <span className={`text-xs font-bold ${config.text}`}>{percentage}%</span>
-      </div>
-      <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+    <div className={compact ? '' : 'mt-2'}>
+      {!compact && (
+        <div className="flex justify-between items-center mb-1">
+          <span className="text-xs text-muted-foreground">目標達成率</span>
+          <span className={`text-xs font-bold ${config.text}`}>{percentage}%</span>
+        </div>
+      )}
+      <div className={`${compact ? 'h-1.5' : 'h-2'} bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden`}>
         <motion.div
-          className="h-full rounded-full"
-          style={{ backgroundColor: config.color }}
+          className={`h-full rounded-full bg-gradient-to-r ${config.gradient}`}
           initial={{ width: 0 }}
           animate={{ width: `${percentage}%` }}
-          transition={{ duration: 0.8, ease: 'easeOut' }}
+          transition={{ duration: 1, ease: 'easeOut' }}
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * 時間帯別人時生産性グラフ
+ */
+function HourlyProductivityChart({ hourlyData, storeName }) {
+  if (!hourlyData || hourlyData.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+        時間帯別データなし
+      </div>
+    );
+  }
+
+  const chartData = hourlyData.map(h => ({
+    time: `${h.hour}時`,
+    売上: h.sales,
+    人時生産性: h.productivity,
+    人時数: parseFloat((h.person_hours || 0).toFixed(1)),
+    is_business: h.is_business_hour,
+  }));
+
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    return (
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl p-3 shadow-xl text-xs min-w-[160px]">
+        <p className="font-bold text-sm mb-2 text-gray-800 dark:text-gray-100">{label}</p>
+        {payload.map((p, i) => (
+          <div key={i} className="flex justify-between gap-3 mb-1">
+            <span style={{ color: p.color }}>{p.name}:</span>
+            <span className="font-semibold">
+              {p.name === '売上' ? `¥${p.value.toLocaleString()}` :
+               p.name === '人時生産性' ? `¥${p.value.toLocaleString()}/h` :
+               `${p.value}h`}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} />
+        <XAxis dataKey="time" tick={{ fontSize: 10 }} />
+        <YAxis yAxisId="left" tick={{ fontSize: 9 }} tickFormatter={v => `¥${(v/1000).toFixed(0)}k`} width={45} />
+        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9 }} tickFormatter={v => `¥${(v/1000).toFixed(0)}k`} width={45} />
+        <Tooltip content={<CustomTooltip />} />
+        <Legend wrapperStyle={{ fontSize: '10px' }} />
+        <ReferenceLine yAxisId="right" y={PRODUCTIVITY_TARGET} stroke="#22c55e" strokeDasharray="4 4" strokeWidth={1.5} />
+        <Bar yAxisId="left" dataKey="売上" fill="#93c5fd" radius={[3, 3, 0, 0]} opacity={0.8} />
+        <Line yAxisId="right" type="monotone" dataKey="人時生産性" stroke={BRAND.primary} strokeWidth={2.5} dot={{ fill: BRAND.primary, r: 3 }} activeDot={{ r: 5 }} />
+      </ComposedChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -150,70 +242,125 @@ function StoreCard({ store, onClick, index }) {
   const config = LEVEL_CONFIG[level];
   const Icon = config.icon;
 
+  // 直近の時間帯データ（最新2時間）
+  const recentHourly = store.hourly_productivity?.slice(-2) || [];
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.05 }}
-      className={`rounded-xl border-2 ${config.border} ${config.bg} p-4 cursor-pointer group hover:shadow-lg transition-shadow relative`}
+      initial={{ opacity: 0, y: 20, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.35, delay: index * 0.04, ease: 'easeOut' }}
+      className={`
+        relative rounded-2xl border-2 ${config.border} ${config.bg}
+        p-4 cursor-pointer group
+        hover:shadow-xl hover:-translate-y-0.5
+        transition-all duration-200
+        overflow-hidden
+      `}
       onClick={() => onClick(store)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && onClick(store)}
     >
+      {/* 背景デコレーション */}
+      <div className={`absolute top-0 right-0 w-24 h-24 rounded-full bg-gradient-to-br ${config.gradient} opacity-5 -translate-y-8 translate-x-8`} />
+
       {/* ヘッダー */}
       <div className="flex items-start justify-between mb-3">
-        <div>
-          <h3 className="font-bold text-base leading-tight">{store.store_name}</h3>
-          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white mt-1 ${config.badge}`}>
-            <Icon className="h-3 w-3" />
-            {config.label}
-          </span>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-bold text-base leading-tight truncate pr-2">{store.store_name}</h3>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold text-white ${config.badge}`}>
+              <Icon className="h-3 w-3" />
+              {config.label}
+            </span>
+            {store.update_time && (
+              <span className="text-[10px] text-muted-foreground">{store.update_time}</span>
+            )}
+          </div>
         </div>
         {store.working_employees > 0 && (
-          <span className="flex items-center gap-1 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full">
-            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse inline-block"></span>
-            {store.working_employees}人稼働中
-          </span>
+          <div className="flex items-center gap-1 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-1 rounded-full shrink-0">
+            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse inline-block" />
+            {store.working_employees}人
+          </div>
         )}
       </div>
 
-      {/* メトリクス */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground flex items-center gap-1">
-            <DollarSign className="h-3 w-3" />本日売上
-          </span>
-          <span className="font-bold text-lg">¥{store.total_sales.toLocaleString()}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground flex items-center gap-1">
-            <Users className="h-3 w-3" />出勤/稼働
-          </span>
-          <span className="text-sm font-semibold">
-            {store.attended_employees}人 / <span className="text-green-600">{store.working_employees}人</span>
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground flex items-center gap-1">
-            <Clock className="h-3 w-3" />総労働時間
-          </span>
-          <span className="text-sm font-semibold">{store.total_hours.toFixed(1)}h</span>
-        </div>
-        <div className="pt-2 border-t">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">人時生産性</span>
-            <span className={`text-2xl font-bold ${config.text}`}>
+      {/* 人時生産性（メイン指標） */}
+      <div className={`rounded-xl p-3 mb-3 ${config.bg} border ${config.border}`}>
+        <div className="flex items-end justify-between">
+          <div>
+            <p className="text-xs text-muted-foreground mb-0.5">人時生産性</p>
+            <p className={`text-3xl font-black ${config.text} leading-none`}>
               ¥{store.productivity.toLocaleString()}
-              <span className="text-xs font-normal text-muted-foreground">/h</span>
-            </span>
+              <span className="text-xs font-normal text-muted-foreground ml-1">/h</span>
+            </p>
           </div>
-          <ProductivityGauge value={store.productivity} />
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground">目標達成率</p>
+            <p className={`text-lg font-bold ${config.text}`}>
+              {Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100))}%
+            </p>
+          </div>
+        </div>
+        <ProductivityGauge value={store.productivity} compact />
+      </div>
+
+      {/* メトリクス */}
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+          <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
+            <DollarSign className="h-3 w-3" />本日売上
+          </p>
+          <p className="font-bold text-sm">¥{store.total_sales.toLocaleString()}</p>
+        </div>
+        <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+          <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
+            <Clock className="h-3 w-3" />総労働時間
+          </p>
+          <p className="font-bold text-sm">{store.total_hours.toFixed(1)}h</p>
+        </div>
+        <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+          <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
+            <Users className="h-3 w-3" />出勤人数
+          </p>
+          <p className="font-bold text-sm">{store.attended_employees}人</p>
+        </div>
+        <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+          <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
+            <Activity className="h-3 w-3" />稼働中
+          </p>
+          <p className="font-bold text-sm text-green-600 dark:text-green-400">{store.working_employees}人</p>
         </div>
       </div>
 
-      <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+      {/* 直近時間帯ミニグラフ */}
+      {recentHourly.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-current/10">
+          <p className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+            <Timer className="h-3 w-3" />直近の人時生産性
+          </p>
+          <div className="flex gap-1">
+            {recentHourly.map((h, i) => {
+              const lv = getProductivityLevel(h.productivity);
+              const cfg = LEVEL_CONFIG[lv];
+              return (
+                <div key={i} className={`flex-1 rounded-lg p-1.5 text-center ${cfg.bg} border ${cfg.border}`}>
+                  <p className="text-[9px] text-muted-foreground">{h.hour}時台</p>
+                  <p className={`text-xs font-bold ${cfg.text}`}>¥{h.productivity.toLocaleString()}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ホバー時の詳細矢印 */}
+      <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className={`p-1 rounded-full ${config.badge}`}>
+          <ChevronRight className="h-3 w-3 text-white" />
+        </div>
       </div>
     </motion.div>
   );
@@ -230,16 +377,18 @@ function StatusBadge({ status }) {
     '休憩中': 'bg-blue-400 text-white',
   };
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${configs[status] || 'bg-gray-300 text-gray-700'}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${configs[status] || 'bg-gray-300 text-gray-700'}`}>
+      {status === '勤務中' && <span className="w-1.5 h-1.5 bg-white rounded-full mr-1 animate-pulse" />}
       {status}
     </span>
   );
 }
 
 /**
- * 店舗詳細モーダル
+ * 店舗詳細モーダル（時間帯別グラフ付き）
  */
 function StoreDetailModal({ store, onClose }) {
+  const [activeTab, setActiveTab] = useState('overview');
   if (!store) return null;
 
   const level = getProductivityLevel(store.productivity);
@@ -254,138 +403,286 @@ function StoreDetailModal({ store, onClose }) {
   const finishedCount = sortedEmployees.filter(e => e.status === '退勤済み').length;
   const absentCount = sortedEmployees.filter(e => e.status === '未出勤').length;
 
+  const tabs = [
+    { id: 'overview', label: '概要' },
+    { id: 'hourly', label: '時間帯別' },
+    { id: 'staff', label: 'スタッフ' },
+  ];
+
   return (
     <AnimatePresence>
       <motion.div
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
         <motion.div
-          className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden"
-          initial={{ scale: 0.9, y: 20 }}
-          animate={{ scale: 1, y: 0 }}
-          exit={{ scale: 0.9, y: 20 }}
+          className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        />
+        <motion.div
+          className="relative bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[88vh] overflow-hidden flex flex-col"
+          initial={{ y: '100%', scale: 0.95 }}
+          animate={{ y: 0, scale: 1 }}
+          exit={{ y: '100%', scale: 0.95 }}
+          transition={{ type: 'spring', damping: 28, stiffness: 300 }}
         >
+          {/* ドラッグハンドル（モバイル） */}
+          <div className="flex justify-center pt-3 pb-1 sm:hidden">
+            <div className="w-10 h-1 bg-gray-300 dark:bg-gray-600 rounded-full" />
+          </div>
+
           {/* ヘッダー */}
-          <div className={`p-5 ${config.bg} border-b ${config.border}`}>
-            <div className="flex items-center justify-between">
+          <div className={`px-5 py-4 bg-gradient-to-r ${config.gradient} text-white relative overflow-hidden`}>
+            <div className="absolute inset-0 opacity-10">
+              <div className="absolute top-0 right-0 w-32 h-32 rounded-full bg-white -translate-y-16 translate-x-16" />
+            </div>
+            <div className="relative flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <Building2 className="h-5 w-5" />
-                  {store.store_name}
-                </h2>
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white mt-1 ${config.badge}`}>
-                  {config.label}
-                </span>
+                <div className="flex items-center gap-2 mb-1">
+                  <Building2 className="h-5 w-5 opacity-90" />
+                  <h2 className="text-xl font-black">{store.store_name}</h2>
+                </div>
+                <div className="flex items-center gap-3 text-sm opacity-90">
+                  <span className="flex items-center gap-1">
+                    <DollarSign className="h-4 w-4" />
+                    ¥{store.total_sales.toLocaleString()}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Zap className="h-4 w-4" />
+                    ¥{store.productivity.toLocaleString()}/h
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Users className="h-4 w-4" />
+                    {workingCount}人稼働中
+                  </span>
+                </div>
               </div>
-              <button onClick={onClose} className="p-2 rounded-full hover:bg-black/10 transition-colors">
+              <button
+                onClick={onClose}
+                className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
+            {/* 達成率バー */}
+            <div className="mt-3">
+              <div className="flex justify-between text-xs opacity-80 mb-1">
+                <span>目標達成率</span>
+                <span className="font-bold">{Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100))}%</span>
+              </div>
+              <div className="h-2 bg-white/30 rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full bg-white rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100))}%` }}
+                  transition={{ duration: 1, ease: 'easeOut' }}
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="p-5 overflow-y-auto max-h-[calc(90vh-120px)]">
-            {/* KPIグリッド */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
-                <DollarSign className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
-                <p className="text-xs text-muted-foreground">本日売上</p>
-                <p className="text-lg font-bold">¥{store.total_sales.toLocaleString()}</p>
-              </div>
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
-                <Users className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
-                <p className="text-xs text-muted-foreground">稼働中</p>
-                <p className="text-lg font-bold">
-                  <span className="text-green-600">{workingCount}</span>
-                  <span className="text-muted-foreground text-sm">/{store.total_employees}人</span>
-                </p>
-              </div>
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-3 text-center">
-                <Clock className="h-5 w-5 mx-auto text-muted-foreground mb-1" />
-                <p className="text-xs text-muted-foreground">総労働時間</p>
-                <p className="text-lg font-bold">{store.total_hours.toFixed(1)}h</p>
-              </div>
-              <div className={`${config.bg} border ${config.border} rounded-xl p-3 text-center`}>
-                <TrendingUp className={`h-5 w-5 mx-auto mb-1 ${config.text}`} />
-                <p className="text-xs text-muted-foreground">人時生産性</p>
-                <p className={`text-lg font-bold ${config.text}`}>
-                  ¥{store.productivity.toLocaleString()}
-                  <span className="text-xs font-normal">/h</span>
-                </p>
-              </div>
-            </div>
+          {/* タブ */}
+          <div className="flex border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-1 py-3 text-sm font-semibold transition-colors ${
+                  activeTab === tab.id
+                    ? 'border-b-2 border-red-800 text-red-800 dark:text-red-400 dark:border-red-400'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-            {/* 勤務状況サマリー */}
-            <div className="flex items-center gap-4 text-sm mb-4 flex-wrap">
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-green-500 inline-block"></span>
-                勤務中: <strong>{workingCount}人</strong>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-gray-400 inline-block"></span>
-                退勤済み: <strong>{finishedCount}人</strong>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full bg-amber-400 inline-block"></span>
-                未出勤: <strong>{absentCount}人</strong>
-              </span>
-              {store.update_time && (
-                <span className="ml-auto text-xs text-muted-foreground">
-                  売上更新: {store.update_time}
-                </span>
-              )}
-            </div>
+          {/* コンテンツ */}
+          <div className="flex-1 overflow-y-auto p-5">
+            <AnimatePresence mode="wait">
+              {activeTab === 'overview' && (
+                <motion.div
+                  key="overview"
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 10 }}
+                  className="space-y-4"
+                >
+                  {/* KPIグリッド */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { label: '本日売上', value: `¥${store.total_sales.toLocaleString()}`, icon: DollarSign, color: 'text-blue-600' },
+                      { label: '人時生産性', value: `¥${store.productivity.toLocaleString()}/h`, icon: Zap, color: config.text },
+                      { label: '総労働時間', value: `${store.total_hours.toFixed(1)}h`, icon: Clock, color: 'text-purple-600' },
+                      { label: '稼働中/出勤', value: `${workingCount}/${store.attended_employees}人`, icon: Users, color: 'text-green-600' },
+                    ].map((kpi, i) => (
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.05 }}
+                        className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4"
+                      >
+                        <div className="flex items-center gap-2 mb-2">
+                          <kpi.icon className={`h-4 w-4 ${kpi.color}`} />
+                          <p className="text-xs text-muted-foreground">{kpi.label}</p>
+                        </div>
+                        <p className={`text-xl font-black ${kpi.color}`}>{kpi.value}</p>
+                      </motion.div>
+                    ))}
+                  </div>
 
-            {/* 従業員テーブル */}
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-gray-50 dark:bg-gray-800">
-                  <th className="text-left p-2 font-medium">氏名</th>
-                  <th className="text-center p-2 font-medium">状態</th>
-                  <th className="text-center p-2 font-medium">出勤</th>
-                  <th className="text-center p-2 font-medium">退勤</th>
-                  <th className="text-right p-2 font-medium">労働時間</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedEmployees.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="text-center py-8 text-muted-foreground">
-                      本日のシフトデータがありません
-                    </td>
-                  </tr>
-                ) : (
-                  sortedEmployees.map((emp, i) => (
-                    <tr
-                      key={i}
-                      className={`border-b transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50 ${
-                        emp.status === '勤務中' ? 'bg-green-50/50 dark:bg-green-950/10' :
-                        emp.status === '未出勤' ? 'bg-amber-50/30 dark:bg-amber-950/10' : ''
-                      }`}
-                    >
-                      <td className="p-2 font-medium">{emp.name}</td>
-                      <td className="p-2 text-center"><StatusBadge status={emp.status} /></td>
-                      <td className="p-2 text-center text-muted-foreground">{emp.clock_in || '-'}</td>
-                      <td className="p-2 text-center text-muted-foreground">{emp.clock_out || '-'}</td>
-                      <td className="p-2 text-right font-medium">
-                        {emp.work_hours > 0 ? `${emp.work_hours.toFixed(1)}h` : '-'}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-              {sortedEmployees.length > 0 && (
-                <tfoot>
-                  <tr className="bg-gray-50 dark:bg-gray-800 font-semibold">
-                    <td className="p-2" colSpan={4}>合計</td>
-                    <td className="p-2 text-right">{store.total_hours.toFixed(1)}h</td>
-                  </tr>
-                </tfoot>
+                  {/* 勤務状況サマリー */}
+                  <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
+                    <h4 className="text-sm font-bold mb-3 flex items-center gap-2">
+                      <Users className="h-4 w-4" />勤務状況
+                    </h4>
+                    <div className="flex gap-3">
+                      {[
+                        { label: '勤務中', count: workingCount, color: 'bg-green-500' },
+                        { label: '退勤済み', count: finishedCount, color: 'bg-gray-400' },
+                        { label: '未出勤', count: absentCount, color: 'bg-amber-400' },
+                      ].map((s, i) => (
+                        <div key={i} className="flex-1 text-center">
+                          <div className={`w-8 h-8 rounded-full ${s.color} flex items-center justify-center text-white font-bold text-sm mx-auto mb-1`}>
+                            {s.count}
+                          </div>
+                          <p className="text-xs text-muted-foreground">{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 営業時間情報 */}
+                  {store.business_hours && (
+                    <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
+                      <h4 className="text-sm font-bold mb-2 flex items-center gap-2">
+                        <Clock className="h-4 w-4" />営業時間
+                      </h4>
+                      <p className="text-sm text-muted-foreground">
+                        {store.business_hours.open}:00 〜 {store.business_hours.close}:00
+                      </p>
+                    </div>
+                  )}
+                </motion.div>
               )}
-            </table>
+
+              {activeTab === 'hourly' && (
+                <motion.div
+                  key="hourly"
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 10 }}
+                  className="space-y-4"
+                >
+                  <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
+                    <h4 className="text-sm font-bold mb-3 flex items-center gap-2">
+                      <Timer className="h-4 w-4" />時間帯別人時生産性
+                      <span className="text-xs font-normal text-muted-foreground">（棒:売上 / 折線:人時生産性）</span>
+                    </h4>
+                    <HourlyProductivityChart hourlyData={store.hourly_productivity} storeName={store.store_name} />
+                  </div>
+
+                  {/* 時間帯別テーブル */}
+                  {store.hourly_productivity && store.hourly_productivity.length > 0 && (
+                    <div className="bg-gray-50 dark:bg-gray-800 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-gray-100 dark:bg-gray-700">
+                            <th className="text-left p-2 font-semibold">時間帯</th>
+                            <th className="text-right p-2 font-semibold">売上</th>
+                            <th className="text-right p-2 font-semibold">人時数</th>
+                            <th className="text-right p-2 font-semibold">人時生産性</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {store.hourly_productivity.map((h, i) => {
+                            const lv = getProductivityLevel(h.productivity);
+                            const cfg = LEVEL_CONFIG[lv];
+                            return (
+                              <tr key={i} className={`border-t dark:border-gray-700 ${h.is_business_hour ? '' : 'opacity-60'}`}>
+                                <td className="p-2">
+                                  <span className="font-medium">{h.hour}:00〜{h.hour+1}:00</span>
+                                  {!h.is_business_hour && <span className="ml-1 text-[9px] text-muted-foreground">(営業外)</span>}
+                                </td>
+                                <td className="p-2 text-right">¥{h.sales.toLocaleString()}</td>
+                                <td className="p-2 text-right">{h.person_hours.toFixed(1)}h</td>
+                                <td className={`p-2 text-right font-bold ${cfg.text}`}>
+                                  ¥{h.productivity.toLocaleString()}/h
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
+              {activeTab === 'staff' && (
+                <motion.div
+                  key="staff"
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 10 }}
+                >
+                  <div className="space-y-2">
+                    {sortedEmployees.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground text-sm">
+                        本日のシフトデータがありません
+                      </div>
+                    ) : (
+                      sortedEmployees.map((emp, i) => (
+                        <motion.div
+                          key={i}
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.03 }}
+                          className={`rounded-xl p-3 flex items-center gap-3 ${
+                            emp.status === '勤務中' ? 'bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800' :
+                            emp.status === '未出勤' ? 'bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800' :
+                            'bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
+                          }`}
+                        >
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${
+                            emp.status === '勤務中' ? 'bg-green-500' :
+                            emp.status === '退勤済み' ? 'bg-gray-400' :
+                            emp.status === '未出勤' ? 'bg-amber-400' : 'bg-blue-400'
+                          }`}>
+                            {emp.name.charAt(0)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-sm truncate">{emp.name}</p>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                              {emp.clock_in && <span>出勤 {emp.clock_in}</span>}
+                              {emp.clock_out && <span>退勤 {emp.clock_out}</span>}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <StatusBadge status={emp.status} />
+                            {emp.work_hours > 0 && (
+                              <p className="text-xs text-muted-foreground mt-1">{emp.work_hours.toFixed(1)}h</p>
+                            )}
+                          </div>
+                        </motion.div>
+                      ))
+                    )}
+                  </div>
+                  {sortedEmployees.length > 0 && (
+                    <div className="mt-3 pt-3 border-t dark:border-gray-700 flex justify-between text-sm font-semibold">
+                      <span>合計労働時間</span>
+                      <span>{store.total_hours.toFixed(1)}h</span>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </motion.div>
       </motion.div>
@@ -396,25 +693,28 @@ function StoreDetailModal({ store, onClose }) {
 /**
  * サマリーカード
  */
-function SummaryCard({ title, value, unit, icon: Icon, color, description, index }) {
+function SummaryCard({ title, value, unit, icon: Icon, gradient, description, index }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.08 }}
-      className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
+      transition={{ duration: 0.3, delay: index * 0.07 }}
+      className="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm overflow-hidden"
     >
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm text-muted-foreground">{title}</span>
-        <div className={`p-2 rounded-lg ${color}`}>
-          <Icon className="h-4 w-4 text-white" />
+      <div className={`absolute top-0 right-0 w-20 h-20 rounded-full bg-gradient-to-br ${gradient} opacity-10 -translate-y-8 translate-x-8`} />
+      <div className="relative">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs text-muted-foreground font-medium">{title}</span>
+          <div className={`p-2 rounded-xl bg-gradient-to-br ${gradient}`}>
+            <Icon className="h-4 w-4 text-white" />
+          </div>
         </div>
+        <div className="text-2xl font-black">
+          {typeof value === 'number' ? value.toLocaleString() : value}
+          {unit && <span className="text-sm font-normal text-muted-foreground ml-1">{unit}</span>}
+        </div>
+        {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
       </div>
-      <div className="text-2xl font-bold">
-        {typeof value === 'number' ? value.toLocaleString() : value}
-        {unit && <span className="text-sm font-normal text-muted-foreground ml-1">{unit}</span>}
-      </div>
-      {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
     </motion.div>
   );
 }
@@ -423,25 +723,29 @@ function SummaryCard({ title, value, unit, icon: Icon, color, description, index
  * 店舗別棒グラフ
  */
 function StoreBarChart({ stores }) {
+  const [chartType, setChartType] = useState('productivity');
+
   const data = stores
     .filter(s => s.total_sales > 0 || s.productivity > 0)
     .map(s => ({
-      name: s.store_name.replace('店', '').replace('FC', ''),
+      name: s.store_name.replace('イオンタウン', 'ｲｵﾝ').replace('店', '').replace('FC', ''),
       売上: s.total_sales,
       人時生産性: s.productivity,
+      労働時間: s.total_hours,
+      level: getProductivityLevel(s.productivity),
     }))
-    .sort((a, b) => b.人時生産性 - a.人時生産性);
+    .sort((a, b) => b[chartType === 'productivity' ? '人時生産性' : '売上'] - a[chartType === 'productivity' ? '人時生産性' : '売上']);
 
   if (data.length === 0) return null;
 
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload || !payload.length) return null;
     return (
-      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg text-sm">
-        <p className="font-bold mb-1">{label}</p>
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl p-3 shadow-xl text-xs">
+        <p className="font-bold text-sm mb-2">{label}</p>
         {payload.map((p, i) => (
           <p key={i} style={{ color: p.color }}>
-            {p.name}: {p.name === '売上' ? `¥${p.value.toLocaleString()}` : `¥${p.value.toLocaleString()}/h`}
+            {p.name}: {p.name === '売上' ? `¥${p.value.toLocaleString()}` : p.name === '人時生産性' ? `¥${p.value.toLocaleString()}/h` : `${p.value}h`}
           </p>
         ))}
       </div>
@@ -449,22 +753,43 @@ function StoreBarChart({ stores }) {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm">
-      <h3 className="font-bold mb-4 flex items-center gap-2">
-        <BarChart3 className="h-5 w-5 text-primary" />
-        店舗別人時生産性比較
-        <span className="text-xs font-normal text-muted-foreground ml-1">（目標: ¥{PRODUCTIVITY_TARGET.toLocaleString()}/h）</span>
-      </h3>
-      <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={data} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-          <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `¥${(v / 1000).toFixed(0)}k`} />
+    <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h3 className="font-bold flex items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-red-800 dark:text-red-400" />
+          {chartType === 'productivity' ? '店舗別人時生産性' : '店舗別本日売上'}
+        </h3>
+        <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+          <button
+            onClick={() => setChartType('productivity')}
+            className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${chartType === 'productivity' ? 'bg-white dark:bg-gray-700 shadow-sm text-red-800 dark:text-red-400' : 'text-muted-foreground'}`}
+          >
+            人時生産性
+          </button>
+          <button
+            onClick={() => setChartType('sales')}
+            className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${chartType === 'sales' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600' : 'text-muted-foreground'}`}
+          >
+            売上
+          </button>
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} />
+          <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+          <YAxis tick={{ fontSize: 9 }} tickFormatter={v => chartType === 'productivity' ? `¥${(v/1000).toFixed(0)}k` : `¥${(v/10000).toFixed(0)}万`} width={48} />
           <Tooltip content={<CustomTooltip />} />
-          <ReferenceLine y={PRODUCTIVITY_TARGET} stroke="#22c55e" strokeDasharray="5 5" label={{ value: '目標', position: 'right', fontSize: 10, fill: '#22c55e' }} />
-          <Bar dataKey="人時生産性" radius={[4, 4, 0, 0]}>
+          {chartType === 'productivity' && (
+            <ReferenceLine y={PRODUCTIVITY_TARGET} stroke="#22c55e" strokeDasharray="5 5" strokeWidth={1.5} label={{ value: '目標', position: 'right', fontSize: 9, fill: '#22c55e' }} />
+          )}
+          <Bar dataKey={chartType === 'productivity' ? '人時生産性' : '売上'} radius={[5, 5, 0, 0]}>
             {data.map((entry, index) => (
-              <Cell key={index} fill={LEVEL_CONFIG[getProductivityLevel(entry.人時生産性)].color} />
+              <Cell
+                key={index}
+                fill={chartType === 'productivity' ? LEVEL_CONFIG[entry.level].color : '#3b82f6'}
+                opacity={0.85}
+              />
             ))}
           </Bar>
         </BarChart>
@@ -474,15 +799,77 @@ function StoreBarChart({ stores }) {
 }
 
 /**
- * リアルタイム人時生産性ダッシュボード（メインコンポーネント）
+ * 全店舗時間帯別サマリーグラフ
  */
+function AllStoresHourlyChart({ stores }) {
+  // 全店舗の時間帯別データを集計
+  const hourlyMap = {};
+  stores.forEach(store => {
+    (store.hourly_productivity || []).forEach(h => {
+      if (!hourlyMap[h.hour]) {
+        hourlyMap[h.hour] = { hour: h.hour, sales: 0, person_hours: 0 };
+      }
+      hourlyMap[h.hour].sales += h.sales;
+      hourlyMap[h.hour].person_hours += h.person_hours;
+    });
+  });
+
+  const data = Object.values(hourlyMap)
+    .sort((a, b) => a.hour - b.hour)
+    .map(h => ({
+      time: `${h.hour}時`,
+      売上合計: h.sales,
+      人時生産性: h.person_hours > 0 ? Math.round(h.sales / h.person_hours) : 0,
+    }));
+
+  if (data.length === 0) return null;
+
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    return (
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-xl p-3 shadow-xl text-xs">
+        <p className="font-bold text-sm mb-2">{label}</p>
+        {payload.map((p, i) => (
+          <p key={i} style={{ color: p.color }}>
+            {p.name}: {p.name === '売上合計' ? `¥${p.value.toLocaleString()}` : `¥${p.value.toLocaleString()}/h`}
+          </p>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm">
+      <h3 className="font-bold mb-4 flex items-center gap-2">
+        <Timer className="h-5 w-5 text-red-800 dark:text-red-400" />
+        全店舗 時間帯別人時生産性
+        <span className="text-xs font-normal text-muted-foreground">（棒:売上合計 / 折線:人時生産性）</span>
+      </h3>
+      <ResponsiveContainer width="100%" height={220}>
+        <ComposedChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} />
+          <XAxis dataKey="time" tick={{ fontSize: 10 }} />
+          <YAxis yAxisId="left" tick={{ fontSize: 9 }} tickFormatter={v => `¥${(v/10000).toFixed(0)}万`} width={48} />
+          <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9 }} tickFormatter={v => `¥${(v/1000).toFixed(0)}k`} width={48} />
+          <Tooltip content={<CustomTooltip />} />
+          <Legend wrapperStyle={{ fontSize: '10px' }} />
+          <ReferenceLine yAxisId="right" y={PRODUCTIVITY_TARGET} stroke="#22c55e" strokeDasharray="4 4" strokeWidth={1.5} />
+          <Bar yAxisId="left" dataKey="売上合計" fill="#93c5fd" radius={[3, 3, 0, 0]} opacity={0.8} />
+          <Line yAxisId="right" type="monotone" dataKey="人時生産性" stroke={BRAND.primary} strokeWidth={2.5} dot={{ fill: BRAND.primary, r: 3 }} activeDot={{ r: 5 }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ===== メインコンポーネント =====
 export default function ProductivityDashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedStore, setSelectedStore] = useState(null);
   const [viewMode, setViewMode] = useState('cards');
+  const [dark, toggleDark] = useDarkMode();
+  const [countdown, setCountdown] = useState(30);
 
-  // React Queryでデータ取得・キャッシュ
-  // staleTime: 25秒（自動更新間隔30秒に合わせて、ページ遷移後も即座に表示）
   const {
     data: queryData,
     isLoading,
@@ -492,13 +879,26 @@ export default function ProductivityDashboard() {
   } = useQuery({
     queryKey: ['productivity-realtime'],
     queryFn: fetchRealtimeData,
-    staleTime: 25 * 1000,       // 25秒間はキャッシュを新鮮とみなす（ページ遷移時にリロードしない）
-    gcTime: 5 * 60 * 1000,      // 5分間キャッシュ保持
-    refetchInterval: autoRefresh ? 30 * 1000 : false,  // 30秒ごとに自動更新
-    refetchIntervalInBackground: false,  // バックグラウンドでは更新しない
-    refetchOnWindowFocus: false, // フォーカス時に再取得しない
-    refetchOnMount: 'always',    // マウント時は常に（ただしstaleTime内はキャッシュ使用）
+    staleTime: 25 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchInterval: autoRefresh ? 30 * 1000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    refetchOnMount: 'always',
   });
+
+  // カウントダウンタイマー
+  useEffect(() => {
+    if (!autoRefresh) return;
+    setCountdown(30);
+    const interval = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) return 30;
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, dataUpdatedAt]);
 
   const stores = queryData?.stores || [];
   const sources = queryData?.sources || {};
@@ -508,156 +908,192 @@ export default function ProductivityDashboard() {
   const sortedStores = [...stores].sort((a, b) => b.productivity - a.productivity);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 pb-6">
       {/* ヘッダー */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Activity className="h-6 w-6 text-primary" />
+          <h1 className="text-2xl font-black flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-gradient-to-br from-red-800 to-red-600">
+              <Activity className="h-5 w-5 text-white" />
+            </div>
             リアルタイム人時生産性
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="text-sm text-muted-foreground mt-1 ml-1">
             {format(new Date(), 'yyyy年MM月dd日（E）', { locale: ja })}
             {lastUpdated && (
-              <span className="ml-2">最終更新: {format(lastUpdated, 'HH:mm:ss')}</span>
+              <span className="ml-2 text-xs">最終更新: {format(lastUpdated, 'HH:mm:ss')}</span>
             )}
           </p>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* ライブ/オフライン表示 */}
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* ライブ/オフライン */}
+          <div className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-semibold ${
+            isLive ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
+            'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
+          }`}>
             {isLive ? (
-              <><Wifi className="h-3.5 w-3.5 text-green-500" /><span className="text-green-600 font-medium">ライブ</span></>
+              <><Wifi className="h-3.5 w-3.5" /><span>ライブ</span></>
             ) : (
-              <><WifiOff className="h-3.5 w-3.5 text-amber-500" /><span className="text-amber-600">オフライン</span></>
+              <><WifiOff className="h-3.5 w-3.5" /><span>オフライン</span></>
             )}
           </div>
 
           {/* 表示切替 */}
-          <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('cards')}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'cards' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-muted-foreground'}`}
-            >
-              カード
-            </button>
-            <button
-              onClick={() => setViewMode('chart')}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${viewMode === 'chart' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-muted-foreground'}`}
-            >
-              グラフ
-            </button>
+          <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
+            {[
+              { id: 'cards', icon: LayoutGrid, label: 'カード' },
+              { id: 'chart', icon: BarChart3, label: 'グラフ' },
+            ].map(({ id, icon: Icon, label }) => (
+              <button
+                key={id}
+                onClick={() => setViewMode(id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  viewMode === id
+                    ? 'bg-white dark:bg-gray-700 shadow-sm text-red-800 dark:text-red-400'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{label}</span>
+              </button>
+            ))}
           </div>
 
           {/* 自動更新 */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-800 rounded-xl px-3 py-1.5">
             <Switch id="auto-refresh" checked={autoRefresh} onCheckedChange={setAutoRefresh} />
-            <Label htmlFor="auto-refresh" className="text-xs cursor-pointer">自動更新(30秒)</Label>
+            <Label htmlFor="auto-refresh" className="text-xs cursor-pointer font-medium">
+              {autoRefresh ? (
+                <span className="text-green-600 dark:text-green-400">{countdown}秒後更新</span>
+              ) : '自動更新'}
+            </Label>
           </div>
 
           {/* 手動更新 */}
-          <Button onClick={() => refetch()} variant="outline" size="sm" disabled={isLoading}>
-            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-          </Button>
+          <button
+            onClick={() => refetch()}
+            disabled={isLoading}
+            className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin text-red-800' : ''}`} />
+          </button>
+
+          {/* ダークモード */}
+          <button
+            onClick={toggleDark}
+            className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+          >
+            {dark ? <Sun className="h-4 w-4 text-amber-500" /> : <Moon className="h-4 w-4" />}
+          </button>
         </div>
       </div>
 
       {/* エラー表示 */}
       {error && (
-        <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl p-4 flex items-center gap-2">
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-2xl p-4 flex items-center gap-3"
+        >
           <AlertTriangle className="h-5 w-5 flex-shrink-0" />
           <div>
-            <p className="font-semibold text-sm">データ取得エラー</p>
-            <p className="text-xs mt-0.5">{error.message}</p>
+            <p className="font-bold text-sm">データ取得エラー</p>
+            <p className="text-xs mt-0.5 opacity-80">{error.message}</p>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* サマリーカード */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        <SummaryCard title="総売上" value={Math.round(summary.totalSales)} unit="円" icon={DollarSign} color="bg-blue-500" description="全店舗合計" index={0} />
+        <SummaryCard title="総売上" value={Math.round(summary.totalSales)} unit="円" icon={DollarSign} gradient="from-blue-500 to-indigo-600" description="全店舗合計" index={0} />
         <SummaryCard
           title="平均人時生産性"
           value={Math.round(summary.avgProductivity)}
           unit="円/h"
           icon={Zap}
-          color={summary.avgProductivity >= PRODUCTIVITY_TARGET ? 'bg-emerald-500' : summary.avgProductivity >= PRODUCTIVITY_GOOD ? 'bg-blue-500' : summary.avgProductivity >= PRODUCTIVITY_WARNING ? 'bg-amber-500' : 'bg-red-500'}
+          gradient={summary.avgProductivity >= PRODUCTIVITY_TARGET ? 'from-emerald-500 to-green-600' : summary.avgProductivity >= PRODUCTIVITY_GOOD ? 'from-blue-500 to-indigo-600' : summary.avgProductivity >= PRODUCTIVITY_WARNING ? 'from-amber-500 to-orange-500' : 'from-red-500 to-rose-600'}
           description={`目標: ¥${PRODUCTIVITY_TARGET.toLocaleString()}/h`}
           index={1}
         />
-        <SummaryCard title="総勤務時間" value={summary.totalWorkHours.toFixed(1)} unit="時間" icon={Clock} color="bg-purple-500" description="全スタッフ合計" index={2} />
-        <SummaryCard title="現在稼働中" value={summary.workingNow} unit="人" icon={Activity} color="bg-green-500" description="リアルタイム" index={3} />
-        <SummaryCard title="本日出勤延べ" value={summary.totalWorkers} unit="人" icon={Users} color="bg-indigo-500" description="退勤済み含む" index={4} />
+        <SummaryCard title="総勤務時間" value={summary.totalWorkHours.toFixed(1)} unit="時間" icon={Clock} gradient="from-purple-500 to-violet-600" description="全スタッフ合計" index={2} />
+        <SummaryCard title="現在稼働中" value={summary.workingNow} unit="人" icon={Activity} gradient="from-emerald-500 to-teal-600" description="リアルタイム" index={3} />
+        <SummaryCard title="本日出勤延べ" value={summary.totalWorkers} unit="人" icon={Users} gradient="from-indigo-500 to-purple-600" description="退勤済み含む" index={4} />
       </div>
 
       {/* 目標達成状況バー */}
       {stores.length > 0 && (
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-sm flex items-center gap-2">
-              <Target className="h-4 w-4 text-primary" />
-              目標達成状況
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
+        >
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="font-bold text-sm flex items-center gap-2">
+              <Target className="h-4 w-4 text-red-800 dark:text-red-400" />
+              全店舗 目標達成状況
             </h3>
-            <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-3 text-xs flex-wrap">
               {Object.entries(LEVEL_CONFIG).map(([key, cfg]) => (
                 <span key={key} className="flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: cfg.color }}></span>
+                  <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: cfg.color }} />
                   {cfg.label}
                 </span>
               ))}
             </div>
           </div>
-          <div className="flex gap-1 h-8 rounded-lg overflow-hidden">
+          <div className="flex gap-1 h-10 rounded-xl overflow-hidden">
             {sortedStores.map((store, i) => {
               const level = getProductivityLevel(store.productivity);
               const cfg = LEVEL_CONFIG[level];
               return (
                 <motion.div
                   key={store.store_name}
-                  className="flex-1 flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity"
+                  className="flex-1 flex items-center justify-center cursor-pointer hover:opacity-80 transition-all hover:scale-y-110 origin-bottom"
                   style={{ backgroundColor: cfg.color }}
                   initial={{ scaleY: 0 }}
                   animate={{ scaleY: 1 }}
-                  transition={{ duration: 0.3, delay: i * 0.03 }}
+                  transition={{ duration: 0.4, delay: i * 0.03, ease: 'backOut' }}
                   onClick={() => setSelectedStore(store)}
                   title={`${store.store_name}: ¥${store.productivity.toLocaleString()}/h`}
                 >
                   <span className="text-white text-[9px] font-bold truncate px-0.5 hidden sm:block">
-                    {store.store_name.replace('店', '').replace('FC', '').slice(0, 3)}
+                    {store.store_name.replace('イオンタウン', '').replace('店', '').replace('FC', '').slice(0, 3)}
                   </span>
                 </motion.div>
               );
             })}
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* 店舗別表示 */}
       {viewMode === 'cards' ? (
         <div>
-          <h2 className="font-bold mb-3 flex items-center gap-2">
-            <Building2 className="h-5 w-5" />
+          <h2 className="font-bold mb-3 flex items-center gap-2 text-lg">
+            <Building2 className="h-5 w-5 text-red-800 dark:text-red-400" />
             店舗別リアルタイム状況
-            <span className="text-xs font-normal text-muted-foreground">（カードをクリックで詳細）</span>
+            <span className="text-xs font-normal text-muted-foreground">（タップで詳細・時間帯別グラフ）</span>
           </h2>
           {isLoading && stores.length === 0 ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {[...Array(13)].map((_, i) => (
-                <div key={i} className="rounded-xl border bg-gray-50 dark:bg-gray-800 p-4 animate-pulse">
-                  <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded mb-3 w-2/3"></div>
-                  <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded mb-4 w-1/4"></div>
-                  <div className="space-y-3">
-                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
-                    <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded mt-3"></div>
+                <div key={i} className="rounded-2xl border bg-gray-50 dark:bg-gray-800 p-4 animate-pulse">
+                  <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-lg mb-3 w-2/3" />
+                  <div className="h-16 bg-gray-200 dark:bg-gray-700 rounded-xl mb-3" />
+                  <div className="grid grid-cols-2 gap-2">
+                    {[...Array(4)].map((_, j) => (
+                      <div key={j} className="h-12 bg-gray-200 dark:bg-gray-700 rounded-lg" />
+                    ))}
                   </div>
                 </div>
               ))}
             </div>
           ) : stores.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">データがありません</div>
+            <div className="text-center py-16 text-muted-foreground">
+              <Activity className="h-12 w-12 mx-auto mb-3 opacity-30" />
+              <p>データがありません</p>
+            </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {sortedStores.map((store, i) => (
@@ -673,28 +1109,8 @@ export default function ProductivityDashboard() {
         </div>
       ) : (
         <div className="space-y-4">
+          <AllStoresHourlyChart stores={stores} />
           <StoreBarChart stores={stores} />
-          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm">
-            <h3 className="font-bold mb-4 flex items-center gap-2">
-              <DollarSign className="h-5 w-5 text-primary" />
-              店舗別本日売上
-            </h3>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart
-                data={[...stores].sort((a, b) => b.total_sales - a.total_sales).map(s => ({
-                  name: s.store_name.replace('店', '').replace('FC', ''),
-                  売上: s.total_sales,
-                }))}
-                margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `¥${(v / 10000).toFixed(0)}万`} />
-                <Tooltip formatter={(v) => [`¥${v.toLocaleString()}`, '売上']} />
-                <Bar dataKey="売上" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
         </div>
       )}
 
