@@ -5,6 +5,7 @@
   "framework": "vite",
   "rewrites": [
     { "source": "/clear.html", "destination": "/clear.html" },
+    { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [
