@@ -165,6 +165,7 @@ async function loginTempoVisor(username, password) {
  */
 async function fetchTempoVisorAllData(username, password) {
   const { cookies, mainRes } = await loginTempoVisor(username, password);
+  console.log('[TV] Login cookies length:', cookies?.length || 0);
 
   // メインメニューから総売上データを取得
   const buffer = await mainRes.arrayBuffer();
@@ -217,6 +218,10 @@ async function fetchTempoVisorAllData(username, password) {
   const dateStr = `${jstDate.getFullYear()}/${String(jstDate.getMonth()+1).padStart(2,'0')}/${String(jstDate.getDate()).padStart(2,'0')}`;
 
   const hourlyData = await fetchAllStoresHourlySales(cookies, dateStr);
+  const hourlyKeys = Object.keys(hourlyData);
+  const tanabe = hourlyData['田辺店'];
+  console.log('[TV] Hourly stores count:', hourlyKeys.length);
+  console.log('[TV] 田辺店 hourly keys:', Object.keys(tanabe || {}).length);
 
   return { stores, hourly: hourlyData };
 }
@@ -239,7 +244,9 @@ async function fetchAllStoresHourlySales(cookies, dateStr) {
     redirect: 'follow',
   });
 
+  console.log('[TV] N3D1Servlet status:', res.status, 'url:', res.url.substring(0, 80));
   if (!res.ok) {
+    console.log('[TV] N3D1Servlet failed, returning empty');
     // フォールバック：全店舗空データ
     const empty = {};
     ALL_STORES.forEach(s => { empty[s] = {}; });
@@ -296,6 +303,7 @@ async function fetchAllStoresHourlySales(cookies, dateStr) {
     }
   });
 
+  console.log('[TV] Parsed hourly stores:', Object.keys(storeHourly).join(', '));
   return storeHourly;
 }
 
