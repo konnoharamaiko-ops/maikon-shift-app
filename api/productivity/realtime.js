@@ -282,7 +282,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
   
   for (let i = 1; i < rows.length; i++) {
     const cells = $work(rows[i]).find('td').toArray();
-    if (cells.length < 8) continue;
+    if (cells.length < 10) continue;
 
     const staffCell = $work(cells[0]).text().trim();
     if (!staffCell) continue;
@@ -299,11 +299,12 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const nameMatch = staffCell.match(/^(.+?)\s*\d{5}/);
     const staffName = nameMatch ? nameMatch[1].replace(/\xa0/g, ' ').trim() : staffCell.split(/\d{5}/)[0].trim();
 
+    // セル構造: [0]スタッフ名, [1]リンク, [2]出勤状況, [3]シフト, [4]シフト時刻, [5]遅刻フラグ, [6]出勤実績, [7]退勤実績, [8]労働時間, [9]休憩時間
     const status = $work(cells[2]).text().trim();
-    const clockIn = $work(cells[4]).text().trim().replace(/\s+/g, '');
-    const clockOut = $work(cells[5]).text().trim().replace(/\s+/g, '');
-    const workTimeText = $work(cells[6]).text().trim();
-    const breakTimeText = $work(cells[7]).text().trim();
+    const clockIn = $work(cells[6]).text().trim().replace(/\s+/g, '').replace(/\(.*?\)/g, '');
+    const clockOut = $work(cells[7]).text().trim().replace(/\s+/g, '').replace(/\(.*?\)/g, '');
+    const workTimeText = $work(cells[8]).text().trim();
+    const breakTimeText = $work(cells[9]).text().trim();
 
     const workMinutes = parseJapaneseTime(workTimeText);
     const breakMinutes = parseJapaneseTime(breakTimeText);
