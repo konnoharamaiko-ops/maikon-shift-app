@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Shield, Users, LogOut, Settings, Menu, X, Home, BarChart3, User, Eye, CalendarHeart, FileEdit, TrendingUp } from 'lucide-react';
+import { Calendar, Shield, Users, LogOut, Settings, Menu, X, Home, BarChart3, User, Eye, CalendarHeart, FileEdit, TrendingUp, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import NotificationCenter from '@/components/notifications/NotificationCenter';
@@ -71,7 +71,8 @@ export default function Layout({ children, currentPageName }) {
       { name: 'Home', label: 'シフト希望', icon: Calendar, show: true, mobileBottom: true, badgeCount: 0 },
       { name: 'ShiftOverview', label: 'シフト一覧表', icon: Eye, show: true, mobileBottom: true, badgeCount: 0 },
       { name: 'Analytics', label: '有給管理・勤務分析', icon: CalendarHeart, show: true, mobileBottom: true, badgeCount: 0 },
-      { name: 'productivity-dashboard', label: '人時生産性', icon: TrendingUp, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
+      { name: 'productivity-dashboard', label: 'リアルタイム生産性', icon: TrendingUp, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
+      { name: 'productivity-history', label: '過去実績分析', icon: History, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'Admin', label: 'シフト提出状況', icon: Shield, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'ShiftCreation', label: 'シフト作成', icon: FileEdit, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'StoreSettings', label: '店舗設定', icon: Shield, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
