@@ -370,7 +370,18 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   const dd = String(jstNow.getUTCDate()).padStart(2, '0');
   const todayStr = `${yyyy}/${mm}/${dd}`;
 
-  const params = new URLSearchParams({
+  // N3D1ServletはPOSTリクエストでデータを返す（「実行」ボタンのkensaku()関数がフォームをPOST送信）
+  const postBody = new URLSearchParams({
+    chkcsv: 'false',
+    chkcustom: '',
+    shopcode: '',
+    searched_time_slot1: '10',
+    searched_time_slot2: '21',
+    searched_yyyymmdd1: todayStr,
+    searched_yyyymmdd2: todayStr,
+    time_slot1_val: '10',
+    time_slot2_val: '21',
+    interval: '1',
     yyyymmdd1: todayStr,
     yyyymmdd2: todayStr,
     scode1: '0001',
@@ -379,25 +390,27 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     time_type: '1',
     which_tani: '1',
     tani: '1',
-    time_slot1: '9',
+    time_slot1: '10',
     time_slot2: '21',
-    interval: '1',
-    pan2_flag: '1',
     which_zeinuki: '1',
     zeinuki: '1',
+    pan2_flag: '1',
     which1: '1',
     radio1: '1',
   });
 
-  const hourlyUrl = `${repBaseUrl}N3D1Servlet?${params.toString()}`;
-  console.log('[TV] Fetching hourly sales:', hourlyUrl);
+  const hourlyUrl = `${repBaseUrl}N3D1Servlet`;
+  console.log('[TV] Fetching hourly sales (POST):', hourlyUrl);
 
   const hourlyRes = await fetch(hourlyUrl, {
+    method: 'POST',
     headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
       'Cookie': cookies,
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Referer': repBaseUrl,
     },
+    body: postBody.toString(),
   });
 
   // TempoVisorのHTMLはShift-JIS（cp932）エンコーディング
