@@ -879,55 +879,36 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       const storeName = $tomorrow(cells[0]).text().trim();
       if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
 
-      // 更新時刻（最終レジ稼働時間）を取得
-      const updateTimeStr = updateTimes[storeName] || '';
-      // 更新時刻から日付・時間・分を取得（例: "03/01 18:46" → date="03/01", hour=18, min=46）
-      const updateTimeMatch = updateTimeStr.match(/^(\d{2}\/\d{2})\s+(\d{2}):(\d{2})$/);
-      const lastActiveHour = updateTimeMatch ? parseInt(updateTimeMatch[2]) : null;
-      const updateDateStr = updateTimeMatch ? updateTimeMatch[1] : null;
-
-      // 更新時刻が取得できない場合はスキップ
-      if (lastActiveHour === null) continue;
-
-      // 更新時刻の日付が今日でない場合はスキップ（昨日以前のデータは補完不要）
-      // todayStr は "YYYY/MM/DD" 形式なので MM/DD 部分を抽出して比較
-      const todayMMDD = todayStr.slice(5).replace('-', '/'); // "YYYY/MM/DD" → "MM/DD"
-      if (updateDateStr !== todayMMDD) {
-        console.log(`[TV] ${storeName}: 更新日付が今日ではないためスキップ (${updateDateStr} !== ${todayMMDD})`);
-        continue;
-      }
-
-      const storeDefaultHours = DEFAULT_BUSINESS_HOURS[storeName] || { open: 10, close: 18 };
-      const closeHour = storeDefaultHours.close;
-      const openHour = storeDefaultHours.open;
-
-      // レジ締め後の売上補完ロジック：
-      // TempoVisorでは、レジ締め後の売上は「翌日の同じ時間帯」に計上される
-      // 例：16:00にレジ締め → 16:01以降の売上が翌日の16時台・17時台・18時台に計上される
-      // そのため、翌日データの「lastActiveHour時台〜closeHour-1時台」を今日の同時間帯に加算する
-      //
-      // 翌日の開店時間（openHour）以降は翌日の本来の売上なので除外する。
-      // ただし openHour は通常 lastActiveHour より小さいため、
-      // 「翌日の開店時間以降かつ lastActiveHour より前」の範囲は除外対象にならない。
-      // 実際に除外すべきは「翌日の開店時間 > lastActiveHour の場合のみ」。
-      // 通常ケース（例：9時開店、16時レジ締め）では openHour < lastActiveHour なので
-      // openHour 条件は不要（lastActiveHour 条件でカバー済み）。
-
+      // 翌日データから各時間帯の売上を取得
+      const tomorrowSalesMap = {}; // { hour: sales }
       hourColumns.forEach(({ colIndex, hour: tomorrowHour }) => {
-        // 翌日の対象範囲：開店時間帯〜レジ締め時間帯より前（レジ締め後の売上が翌日に計上される）
-        // 例：16:00にレジ締め → 16時台・17時台・18時台の売上が翌日に計上される
-        // → 翌日の「openHour〜lastActiveHour-1」時台が補完対象
-        if (tomorrowHour < openHour) return;         // 開店前の時間帯はスキップ
-        if (tomorrowHour >= lastActiveHour) return;  // レジ締め時刻以降はスキップ（翌日の本来の売上）
-
         const salesText = $tomorrow(cells[colIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
           .replace(/[^\d-]/g, '');
         const sales = parseInt(salesText) || 0;
-        if (sales <= 0) return;
+        if (sales > 0) tomorrowSalesMap[tomorrowHour] = sales;
+      });
 
-        // 今日の同じ時間帯を翌日の値で上書き（二重計上を防ぐため今日の値を差し引いてから翌日の値を加算）
-        // 理由：レジ締め後の売上は翌日に計上されるが、今日のデータにも同時間帯の売上が既に含まれている
+      // 翌日に売上がない場合はスキップ（補完不要）
+      if (Object.keys(tomorrowSalesMap).length === 0) continue;
+
+      // 翌日の最初の売上時間帯を補完開始時刻として検出
+      // 例：翌日の16時台が最初の売上 → 16時台以降が今日のレジ締め後の売上
+      const firstTomorrowSalesHour = Math.min(...Object.keys(tomorrowSalesMap).map(Number));
+      console.log(`[TV] ${storeName}: 翌日最初の売上時間帯=${firstTomorrowSalesHour}時台 対象時間帯=${Object.keys(tomorrowSalesMap).sort().join(',')}時台`);
+
+      // レジ締め後の売上補完ロジック：
+      // TempoVisorでは、レジ締め後の売上は「翌日の同じ時間帯」に計上される
+      // 例：16:00にレジ締め → 16時台・17時台・18時台の売上が翌日に計上される
+      // 翌日の最初の売上時間帯（firstTomorrowSalesHour）以降を今日に補完・上書きする
+      // 今日のデータにも同時間帯の売上が既に含まれているため、翌日の値で置き換える
+
+      Object.entries(tomorrowSalesMap).forEach(([hourStr, sales]) => {
+        const tomorrowHour = parseInt(hourStr);
+        // 翌日の最初の売上時間帯より前はスキップ（翌日の本来の売上ではない）
+        if (tomorrowHour < firstTomorrowSalesHour) return;
+
+        // 今日の同じ時間帯を翌日の値で上書き（二重計上を防ぐ）
         if (storeHourly[storeName]) {
           const todaySales = storeHourly[storeName][tomorrowHour] || 0;
           // 日次売上合計から今日の同時間帯の売上を引いてから翌日の値を加算
