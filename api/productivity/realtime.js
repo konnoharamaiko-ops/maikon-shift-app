@@ -987,159 +987,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     throw new Error(`Jobcan login failed: ${location}`);
   }
 
-  // ===== 出勤簿ページから staffId → シフトグループ（店舗コード）マッピングを取得 =====
-  // 出勤簿の select[id^="group_"] の選択値（option#0）が今日のシフトグループ（実際の勤務店舗）
-  const staffShiftGroupMap = {}; // staffId → { deptCode, storeName }
-
-  // 出勤簿ページは1ページ30件。全ページを取得（最大8ページ = 240件）
-  const today = new Date();
-  const jstToday = new Date(today.getTime() + 9 * 60 * 60 * 1000);
-  const todayStr = `${jstToday.getUTCFullYear()}-${String(jstToday.getUTCMonth() + 1).padStart(2, '0')}-${String(jstToday.getUTCDate()).padStart(2, '0')}`;
-
-  // まず1ページ目を取得して総件数を確認
-  const attendPage1Url = `https://ssl.jobcan.jp/client/adit-manage/?search_type=day&target_date=${todayStr}&number_par_page=30&page=1`;
-  const attendPage1Res = await fetch(attendPage1Url, {
-    headers: {
-      'Cookie': allCookies,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': 'https://ssl.jobcan.jp/client/',
-    },
-    redirect: 'follow',
-  });
-  const attendPage1Html = await attendPage1Res.text();
-  const $attend1 = cheerio.load(attendPage1Html);
-
-  // 総件数を取得（例: "174件中1〜30件表示"）
-  const totalCountMatch = attendPage1Html.match(/(\d+)件中/);
-  const totalCount = totalCountMatch ? parseInt(totalCountMatch[1]) : 30;
-  const totalPages = Math.ceil(totalCount / 30);
-  console.log(`[JC] 出勤簿: 総${totalCount}件, ${totalPages}ページ`);
-
-  // 1ページ目のselect要素を処理
-  const parseAttendPage = ($page) => {
-    $page('select[id^="group_"]').each((_, sel) => {
-      const selId = $page(sel).attr('id') || '';
-      const parts = selId.split('_');
-      if (parts.length < 2) return;
-      const staffId = parts[1];
-      if (!staffId || isNaN(parseInt(staffId))) return;
-      // HTMLソースでは最初のoption（index=0）が今日のシフトグループ（実際の勤務店舗）
-      // ブラウザのJavaScriptでselected属性が動的に付与されるため、HTMLソースではoption[selected]は取得不可
-      // → option:first-child（最初のoption）を使用する
-      const firstOption = $page(sel).find('option').first();
-      const groupText = firstOption.length > 0 ? firstOption.text().trim() : '';
-      const groupMatch = groupText.match(/^(\d{5})\s+(.+)$/);
-      if (groupMatch) {
-        const code = groupMatch[1];
-        const name = groupMatch[2];
-        const mappedStore = STORE_DEPT_MAP[code];
-        if (mappedStore) {
-          staffShiftGroupMap[staffId] = { deptCode: code, storeName: mappedStore };
-        }
-      }
-    });
-  };
-
-  // デバッグ: HTMLソースにselect[id^="group_"]が含まれているか確認
-  const groupSelects = $attend1('select[id^="group_"]');
-  console.log(`[JC] 出勤簿1ページ目: select[id^="group_"] = ${groupSelects.length}件`);
-  if (groupSelects.length > 0) {
-    const firstSel = groupSelects.first();
-    const firstSelId = firstSel.attr('id');
-    const firstOpt = firstSel.find('option').first();
-    console.log(`[JC] 最初のselect id=${firstSelId}, option#0=${firstOpt.text().trim().substring(0, 30)}`);
-    // HTMLソースの一部を確認
-    const htmlSnippet = attendPage1Html.indexOf('group_') >= 0 ? attendPage1Html.substring(attendPage1Html.indexOf('group_'), attendPage1Html.indexOf('group_') + 200) : 'group_ not found';
-    console.log(`[JC] HTMLソース: ${htmlSnippet.substring(0, 100)}`);
-  } else {
-    // HTMLソースにselect[id^="group_"]がない場合
-    const htmlLen = attendPage1Html.length;
-    const hasGroup = attendPage1Html.includes('group_');
-    console.log(`[JC] HTMLソース長=${htmlLen}, group_含む=${hasGroup}`);
-    if (hasGroup) {
-      const idx = attendPage1Html.indexOf('group_');
-      console.log(`[JC] group_位置: ${attendPage1Html.substring(idx, idx + 100)}`);
-    }
-  }
-
-  parseAttendPage($attend1);
-
-  // 2ページ目以降を並列取得
-  if (totalPages > 1) {
-    const pagePromises = [];
-    for (let p = 2; p <= Math.min(totalPages, 8); p++) {
-      const pageUrl = `https://ssl.jobcan.jp/client/adit-manage/?search_type=day&target_date=${todayStr}&number_par_page=30&page=${p}`;
-      pagePromises.push(
-        fetch(pageUrl, {
-          headers: {
-            'Cookie': allCookies,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://ssl.jobcan.jp/client/',
-          },
-          redirect: 'follow',
-        }).then(r => r.text()).then(html => {
-          const $p = cheerio.load(html);
-          parseAttendPage($p);
-        })
-      );
-    }
-    await Promise.all(pagePromises);
-  }
-
-  console.log(`[JC] シフトグループマッピング取得: ${Object.keys(staffShiftGroupMap).length}件`);
-
-  // ===== 出入詳細ページから打刻場所（GPS打刻エリア）を取得 =====
-  // 出勤簿のシフトグループは「所属グループ」であり、実際の打刻場所（GPS打刻エリア）とは異なる場合がある
-  // 例: 佐藤美咲（所属: 心斎橋店）がアベノ店で打刻した場合、打刻場所=アベノ店を使用する
-  // 出入詳細ページの select[id^="change_group_id"] option[selected] のテキストが実際の打刻場所
-  const stampPlaceMap = {}; // staffId → 打刻場所コード（5桁）
-
-  // 勤務中・退勤済みのスタッフのIDリストを出勤簿ページから収集
-  // （勤務状況ページ取得前なので、出勤簿ページのselect IDから収集）
-  const activeStaffIds = Object.keys(staffShiftGroupMap); // シフトグループが存在するスタッフ（今日シフトあり）
-
-  // バッチサイズ10で並行取得（Vercelの60秒タイムアウト対策）
-  const stampBatchSize = 10;
-  for (let b = 0; b < activeStaffIds.length; b += stampBatchSize) {
-    const batch = activeStaffIds.slice(b, b + stampBatchSize);
-    const batchResults = await Promise.allSettled(
-      batch.map(async (empId) => {
-        const aditUrl = `https://ssl.jobcan.jp/client/adit/?employee_id=${empId}&year=${jstToday.getUTCFullYear()}&month=${jstToday.getUTCMonth() + 1}&day=${jstToday.getUTCDate()}`;
-        const aditRes = await fetch(aditUrl, {
-          headers: {
-            'Cookie': allCookies,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://ssl.jobcan.jp/client/',
-          },
-          redirect: 'follow',
-        });
-        const aditHtml = await aditRes.text();
-        const $adit = cheerio.load(aditHtml);
-        // 最初の打刻（出勤打刻）の打刻場所を取得
-        // select[id^="change_group_id"] の最初のoptionのテキストから5桁コードを抽出
-        // 注意: HTMLソースではoption[selected]は取得不可（ブラウザのJSで動的に付与）、option:first-childを使用
-        let stampCode = null;
-        $adit('select[id^="change_group_id"]').each((idx, sel) => {
-          if (stampCode) return; // 最初の打刻場所のみ使用
-          const firstOption = $adit(sel).find('option').first();
-          if (firstOption.length > 0) {
-            const optText = firstOption.text().trim();
-            const codeMatch = optText.match(/^(\d{5})/);
-            if (codeMatch) stampCode = codeMatch[1];
-          }
-        });
-        return { empId, stampCode };
-      })
-    );
-    for (const result of batchResults) {
-      if (result.status === 'fulfilled' && result.value.stampCode) {
-        stampPlaceMap[result.value.empId] = result.value.stampCode;
-      }
-    }
-  }
-  console.log(`[JC] 打刻場所マッピング取得: ${Object.keys(stampPlaceMap).length}件`);
-
-  // ===== 勤務状況一覧ページを取得 =====
+  // ===== 勤務状況一覧ページを取得（先に取得してスタッフIDリストを作成）=====
   const workUrl = 'https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=300&retirement=work';
   const workRes = await fetch(workUrl, {
     headers: {
@@ -1171,6 +1019,67 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
   const rows = $work(targetTable).find('tr').toArray();
 
+  // ===== 勤務状況ページからスタッフIDリストを収集 =====
+  const staffIdList = [];
+  for (let i = 1; i < rows.length; i++) {
+    const cells = $work(rows[i]).find('td').toArray();
+    if (cells.length < 10) continue;
+    const staffLink = $work(cells[0]).find('a').attr('href') || '';
+    const staffIdMatch = staffLink.match(/employee_id=(\d+)/);
+    if (staffIdMatch) staffIdList.push(staffIdMatch[1]);
+  }
+  console.log(`[JC] 勤務状況ページからスタッフID: ${staffIdList.length}件`);
+
+  // ===== 出入詳細ページから打刻場所（GPS打刻エリア）を取得 =====
+  // 例: 佐藤美咲（所属: 心斎橋店）がアベノ店で打刻した場合、打刻場所=アベノ店を使用する
+  // 出入詳細ページの select[id^="change_group_id"] option[selected] のテキストが実際の打刻場所
+  const stampPlaceMap = {}; // staffId → 打刻場所コード（5桁）
+
+  const today = new Date();
+  const jstToday = new Date(today.getTime() + 9 * 60 * 60 * 1000);
+
+  // バッチサイズ20で並行取得（Vercelの60秒タイムアウト対策）
+  const stampBatchSize = 20;
+  for (let b = 0; b < staffIdList.length; b += stampBatchSize) {
+    const batch = staffIdList.slice(b, b + stampBatchSize);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (empId) => {
+        const aditUrl = `https://ssl.jobcan.jp/client/adit/?employee_id=${empId}&year=${jstToday.getUTCFullYear()}&month=${jstToday.getUTCMonth() + 1}&day=${jstToday.getUTCDate()}`;
+        const aditRes = await fetch(aditUrl, {
+          headers: {
+            'Cookie': allCookies,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://ssl.jobcan.jp/client/',
+          },
+          redirect: 'follow',
+        });
+        const aditHtml = await aditRes.text();
+        const $adit = cheerio.load(aditHtml);
+        // 打刻場所を取得: select[id^="change_group_id"] option[selected]
+        // HTMLソースに selected="selected" 属性が含まれる（ブラウザのJSで動的生成ではなく、サーバーサイドで出力）
+        let stampCode = null;
+        $adit('select[id^="change_group_id"]').each((idx, sel) => {
+          if (stampCode) return; // 最初の打刻場所のみ使用
+          // option[selected] を使用（HTMLソースに selected="selected" 属性あり）
+          const selectedOption = $adit(sel).find('option[selected]');
+          const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
+          if (targetOption.length > 0) {
+            const optText = targetOption.text().trim();
+            const codeMatch = optText.match(/^(\d{5})/);
+            if (codeMatch) stampCode = codeMatch[1];
+          }
+        });
+        return { empId, stampCode };
+      })
+    );
+    for (const result of batchResults) {
+      if (result.status === 'fulfilled' && result.value.stampCode) {
+        stampPlaceMap[result.value.empId] = result.value.stampCode;
+      }
+    }
+  }
+  console.log(`[JC] 打刻場所マッピング取得: ${Object.keys(stampPlaceMap).length}件`);
+
   for (let i = 1; i < rows.length; i++) {
     const cells = $work(rows[i]).find('td').toArray();
     // 12列のデータ行のみ処理（2列のシフト詳細行はスキップ）
@@ -1191,24 +1100,20 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const nameMatch = staffCell.match(/^(.+?)\s*\d{5}/);
     const staffName = nameMatch ? nameMatch[1].replace(/\xa0/g, ' ').trim() : staffCell.split(/\d{5}/)[0].trim();
 
-    // スタッフIDをリンクhrefから取得（例: /client/edit-employee?employee_id=701 → "701"）
+    // スタッフIDをリンクhrefsから取得（例: /client/edit-employee?employee_id=701 → "701"）
     const staffLink = $work(cells[0]).find('a').attr('href') || '';
     const staffIdMatch = staffLink.match(/employee_id=(\d+)/);
     const staffId = staffIdMatch ? staffIdMatch[1] : null;
 
-    // シフトグループ（今日の実際の勤務店舗）を出勤簿マッピングから取得
-    const shiftGroup = staffId ? staffShiftGroupMap[staffId] : null;
-    const shiftStoreName = shiftGroup ? shiftGroup.storeName : null;
-
-    // 打刻場所（GPS）を出入詳細ページのマッピングから取得
+    // 打刻場所（GPS打刻エリア）を出入詳細ページのマッピングから取得
     const stampCode = staffId ? stampPlaceMap[staffId] : null;
     const stampStoreName = stampCode ? STORE_DEPT_MAP[stampCode] : null;
-    // staffCellの "->店舗名" はシフトグループ名であり、打刻場所ではない（ログ用に保持）
+    // staffCellの "->店舗名" はシフトグループ名（所属グループ）であり、打刻場所ではない
     const locationMatch = staffCell.match(/->(.+)$/);
     const rawLocation = locationMatch ? locationMatch[1].trim() : null;
     const clockLocation = rawLocation ? (LOCATION_TO_STORE_MAP[rawLocation] || null) : null;
     if (staffId) {
-      console.log(`[JC] ${staffName}(id=${staffId}): 所属=${deptStoreName}, シフトグループ=${shiftStoreName || 'なし'}, 打刻場所=${stampStoreName || 'なし'}(コード:${stampCode || '-'}), GPS打刻=${clockLocation || 'なし'}`);
+      console.log(`[JC] ${staffName}(id=${staffId}): 所属=${deptStoreName}, 打刻場所=${stampStoreName || 'なし'}(コード:${stampCode || '-'}), GPS打刻=${clockLocation || 'なし'}`);
     }
 
     // 出勤状況
@@ -1260,10 +1165,10 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     }
     const netHours = parseFloat((netMinutes / 60).toFixed(2));
 
-    // 振り分け先の店舗を決定
-    // 優先順位: 打刻場所（出入詳細ページのGPS打刻エリア）> シフトグループ（出勤簿の所属グループ）> 所属部署コード
+    // 栲り分け先の店舗を決定
+    // 優先順位: 打刻場所（出入詳細ページのGPS打刻エリア）> 所属部署コード
     // 打刻場所 = 実際に打刻した場所（ヘルプ対応や所属外店舗での勤務に対応）
-    let assignedStore = stampStoreName || shiftStoreName || deptStoreName;
+    let assignedStore = stampStoreName || deptStoreName;
 
     const employee = {
       name: staffName,
