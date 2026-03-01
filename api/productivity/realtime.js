@@ -304,6 +304,51 @@ function isTemporaryClosure(storeName, storeSettings, jstDateStr) {
 }
 
 /**
+ * TempoVisorのMainMenuServletから各店舗の更新時刻（最終レジ稼働時間）を取得
+ * @param {string} cookies - ログイン済みCookie
+ * @returns {Object} { '田辺店': '03/01 18:46', ... }
+ */
+async function fetchStoreUpdateTimes(cookies) {
+  try {
+    const menuUrl = 'https://www.tenpovisor.jp/alioth/servlet/MainMenuServlet';
+    const menuRes = await fetch(menuUrl, {
+      headers: {
+        'Cookie': cookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
+    const menuBuffer = await menuRes.arrayBuffer();
+    const menuHtml = iconv.decode(Buffer.from(menuBuffer), 'cp932');
+    const $menu = cheerio.load(menuHtml);
+
+    const updateTimes = {};
+    // テーブルから店舗名と更新時刻を取得
+    // 構造: 店舗名 | 前年売上 | 予算 | 前月売上 | 今月売上 | 達成率 | 前日売上 | 当日売上 | 更新時刻
+    $menu('table tr').each((i, row) => {
+      const cells = $menu(row).find('td,th').toArray();
+      if (cells.length < 9) return;
+      const storeName = $menu(cells[0]).text().trim().replace(/[\\\[\]]/g, '');
+      if (!TEMPOVISOR_STORE_CODES[storeName]) return;
+      // 更新時刻は最後の列（または最後から2番目）
+      const lastCell = $menu(cells[cells.length - 1]).text().trim();
+      const secondLastCell = $menu(cells[cells.length - 2]).text().trim();
+      const timePattern = /\d{2}\/\d{2}\s+\d{2}:\d{2}/;
+      if (timePattern.test(lastCell)) {
+        updateTimes[storeName] = lastCell;
+      } else if (timePattern.test(secondLastCell)) {
+        updateTimes[storeName] = secondLastCell;
+      }
+    });
+
+    console.log('[TV] Update times:', JSON.stringify(updateTimes));
+    return updateTimes;
+  } catch (err) {
+    console.warn('[TV] fetchStoreUpdateTimes error:', err.message);
+    return {};
+  }
+}
+
+/**
  * TempoVisorにログインしてCookieを取得
  */
 async function loginTempoVisor(username, password) {
@@ -373,27 +418,28 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   const todayStr = `${yyyy}/${mm}/${dd}`;
 
   // N3D1ServletはPOSTリクエストでデータを返す（「実行」ボタンのkensaku()関数がフォームをPOST送信）
-  const postBody = new URLSearchParams({
+  // 時間帯は8〜23時に拡張（田辺店9時開店・エキマル22時閉店に対応）
+  const makePostBody = (dateStr, slot1 = '8', slot2 = '23') => new URLSearchParams({
     chkcsv: 'false',
     chkcustom: '',
     shopcode: '',
-    searched_time_slot1: '10',
-    searched_time_slot2: '21',
-    searched_yyyymmdd1: todayStr,
-    searched_yyyymmdd2: todayStr,
-    time_slot1_val: '10',
-    time_slot2_val: '21',
+    searched_time_slot1: slot1,
+    searched_time_slot2: slot2,
+    searched_yyyymmdd1: dateStr,
+    searched_yyyymmdd2: dateStr,
+    time_slot1_val: slot1,
+    time_slot2_val: slot2,
     interval: '1',
-    yyyymmdd1: todayStr,
-    yyyymmdd2: todayStr,
+    yyyymmdd1: dateStr,
+    yyyymmdd2: dateStr,
     scode1: '0001',
     scode2: '2000',
     which_time_type: '1',
     time_type: '1',
     which_tani: '1',
     tani: '1',
-    time_slot1: '10',
-    time_slot2: '21',
+    time_slot1: slot1,
+    time_slot2: slot2,
     which_zeinuki: '1',
     zeinuki: '1',
     pan2_flag: '1',
@@ -401,9 +447,12 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     radio1: '1',
   });
 
+  const postBody = makePostBody(todayStr);
+
   const hourlyUrl = `${repBaseUrl}N3D1Servlet`;
   console.log('[TV] Fetching hourly sales (POST):', hourlyUrl);
 
+  // 今日のデータを取得
   const hourlyRes = await fetch(hourlyUrl, {
     method: 'POST',
     headers: {
@@ -419,10 +468,30 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   console.log('[TV] HTTP status:', hourlyRes.status, hourlyRes.statusText);
   const hourlyBuffer = await hourlyRes.arrayBuffer();
   const hourlyHtml = iconv.decode(Buffer.from(hourlyBuffer), 'cp932');
-
-  // デバッグ: HTMLの最初の500文字と全テーブル数をログ出力
   console.log('[TV] HTML length:', hourlyHtml.length);
-  console.log('[TV] HTML preview:', hourlyHtml.substring(0, 500));
+
+  // 翌日のデータも取得（レジ締め後の売上補完のため）
+  const jstTomorrow = new Date(jstNow.getTime() + 24 * 60 * 60 * 1000);
+  const tyyyy = jstTomorrow.getUTCFullYear();
+  const tmm = String(jstTomorrow.getUTCMonth() + 1).padStart(2, '0');
+  const tdd = String(jstTomorrow.getUTCDate()).padStart(2, '0');
+  const tomorrowStr = `${tyyyy}/${tmm}/${tdd}`;
+
+  const tomorrowRes = await fetch(hourlyUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': cookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': repBaseUrl,
+    },
+    body: makePostBody(tomorrowStr, '0', '9').toString(),
+  });
+  const tomorrowBuffer = await tomorrowRes.arrayBuffer();
+  const tomorrowHtml = iconv.decode(Buffer.from(tomorrowBuffer), 'cp932');
+
+  // MainMenuServletから各店舗の更新時刻（最終レジ稼働時間）を取得
+  const updateTimes = await fetchStoreUpdateTimes(cookies);
 
   const $hourly = cheerio.load(hourlyHtml);
   const tableCount = $hourly('table').length;
@@ -516,10 +585,79 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         store_code: TEMPOVISOR_STORE_CODES[storeName],
         today_sales: todaySales,
         monthly_sales: 0,
-        update_time: '',
+        update_time: updateTimes[storeName] || '',
       });
 
       console.log(`[TV] ${storeName}: today_sales=${todaySales}, hourly_keys=${Object.keys(hourly).length}`);
+    }
+  });
+
+  // 翌日データを解析してレジ締め後の売上を今日分に補完
+  const $tomorrow = cheerio.load(tomorrowHtml);
+  $tomorrow('table').each((tableIdx, table) => {
+    const rows = $tomorrow(table).find('tr').toArray();
+    if (rows.length < 2) return;
+    const headerCells = $tomorrow(rows[0]).find('td,th').toArray();
+    if (headerCells.length < 3) return;
+    const firstHeaderText = $tomorrow(headerCells[0]).text().trim();
+    const isHourlyTable = firstHeaderText === '店舗名';
+    if (!isHourlyTable) return;
+
+    const hourColumns = [];
+    headerCells.forEach((cell, idx) => {
+      if (idx === 0) return;
+      const cellText = $tomorrow(cell).text().trim();
+      const hourMatch = cellText.match(/^(\d{1,2})[:：]/);
+      if (hourMatch) hourColumns.push({ colIndex: idx, hour: parseInt(hourMatch[1]) });
+    });
+    if (hourColumns.length === 0) return;
+
+    for (let r = 1; r < rows.length; r++) {
+      const cells = $tomorrow(rows[r]).find('td,th').toArray();
+      if (cells.length < 2) continue;
+      const storeName = $tomorrow(cells[0]).text().trim();
+      if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
+
+      // 更新時刻（最終レジ稼働時間）を取得
+      const updateTimeStr = updateTimes[storeName] || '';
+      // 更新時刻から時間を取得（例: "03/01 18:46" → 18時）
+      const updateTimeMatch = updateTimeStr.match(/(\d{2}):(\d{2})$/);
+      const lastActiveHour = updateTimeMatch ? parseInt(updateTimeMatch[1]) : null;
+
+      // 翌日の0〜9時のデータを今日分に加算（レジ締め後の売上補完）
+      // 条件：更新時刻が閉店時間より前（レジ締めが発生している）
+      if (lastActiveHour === null) continue;
+
+      const storeDefaultHours = DEFAULT_BUSINESS_HOURS[storeName] || { open: 10, close: 18 };
+      const closeHour = storeDefaultHours.close;
+
+      // レジ締め後の時間帯（最終レジ稼働時間+1 〜 閉店時間-1）を翌日データから今日に補完
+      // 翌日の0時台 = 今日のレジ締め後の最初の時間帯
+      // 翌日の時間帯インデックス 0 = 今日の lastActiveHour+1 時台に対応
+      let tomorrowHourOffset = lastActiveHour + 1;
+
+      hourColumns.forEach(({ colIndex, hour: tomorrowHour }) => {
+        // 翌日の0〜9時のデータのみ対象（開店時間以降は翌日の売上）
+        if (tomorrowHour >= 9) return; // 9時以降は翌日の営業分
+
+        const salesText = $tomorrow(cells[colIndex]).text().trim()
+          .replace(/[\\¥,]/g, '')
+          .replace(/[^\d-]/g, '');
+        const sales = parseInt(salesText) || 0;
+        if (sales <= 0) return;
+
+        // 今日の対応する時間帯に加算
+        const todayHour = tomorrowHourOffset + tomorrowHour;
+        if (todayHour >= closeHour) return; // 閉店時間以降はスキップ
+
+        if (storeHourly[storeName]) {
+          storeHourly[storeName][todayHour] = (storeHourly[storeName][todayHour] || 0) + sales;
+          // 日次売上合計も更新
+          const saleEntry = storeSales.find(s => s.store_name === storeName);
+          if (saleEntry) saleEntry.today_sales += sales;
+          console.log(`[TV] ${storeName}: レジ締め補完 翌日${tomorrowHour}時→今日${todayHour}時 +${sales}円`);
+        }
+      });
     }
   });
 
@@ -643,6 +781,9 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const locationMatch = staffCell.match(/->(.+)$/);
     const rawLocation = locationMatch ? locationMatch[1].trim() : null;
     const clockLocation = rawLocation ? (LOCATION_TO_STORE_MAP[rawLocation] || null) : null;
+    if (rawLocation) {
+      console.log(`[JC] ${staffName}: staffCell=${JSON.stringify(staffCell)}, rawLocation=${rawLocation}, clockLocation=${clockLocation}`);
+    }
 
     // 出勤状況
     const status = $work(cells[2]).text().trim();
