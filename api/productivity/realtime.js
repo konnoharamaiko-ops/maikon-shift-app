@@ -151,7 +151,7 @@ async function fetchStoreSettings() {
   }
 
   try {
-    const response = await fetch(`${supabaseUrl}/rest/v1/Stores?select=store_name,business_hours,temporary_closures`, {
+    const response = await fetch(`${supabaseUrl}/rest/v1/Store?select=store_name,business_hours,temporary_closures`, {
       headers: {
         'apikey': supabaseKey,
         'Authorization': `Bearer ${supabaseKey}`,
