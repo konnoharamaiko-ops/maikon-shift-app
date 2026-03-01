@@ -914,11 +914,11 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       // openHour 条件は不要（lastActiveHour 条件でカバー済み）。
 
       hourColumns.forEach(({ colIndex, hour: tomorrowHour }) => {
-        // 翌日の対象範囲：レジ締め時間帯〜閉店時間（含む）
-        // 例： lastActiveHour=19, closeHour=19 → 19時帯も補完対象
-        if (tomorrowHour < lastActiveHour) return; // レジ締め前の時間帯はスキップ
-        if (tomorrowHour > closeHour) return;       // 閉店時間より後はスキップ（閉店時間帯は含む）
-        // 翌日の開店時間は lastActiveHour より小さいため、上記の tomorrowHour < lastActiveHour で既に除外済み
+        // 翌日の対象範囲：開店時間帯〜レジ締め時間帯より前（レジ締め後の売上が翌日に計上される）
+        // 例：16:00にレジ締め → 16時台・17時台・18時台の売上が翌日に計上される
+        // → 翌日の「openHour〜lastActiveHour-1」時台が補完対象
+        if (tomorrowHour < openHour) return;         // 開店前の時間帯はスキップ
+        if (tomorrowHour >= lastActiveHour) return;  // レジ締め時刻以降はスキップ（翌日の本来の売上）
 
         const salesText = $tomorrow(cells[colIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
