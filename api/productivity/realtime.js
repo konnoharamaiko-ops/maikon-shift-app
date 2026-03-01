@@ -694,10 +694,10 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const netHours = parseFloat((netMinutes / 60).toFixed(2));
 
     // 振り分け先の店舗を決定
-    // - 勤務中・休憩中：打刻場所の店舗に振り分け（掛け持ち対応）
-    // - 退勤済み・未出勤：所属店舗に振り分け
+    // - 勤務中・休憩中・退勤済み：打刻場所があればその店舗に振り分け（掛け持ち・店舗間移動対応）
+    // - 打刻場所なし・未出勤：所属店舗に振り分け
     let assignedStore = deptStoreName;
-    if ((status === '勤務中' || status === '休憩中') && clockLocation) {
+    if ((status === '勤務中' || status === '休憩中' || status === '退勤済み') && clockLocation) {
       assignedStore = clockLocation;
     }
 
@@ -858,7 +858,11 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
 
   // salesHoursが空の場合（salesHoursが[]）、スプレッドで Infinity/-Infinity になるため修正
   const safeMinHour = isFinite(minHour) ? minHour : businessHours.open;
-  const safeMaxHour = isFinite(maxHour) ? maxHour : businessHours.close - 1;
+  const rawMaxHour = isFinite(maxHour) ? maxHour : businessHours.close - 1;
+
+  // 現在時刻より後の時間帯は表示しない（現在進行中のスロットまで表示）
+  // currentHour=18の場合、表示最大は18時台（18:00～19:00）
+  const safeMaxHour = Math.min(rawMaxHour, currentHour);
 
   for (let hour = safeMinHour; hour <= safeMaxHour; hour++) {
     // この時間帯が営業時間内かどうか
