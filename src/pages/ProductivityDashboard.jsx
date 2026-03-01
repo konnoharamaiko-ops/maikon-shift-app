@@ -520,7 +520,7 @@ function StoreDetailModal({ store, onClose }) {
           animate={{ opacity: 1 }}
         />
         <motion.div
-          className="relative bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[88vh] sm:max-h-[88vh] overflow-hidden flex flex-col pb-safe"
+          className="relative bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[90dvh] sm:max-h-[88vh] overflow-hidden flex flex-col" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
           initial={{ y: '100%', scale: 0.95 }}
           animate={{ y: 0, scale: 1 }}
           exit={{ y: '100%', scale: 0.95 }}
@@ -603,7 +603,7 @@ function StoreDetailModal({ store, onClose }) {
           </div>
 
           {/* コンテンツ */}
-          <div className="flex-1 overflow-y-auto p-5">
+          <div className="flex-1 overflow-y-auto p-5 pb-6">
             <AnimatePresence mode="wait">
               {activeTab === 'overview' && (
                 <motion.div

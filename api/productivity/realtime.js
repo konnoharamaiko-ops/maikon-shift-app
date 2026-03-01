@@ -654,9 +654,10 @@ async function fetchTempoVisorAllData(username, password) {
   const { cookies, repBaseUrl } = await loginTempoVisor(username, password);
 
   // 時間別売上を取得（日次売上も同テーブルの合計列から取得）
-  const { stores, hourly: hourlyData } = await fetchAllStoresHourlySales(cookies, repBaseUrl);
+  // yesterdayStores/yesterdayHourlyも取得して前日データフォールバックに使用
+  const { stores, hourly: hourlyData, yesterdayStores, yesterdayHourly } = await fetchAllStoresHourlySales(cookies, repBaseUrl);
 
-  return { stores, hourly: hourlyData };
+  return { stores, hourly: hourlyData, yesterdayStores: yesterdayStores || [], yesterdayHourly: yesterdayHourly || {} };
 }
 
 /**
