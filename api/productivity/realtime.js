@@ -477,6 +477,7 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   const tdd = String(jstTomorrow.getUTCDate()).padStart(2, '0');
   const tomorrowStr = `${tyyyy}/${tmm}/${tdd}`;
 
+  // 翌日データは8〜23時の範囲で取得（レジ締め後の売上が翌日の同時間帯に計上されるため）
   const tomorrowRes = await fetch(hourlyUrl, {
     method: 'POST',
     headers: {
@@ -485,7 +486,7 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Referer': repBaseUrl,
     },
-    body: makePostBody(tomorrowStr, '0', '9').toString(),
+    body: makePostBody(tomorrowStr, '8', '23').toString(),
   });
   const tomorrowBuffer = await tomorrowRes.arrayBuffer();
   const tomorrowHtml = iconv.decode(Buffer.from(tomorrowBuffer), 'cp932');
@@ -620,25 +621,36 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
 
       // 更新時刻（最終レジ稼働時間）を取得
       const updateTimeStr = updateTimes[storeName] || '';
-      // 更新時刻から時間を取得（例: "03/01 18:46" → 18時）
+      // 更新時刻から時間・分を取得（例: "03/01 18:46" → hour=18, min=46）
       const updateTimeMatch = updateTimeStr.match(/(\d{2}):(\d{2})$/);
       const lastActiveHour = updateTimeMatch ? parseInt(updateTimeMatch[1]) : null;
 
-      // 翌日の0〜9時のデータを今日分に加算（レジ締め後の売上補完）
-      // 条件：更新時刻が閉店時間より前（レジ締めが発生している）
+      // 更新時刻が取得できない場合はスキップ
       if (lastActiveHour === null) continue;
 
       const storeDefaultHours = DEFAULT_BUSINESS_HOURS[storeName] || { open: 10, close: 18 };
       const closeHour = storeDefaultHours.close;
+      const openHour = storeDefaultHours.open;
 
-      // レジ締め後の時間帯（最終レジ稼働時間+1 〜 閉店時間-1）を翌日データから今日に補完
-      // 翌日の0時台 = 今日のレジ締め後の最初の時間帯
-      // 翌日の時間帯インデックス 0 = 今日の lastActiveHour+1 時台に対応
-      let tomorrowHourOffset = lastActiveHour + 1;
+      // レジ締め後の売上補完ロジック：
+      // TempoVisorでは、レジ締め後の売上は「翌日の同じ時間帯」に計上される
+      // 例：16:00にレジ締め → 16:01以降の売上が翌日の16時台・17時台・18時台に計上される
+      // そのため、翌日データの「lastActiveHour時台〜closeHour-1時台」を今日の同時間帯に加算する
+      //
+      // 翌日の開店時間（openHour）以降は翌日の本来の売上なので除外する。
+      // ただし openHour は通常 lastActiveHour より小さいため、
+      // 「翌日の開店時間以降かつ lastActiveHour より前」の範囲は除外対象にならない。
+      // 実際に除外すべきは「翌日の開店時間 > lastActiveHour の場合のみ」。
+      // 通常ケース（例：9時開店、16時レジ締め）では openHour < lastActiveHour なので
+      // openHour 条件は不要（lastActiveHour 条件でカバー済み）。
 
       hourColumns.forEach(({ colIndex, hour: tomorrowHour }) => {
-        // 翌日の0〜9時のデータのみ対象（開店時間以降は翌日の売上）
-        if (tomorrowHour >= 9) return; // 9時以降は翌日の営業分
+        // 翌日の対象範囲：レジ締め時間帯〜閉店時間-1
+        if (tomorrowHour < lastActiveHour) return; // レジ締め前の時間帯はスキップ
+        if (tomorrowHour >= closeHour) return;      // 閉店時間以降はスキップ
+        // 翌日の開店時間が lastActiveHour より後の場合（異常ケース）は除外
+        // 通常は openHour < lastActiveHour なのでこの条件は発動しない
+        if (openHour > lastActiveHour && tomorrowHour >= openHour) return;
 
         const salesText = $tomorrow(cells[colIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
@@ -646,16 +658,13 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         const sales = parseInt(salesText) || 0;
         if (sales <= 0) return;
 
-        // 今日の対応する時間帯に加算
-        const todayHour = tomorrowHourOffset + tomorrowHour;
-        if (todayHour >= closeHour) return; // 閉店時間以降はスキップ
-
+        // 今日の同じ時間帯に加算（翌日16時台 → 今日16時台）
         if (storeHourly[storeName]) {
-          storeHourly[storeName][todayHour] = (storeHourly[storeName][todayHour] || 0) + sales;
+          storeHourly[storeName][tomorrowHour] = (storeHourly[storeName][tomorrowHour] || 0) + sales;
           // 日次売上合計も更新
           const saleEntry = storeSales.find(s => s.store_name === storeName);
           if (saleEntry) saleEntry.today_sales += sales;
-          console.log(`[TV] ${storeName}: レジ締め補完 翌日${tomorrowHour}時→今日${todayHour}時 +${sales}円`);
+          console.log(`[TV] ${storeName}: レジ締め補完 翌日${tomorrowHour}時台→今日${tomorrowHour}時台 +${sales}円`);
         }
       });
     }
