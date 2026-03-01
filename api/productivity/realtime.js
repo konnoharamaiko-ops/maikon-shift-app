@@ -5,6 +5,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import iconv from 'iconv-lite';
 
 // 部署コードと店舗名のマッピング（ジョブカン部署コード → 店舗名）
 const STORE_DEPT_MAP = {
@@ -305,7 +306,7 @@ function isTemporaryClosure(storeName, storeSettings, jstDateStr) {
  */
 async function loginTempoVisor(username, password) {
   const loginUrl = 'https://www.tenpovisor.jp/alioth/servlet/LoginServlet';
-  const baseUrl = 'https://www.tenpovisor.jp/alioth/servlet/';
+  const repBaseUrl = 'https://www.tenpovisor.jp/alioth/rep/';
 
   const getRes = await fetch(loginUrl, {
     method: 'GET',
@@ -316,9 +317,8 @@ async function loginTempoVisor(username, password) {
   const initialCookies = extractCookies(getRes);
 
   const loginBody = new URLSearchParams({
-    userId: username,
-    password: password,
-    loginType: '1',
+    id: username,
+    pass: password,
   }).toString();
 
   const loginRes = await fetch(loginUrl, {
@@ -336,122 +336,162 @@ async function loginTempoVisor(username, password) {
   const loginCookies = extractCookies(loginRes);
   const allCookies = mergeCookies(initialCookies, loginCookies);
 
-  return { cookies: allCookies, baseUrl };
+  return { cookies: allCookies, repBaseUrl };
 }
 
 /**
  * TempoVisorから全店舗の売上データと時間別売上を取得
+ * 時間別売上テーブルの合計列から日次売上も取得する
  */
 async function fetchTempoVisorAllData(username, password) {
-  const { cookies, baseUrl } = await loginTempoVisor(username, password);
+  const { cookies, repBaseUrl } = await loginTempoVisor(username, password);
 
-  // 全店舗の日次売上を取得
-  const salesUrl = `${baseUrl}N3D1Servlet?mode=1&type=0`;
-  const salesRes = await fetch(salesUrl, {
-    headers: {
-      'Cookie': cookies,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': baseUrl,
-    },
-  });
-
-  const salesHtml = await salesRes.text();
-  const $sales = cheerio.load(salesHtml);
-
-  const stores = [];
-
-  $sales('table tr').each((i, row) => {
-    if (i === 0) return; // ヘッダーをスキップ
-    const cells = $sales(row).find('td').toArray();
-    if (cells.length < 5) return;
-
-    const storeName = $sales(cells[0]).text().trim();
-    if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) return;
-
-    const salesText = $sales(cells[1]).text().trim().replace(/,/g, '');
-    const todaySales = parseInt(salesText) || 0;
-
-    const updateTime = $sales(cells[cells.length - 1]).text().trim();
-
-    stores.push({
-      store_name: storeName,
-      store_code: TEMPOVISOR_STORE_CODES[storeName],
-      today_sales: todaySales,
-      monthly_sales: 0,
-      update_time: updateTime,
-    });
-  });
-
-  // 時間別売上を取得
-  const hourlyData = await fetchAllStoresHourlySales(cookies, baseUrl);
+  // 時間別売上を取得（日次売上も同テーブルの合計列から取得）
+  const { stores, hourly: hourlyData } = await fetchAllStoresHourlySales(cookies, repBaseUrl);
 
   return { stores, hourly: hourlyData };
 }
 
 /**
  * 全店舗の時間別売上を取得（N3D1Servlet）
+ * 
+ * テーブル構造（ブラウザで確認済み）:
+ * Row 0: ヘッダー [店舗名 | 10:00～ | 11:00～ | ... | 21:00～ | 合計]
+ * Row 1+: 各店舗 [田辺店 | \43,886 | \47,098 | ... | \0 | \218,828]
+ * 
+ * HTMLはShift-JIS（cp932）エンコーディング
  */
-async function fetchAllStoresHourlySales(cookies, baseUrl) {
-  const hourlyUrl = `${baseUrl}N3D1Servlet?mode=2&type=0`;
+async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
+  // 今日の日付をJST（YYYY/MM/DD形式）で取得
+  const now = new Date();
+  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const yyyy = jstNow.getUTCFullYear();
+  const mm = String(jstNow.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(jstNow.getUTCDate()).padStart(2, '0');
+  const todayStr = `${yyyy}/${mm}/${dd}`;
+
+  const params = new URLSearchParams({
+    yyyymmdd1: todayStr,
+    yyyymmdd2: todayStr,
+    scode1: '0001',
+    scode2: '2000',
+    which_time_type: '1',
+    time_type: '1',
+    which_tani: '1',
+    tani: '1',
+    time_slot1: '9',
+    time_slot2: '21',
+    interval: '1',
+    pan2_flag: '1',
+    which_zeinuki: '1',
+    zeinuki: '1',
+    which1: '1',
+    radio1: '1',
+  });
+
+  const hourlyUrl = `${repBaseUrl}N3D1Servlet?${params.toString()}`;
+  console.log('[TV] Fetching hourly sales:', hourlyUrl);
+
   const hourlyRes = await fetch(hourlyUrl, {
     headers: {
       'Cookie': cookies,
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': baseUrl,
+      'Referer': repBaseUrl,
     },
   });
 
-  const hourlyHtml = await hourlyRes.text();
+  // TempoVisorのHTMLはShift-JIS（cp932）エンコーディング
+  const hourlyBuffer = await hourlyRes.arrayBuffer();
+  const hourlyHtml = iconv.decode(Buffer.from(hourlyBuffer), 'cp932');
+
   const $hourly = cheerio.load(hourlyHtml);
 
   const storeHourly = {};
+  const storeSales = [];
 
-  // 各店舗の時間別売上テーブルを解析
+  // 全テーブルを検索して、店舗名と時間帯売上を含むテーブルを特定
   $hourly('table').each((tableIdx, table) => {
     const rows = $hourly(table).find('tr').toArray();
     if (rows.length < 2) return;
 
-    // ヘッダー行から店舗名を取得
+    // ヘッダー行を確認（「店舗名」と時間帯を含む行）
     const headerCells = $hourly(rows[0]).find('td,th').toArray();
-    if (headerCells.length === 0) return;
+    if (headerCells.length < 3) return;
 
-    const firstCellText = $hourly(headerCells[0]).text().trim();
+    const firstHeaderText = $hourly(headerCells[0]).text().trim();
+    const secondHeaderText = headerCells.length > 1 ? $hourly(headerCells[1]).text().trim() : '';
 
-    // 店舗名を特定
-    let rowStoreName = null;
-    for (const storeName of Object.keys(TEMPOVISOR_STORE_CODES)) {
-      if (firstCellText.includes(storeName)) {
-        rowStoreName = storeName;
-        break;
+    // 「店舗名」ヘッダーか、または時間帯（HH:00～）を含む行を探す
+    const isHourlyTable = firstHeaderText === '店舗名' || 
+                          secondHeaderText.match(/^\d{1,2}:00/) ||
+                          secondHeaderText.match(/^\d{1,2}:/);
+
+    if (!isHourlyTable) return;
+
+    // ヘッダーから時間帯を取得
+    const hourColumns = [];
+    let totalColIndex = -1;
+    headerCells.forEach((cell, idx) => {
+      if (idx === 0) return; // 店舗名列をスキップ
+      const cellText = $hourly(cell).text().trim();
+      const hourMatch = cellText.match(/^(\d{1,2})[:：]/);
+      if (hourMatch) {
+        hourColumns.push({ colIndex: idx, hour: parseInt(hourMatch[1]) });
+      } else if (cellText === '合計' || cellText === '計') {
+        totalColIndex = idx;
       }
-    }
-    if (!rowStoreName) return;
+    });
 
-    // 時間別売上データを解析
-    const hourly = {};
+    if (hourColumns.length === 0) return;
+
+    console.log(`[TV] Found hourly table ${tableIdx}: ${hourColumns.length} hour columns, totalCol: ${totalColIndex}`);
+
+    // データ行を解析
     for (let r = 1; r < rows.length; r++) {
-      const cells = $hourly(rows[r]).find('td').toArray();
+      const cells = $hourly(rows[r]).find('td,th').toArray();
       if (cells.length < 2) continue;
 
-      const hourText = $hourly(cells[0]).text().trim();
-      const hourMatch = hourText.match(/^(\d{1,2})/);
-      if (!hourMatch) continue;
+      const storeName = $hourly(cells[0]).text().trim();
+      if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
 
-      const hour = parseInt(hourMatch[1]);
-      const salesText = $hourly(cells[1]).text().trim().replace(/,/g, '');
-      const sales = parseInt(salesText) || 0;
+      // 時間別売上を取得
+      const hourly = {};
+      hourColumns.forEach(({ colIndex, hour }) => {
+        if (colIndex >= cells.length) return;
+        const salesText = $hourly(cells[colIndex]).text().trim()
+          .replace(/[\\¥,]/g, '')  // バックスラッシュ・円記号・カンマを除去
+          .replace(/[^\d-]/g, ''); // 数字とマイナス以外を除去
+        const sales = parseInt(salesText) || 0;
+        hourly[hour] = sales;
+      });
 
-      hourly[hour] = sales;
-    }
+      // 合計（日次売上）を取得
+      let todaySales = 0;
+      if (totalColIndex >= 0 && totalColIndex < cells.length) {
+        const totalText = $hourly(cells[totalColIndex]).text().trim()
+          .replace(/[\\¥,]/g, '')
+          .replace(/[^\d-]/g, '');
+        todaySales = parseInt(totalText) || 0;
+      } else {
+        // 合計列がない場合は時間別売上の合計を計算
+        todaySales = Object.values(hourly).reduce((sum, v) => sum + v, 0);
+      }
 
-    if (Object.keys(hourly).length > 0) {
-      storeHourly[rowStoreName] = hourly;
-    } else {
-      storeHourly[rowStoreName] = {};
+      storeHourly[storeName] = hourly;
+      storeSales.push({
+        store_name: storeName,
+        store_code: TEMPOVISOR_STORE_CODES[storeName],
+        today_sales: todaySales,
+        monthly_sales: 0,
+        update_time: '',
+      });
+
+      console.log(`[TV] ${storeName}: today_sales=${todaySales}, hourly_keys=${Object.keys(hourly).length}`);
     }
   });
 
-  return storeHourly;
+  console.log(`[TV] Total stores parsed: ${storeSales.length}`);
+  return { stores: storeSales, hourly: storeHourly };
 }
 
 /**
