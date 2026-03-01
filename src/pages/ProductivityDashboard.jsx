@@ -123,8 +123,60 @@ function calcSummary(stores) {
   return { totalSales, totalWorkHours, totalWorkers, avgProductivity, workingNow, breakNow };
 }
 
-async function fetchRealtimeData() {
-  const response = await fetch('/api/productivity/realtime', {
+// ===== 店舗設定（localStorageキー） =====
+const STORE_SETTINGS_KEY = 'maikon_store_settings';
+
+// デフォルト店舗設定
+const DEFAULT_STORE_SETTINGS = {
+  '田辺店':       { open: 9,  close: 19, closed_days: [] },
+  '大正店':       { open: 10, close: 18, closed_days: [] },
+  '天下茶屋店':   { open: 10, close: 18, closed_days: [] },
+  '天王寺店':     { open: 10, close: 18, closed_days: [] },
+  'アベノ店':     { open: 10, close: 18, closed_days: [] },
+  '心斎橋店':     { open: 10, close: 18, closed_days: [] },
+  'かがや店':     { open: 10, close: 18, closed_days: [] },
+  'エキマル':     { open: 10, close: 22, closed_days: [] },
+  '北摂店':       { open: 10, close: 18, closed_days: [] },
+  '堺東店':       { open: 10, close: 20, closed_days: [], sunday_close: 19 },
+  'イオン松原店': { open: 9,  close: 20, closed_days: [] },
+  'イオン守口店': { open: 9,  close: 20, closed_days: [] },
+  '美和堂FC店':   { open: 10, close: 18, closed_days: [0] }, // 0=日曜
+};
+
+const ALL_STORE_NAMES = [
+  '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
+  '心斎橋店', 'かがや店', 'エキマル', '北摂店', '堺東店',
+  'イオン松原店', 'イオン守口店', '美和堂FC店'
+];
+
+const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+
+function loadStoreSettings() {
+  try {
+    const saved = localStorage.getItem(STORE_SETTINGS_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // デフォルト値とマージ（新しい店舗が追加された場合のフォールバック）
+      return { ...DEFAULT_STORE_SETTINGS, ...parsed };
+    }
+  } catch (e) {}
+  return { ...DEFAULT_STORE_SETTINGS };
+}
+
+function saveStoreSettings(settings) {
+  try {
+    localStorage.setItem(STORE_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (e) {}
+}
+
+async function fetchRealtimeData(storeSettings) {
+  // localStorageの設定をAPIに渡す
+  let url = '/api/productivity/realtime';
+  if (storeSettings) {
+    const encoded = encodeURIComponent(JSON.stringify(storeSettings));
+    url += `?store_settings=${encoded}`;
+  }
+  const response = await fetch(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' },
   });
@@ -923,6 +975,234 @@ function AllStoresHourlyChart({ stores }) {
   );
 }
 
+// ===== 店舗設定モーダル =====
+function StoreHoursSettingsModal({ onClose, onSave }) {
+  const [settings, setSettings] = useState(() => loadStoreSettings());
+  const [activeStore, setActiveStore] = useState(ALL_STORE_NAMES[0]);
+
+  const updateSetting = (storeName, key, value) => {
+    setSettings(prev => ({
+      ...prev,
+      [storeName]: { ...prev[storeName], [key]: value },
+    }));
+  };
+
+  const toggleClosedDay = (storeName, dayIndex) => {
+    setSettings(prev => {
+      const current = prev[storeName]?.closed_days || [];
+      const newDays = current.includes(dayIndex)
+        ? current.filter(d => d !== dayIndex)
+        : [...current, dayIndex];
+      return { ...prev, [storeName]: { ...prev[storeName], closed_days: newDays } };
+    });
+  };
+
+  const handleSave = () => {
+    saveStoreSettings(settings);
+    onSave(settings);
+    onClose();
+  };
+
+  const handleReset = () => {
+    if (window.confirm('全店舗の設定をデフォルトに戻しますか？')) {
+      setSettings({ ...DEFAULT_STORE_SETTINGS });
+    }
+  };
+
+  const currentSettings = settings[activeStore] || DEFAULT_STORE_SETTINGS[activeStore] || { open: 10, close: 18, closed_days: [] };
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        onClick={(e) => e.target === e.currentTarget && onClose()}
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 20 }}
+          className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+        >
+          {/* ヘッダー */}
+          <div className="flex items-center justify-between p-5 border-b dark:border-gray-700">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-gradient-to-br from-red-800 to-red-600">
+                <Settings className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black">店舗設定</h2>
+                <p className="text-xs text-muted-foreground">営業時間・定休日を設定</p>
+              </div>
+            </div>
+            <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="flex flex-1 overflow-hidden">
+            {/* 店舗リスト */}
+            <div className="w-36 border-r dark:border-gray-700 overflow-y-auto shrink-0">
+              {ALL_STORE_NAMES.map(name => {
+                const s = settings[name] || {};
+                const today = new Date().getDay();
+                const isTodayClosed = (s.closed_days || []).includes(today);
+                return (
+                  <button
+                    key={name}
+                    onClick={() => setActiveStore(name)}
+                    className={`w-full text-left px-3 py-2.5 text-xs font-medium transition-colors border-b dark:border-gray-700 flex items-center justify-between gap-1 ${
+                      activeStore === name
+                        ? 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-400 font-bold'
+                        : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                    }`}
+                  >
+                    <span className="truncate">{name.replace('イオン', 'ｲｵﾝ').replace('FC店', 'FC')}</span>
+                    {isTodayClosed && <span className="text-[9px] bg-gray-200 dark:bg-gray-700 text-gray-500 px-1 rounded shrink-0">休</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 設定パネル */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              <h3 className="font-bold text-base">{activeStore}</h3>
+
+              {/* 営業時間 */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-red-800 dark:text-red-400" />
+                  通常営業時間
+                </h4>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <label className="text-xs text-muted-foreground block mb-1">開店時刻</label>
+                    <select
+                      value={currentSettings.open}
+                      onChange={e => updateSetting(activeStore, 'open', parseInt(e.target.value))}
+                      className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm"
+                    >
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <option key={i} value={i}>{i}:00</option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="text-muted-foreground mt-5">〜</span>
+                  <div className="flex-1">
+                    <label className="text-xs text-muted-foreground block mb-1">閉店時刻</label>
+                    <select
+                      value={currentSettings.close}
+                      onChange={e => updateSetting(activeStore, 'close', parseInt(e.target.value))}
+                      className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm"
+                    >
+                      {Array.from({ length: 24 }, (_, i) => i + 1).map(i => (
+                        <option key={i} value={i}>{i}:00</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* 堺東店の日曜特別設定 */}
+                {activeStore === '堺東店' && (
+                  <div className="bg-amber-50 dark:bg-amber-950/20 rounded-xl p-3">
+                    <label className="text-xs font-semibold text-amber-700 dark:text-amber-400 block mb-2">
+                      日曜日の閉店時刻（特別設定）
+                    </label>
+                    <select
+                      value={currentSettings.sunday_close || currentSettings.close}
+                      onChange={e => updateSetting(activeStore, 'sunday_close', parseInt(e.target.value))}
+                      className="w-full rounded-lg border border-amber-200 dark:border-amber-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm"
+                    >
+                      {Array.from({ length: 24 }, (_, i) => i + 1).map(i => (
+                        <option key={i} value={i}>{i}:00</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* 定休日 */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold flex items-center gap-2">
+                  <Calendar className="h-4 w-4 text-red-800 dark:text-red-400" />
+                  定休日
+                </h4>
+                <div className="flex gap-2 flex-wrap">
+                  {DAY_LABELS.map((label, dayIndex) => {
+                    const isSelected = (currentSettings.closed_days || []).includes(dayIndex);
+                    return (
+                      <button
+                        key={dayIndex}
+                        onClick={() => toggleClosedDay(activeStore, dayIndex)}
+                        className={`w-10 h-10 rounded-xl text-sm font-bold transition-all ${
+                          isSelected
+                            ? 'bg-red-800 text-white shadow-md'
+                            : 'bg-gray-100 dark:bg-gray-800 text-muted-foreground hover:bg-gray-200 dark:hover:bg-gray-700'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {(currentSettings.closed_days || []).length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    定休日: {(currentSettings.closed_days || []).sort().map(d => DAY_LABELS[d]).join('・')}曜日
+                  </p>
+                )}
+              </div>
+
+              {/* 現在の設定プレビュー */}
+              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
+                <h4 className="text-xs font-semibold text-muted-foreground mb-2">設定プレビュー</h4>
+                <p className="text-sm font-bold">
+                  {activeStore}: {currentSettings.open}:00 〜 {currentSettings.close}:00
+                </p>
+                {activeStore === '堺東店' && currentSettings.sunday_close && (
+                  <p className="text-xs text-muted-foreground mt-1">日曜日のみ {currentSettings.open}:00 〜 {currentSettings.sunday_close}:00</p>
+                )}
+                {(currentSettings.closed_days || []).length > 0 ? (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    定休日: {(currentSettings.closed_days || []).sort().map(d => DAY_LABELS[d]).join('・')}曜日
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground mt-1">定休日なし（年中無休）</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* フッター */}
+          <div className="flex items-center justify-between p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+            <button
+              onClick={handleReset}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              デフォルトに戻す
+            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl border dark:border-gray-600 text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleSave}
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-red-800 to-red-600 text-white text-sm font-bold hover:opacity-90 transition-opacity shadow-md"
+              >
+                保存して反映
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
 // ===== メインコンポーネント =====
 export default function ProductivityDashboard() {
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -931,6 +1211,8 @@ export default function ProductivityDashboard() {
   const [dark, toggleDark] = useDarkMode();
   const [countdown, setCountdown] = useState(30);
   const [showClosedStores, setShowClosedStores] = useState(false);
+  const [showStoreSettings, setShowStoreSettings] = useState(false);
+  const [storeSettings, setStoreSettings] = useState(() => loadStoreSettings());
 
   const {
     data: queryData,
@@ -939,8 +1221,8 @@ export default function ProductivityDashboard() {
     refetch,
     dataUpdatedAt,
   } = useQuery({
-    queryKey: ['productivity-realtime'],
-    queryFn: fetchRealtimeData,
+    queryKey: ['productivity-realtime', storeSettings],
+    queryFn: () => fetchRealtimeData(storeSettings),
     staleTime: 25 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchInterval: autoRefresh ? 30 * 1000 : false,
@@ -1042,6 +1324,15 @@ export default function ProductivityDashboard() {
             className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin text-red-800' : ''}`} />
+          </button>
+
+          {/* 店舗設定 */}
+          <button
+            onClick={() => setShowStoreSettings(true)}
+            className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            title="店舗設定（営業時間・定休日）"
+          >
+            <Settings className="h-4 w-4" />
           </button>
 
           {/* ダークモード */}
@@ -1230,6 +1521,17 @@ export default function ProductivityDashboard() {
       {/* 詳細モーダル */}
       {selectedStore && (
         <StoreDetailModal store={selectedStore} onClose={() => setSelectedStore(null)} />
+      )}
+
+      {/* 店舗設定モーダル */}
+      {showStoreSettings && (
+        <StoreHoursSettingsModal
+          onClose={() => setShowStoreSettings(false)}
+          onSave={(newSettings) => {
+            setStoreSettings(newSettings);
+            refetch();
+          }}
+        />
       )}
     </div>
   );

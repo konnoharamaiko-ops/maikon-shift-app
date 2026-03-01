@@ -102,8 +102,18 @@ export default async function handler(req, res) {
     const jobcanUser = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
     const jobcanPass = process.env.JOBCAN_PASSWORD || 'fujita.yog';
 
+    // クエリパラメータから店舗設定を取得（フロントエンドから渡される）
+    let clientStoreSettings = {};
+    if (req.query.store_settings) {
+      try {
+        clientStoreSettings = JSON.parse(decodeURIComponent(req.query.store_settings));
+      } catch (e) {
+        console.warn('[StoreSettings] Failed to parse client store_settings:', e.message);
+      }
+    }
+
     // 並行してデータ取得（Supabase店舗設定も取得）
-    const [salesResult, attendanceResult, storeSettingsResult] = await Promise.allSettled([
+    const [salesResult, attendanceResult, supabaseSettingsResult] = await Promise.allSettled([
       fetchTempoVisorAllData(tempovisorUser, tempovisorPass),
       fetchJobcanAttendance(jobcanCompany, jobcanUser, jobcanPass),
       fetchStoreSettings(),
@@ -111,7 +121,12 @@ export default async function handler(req, res) {
 
     const salesData = salesResult.status === 'fulfilled' ? salesResult.value : { stores: [], hourly: {} };
     const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : { stores: {}, employees: [] };
-    const storeSettings = storeSettingsResult.status === 'fulfilled' ? storeSettingsResult.value : {};
+    const supabaseSettings = supabaseSettingsResult.status === 'fulfilled' ? supabaseSettingsResult.value : {};
+
+    // 店舗設定の優先順位: クライアント設定 > Supabase設定 > デフォルト値
+    // clientStoreSettingsはフロントエンドのlocalStorageから渡される
+    // フォーマット: { '田辺店': { open: 9, close: 19, closed_days: [0], sunday_close: 19 }, ... }
+    const storeSettings = buildStoreSettings(clientStoreSettings, supabaseSettings);
 
     // 店舗ごとに統合（時間帯別人時生産性を含む）
     const storeData = mergeStoreData(salesData.stores, salesData.hourly, attendance.stores, storeSettings);
@@ -125,7 +140,7 @@ export default async function handler(req, res) {
       sources: {
         tempovisor: salesResult.status === 'fulfilled' ? 'live' : `error: ${salesResult.reason?.message}`,
         jobcan: attendanceResult.status === 'fulfilled' ? 'live' : `error: ${attendanceResult.reason?.message}`,
-        store_settings: storeSettingsResult.status === 'fulfilled' ? 'live' : 'default',
+        store_settings: Object.keys(clientStoreSettings).length > 0 ? 'client' : supabaseSettingsResult.status === 'fulfilled' ? 'supabase' : 'default',
       }
     });
 
@@ -136,6 +151,51 @@ export default async function handler(req, res) {
       message: error.message,
     });
   }
+}
+
+/**
+ * クライアント設定・Supabase設定・デフォルト値を統合して店舗設定マップを構築
+ * @param {Object} clientSettings - フロントエンドlocalStorageから渡された設定
+ * @param {Object} supabaseSettings - SupabaseのStoreテーブルから取得した設定
+ * @returns {Object} 統合された店舗設定マップ
+ */
+function buildStoreSettings(clientSettings, supabaseSettings) {
+  // クライアント設定がある場合はそれを優先
+  // フォーマット: { '田辺店': { open: 9, close: 19, closed_days: [0], sunday_close: 19 }, ... }
+  const result = {};
+
+  ALL_STORES.forEach(storeName => {
+    const client = clientSettings[storeName];
+    const supabase = supabaseSettings[storeName];
+
+    if (client) {
+      // クライアント設定をSupabase形式に変換
+      const dayKeys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const businessHours = {};
+
+      dayKeys.forEach((dayKey, dayIndex) => {
+        const isClosed = (client.closed_days || []).includes(dayIndex);
+        if (isClosed) {
+          businessHours[dayKey] = { is_closed: true, open: null, close: null };
+        } else {
+          // 日曜日の特別閉店時間（堺東店など）
+          const closeHour = (dayIndex === 0 && client.sunday_close) ? client.sunday_close : client.close;
+          businessHours[dayKey] = {
+            is_closed: false,
+            open: `${String(client.open).padStart(2, '0')}:00`,
+            close: `${String(closeHour).padStart(2, '0')}:00`,
+          };
+        }
+      });
+
+      result[storeName] = { business_hours: businessHours, temporary_closures: [] };
+    } else if (supabase) {
+      result[storeName] = supabase;
+    }
+    // どちらもない場合はデフォルト値（getBusinessHoursForToday内で処理）
+  });
+
+  return result;
 }
 
 /**
