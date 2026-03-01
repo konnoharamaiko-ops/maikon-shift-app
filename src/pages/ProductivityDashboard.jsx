@@ -186,6 +186,7 @@ async function fetchRealtimeData(storeSettings) {
     stores: transformStoreData(result.data || []),
     sources: result.sources || {},
     timestamp: result.timestamp,
+    employeeProductivity: result.employee_productivity || [],
   };
 }
 
@@ -975,6 +976,227 @@ function AllStoresHourlyChart({ stores }) {
   );
 }
 
+// ===== スタッフ設定モーダル =====
+const STAFF_SETTINGS_KEY = 'maikon_staff_settings';
+
+function loadStaffSettings() {
+  try {
+    const saved = localStorage.getItem(STAFF_SETTINGS_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return {};
+}
+
+function saveStaffSettings(settings) {
+  try {
+    localStorage.setItem(STAFF_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (e) {}
+}
+
+function StaffSettingsModal({ onClose, onSave }) {
+  const [staffSettings, setStaffSettings] = useState(() => loadStaffSettings());
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [staffList, setStaffList] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Supabaseからスタッフマスタを取得
+  useEffect(() => {
+    fetch('/api/productivity/realtime?staff_only=1')
+      .then(r => r.json())
+      .then(data => {
+        // スタッフマスタが存在する場合はそちらを使用
+        if (data.staff_master && data.staff_master.length > 0) {
+          setStaffList(data.staff_master);
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  // ジョブカンからスタッフ情報を同期
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch('/api/productivity/sync-staff');
+      const data = await res.json();
+      if (data.success) {
+        setSyncResult({ success: true, message: data.message });
+        setStaffList(data.staff || []);
+      } else {
+        setSyncResult({ success: false, message: data.message || '同期に失敗しました' });
+      }
+    } catch (e) {
+      setSyncResult({ success: false, message: '同期中にエラーが発生しました' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const updateStaffSetting = (staffId, key, value) => {
+    setStaffSettings(prev => ({
+      ...prev,
+      [staffId]: { ...prev[staffId], [key]: value },
+    }));
+  };
+
+  const handleSave = () => {
+    saveStaffSettings(staffSettings);
+    onSave(staffSettings);
+    onClose();
+  };
+
+  // 社員のみフィルタリング
+  const employeeList = staffList.filter(s =>
+    s.staff_type === '社員' || s.staff_type === '契約社員' || s.staff_type === '役員'
+  );
+
+  const timeOptions = Array.from({ length: 24 }, (_, i) => {
+    const h = String(i).padStart(2, '0');
+    return [`${h}:00`, `${h}:30`];
+  }).flat();
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+        onClick={e => e.target === e.currentTarget && onClose()}
+      >
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0, y: 20 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.95, opacity: 0, y: 20 }}
+          className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+        >
+          {/* ヘッダー */}
+          <div className="flex items-center justify-between p-5 border-b dark:border-gray-700 bg-gradient-to-r from-red-800 to-red-600">
+            <div className="flex items-center gap-3">
+              <Users className="h-5 w-5 text-white" />
+              <h2 className="text-lg font-bold text-white">社員接客時間帯設定</h2>
+            </div>
+            <button onClick={onClose} className="text-white/80 hover:text-white transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* コンテンツ */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            {/* 同期ボタン */}
+            <div className="bg-blue-50 dark:bg-blue-950/20 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-blue-800 dark:text-blue-300">ジョブカンからスタッフ情報を同期</h3>
+                  <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">ジョブカンのスタッフ詳細からスタッフ種別（社員/パート等）を取得してSupabaseに保存します。初回セットアップ時またはスタッフ変更時に実行してください。</p>
+                </div>
+                <button
+                  onClick={handleSync}
+                  disabled={syncing}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                >
+                  <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+                  {syncing ? '同期中...' : 'スタッフ情報を同期'}
+                </button>
+              </div>
+              {syncResult && (
+                <div className={`mt-3 text-xs px-3 py-2 rounded-lg ${syncResult.success ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                  {syncResult.message}
+                </div>
+              )}
+            </div>
+
+            {/* 社員一覧と接客時間帯設定 */}
+            <div>
+              <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
+                <Briefcase className="h-4 w-4 text-red-800 dark:text-red-400" />
+                社員の店舗接客時間帯設定
+              </h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                設定した時間帯のみ店舗の人時生産性に反映されます。それ以外の時間は社員個人の生産性として計算されます。
+              </p>
+
+              {loading ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">スタッフ情報を読み込み中...</div>
+              ) : employeeList.length === 0 ? (
+                <div className="text-center py-8 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                  <Users className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm text-muted-foreground">社員情報がありません</p>
+                  <p className="text-xs text-muted-foreground mt-1">上の「スタッフ情報を同期」ボタンを押してください</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {employeeList.map(staff => {
+                    const setting = staffSettings[staff.id] || {};
+                    return (
+                      <div key={staff.id} className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <p className="font-bold text-sm">{staff.staff_name}</p>
+                            <p className="text-xs text-muted-foreground">{staff.store_name || staff.dept_code || ''} ・ {staff.staff_type}</p>
+                          </div>
+                          <span className="text-xs px-2 py-1 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 font-semibold">社員</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs text-muted-foreground block mb-1">接客開始</label>
+                            <select
+                              value={setting.service_start || ''}
+                              onChange={e => updateStaffSetting(staff.id, 'service_start', e.target.value)}
+                              className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+                            >
+                              <option value="">未設定（全時間帯）</option>
+                              {timeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-xs text-muted-foreground block mb-1">接客終了</label>
+                            <select
+                              value={setting.service_end || ''}
+                              onChange={e => updateStaffSetting(staff.id, 'service_end', e.target.value)}
+                              className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+                            >
+                              <option value="">未設定（全時間帯）</option>
+                              {timeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        {setting.service_start && setting.service_end && (
+                          <p className="text-xs text-green-600 dark:text-green-400 mt-2">
+                            ✓ 店舗接客: {setting.service_start} 〜 {setting.service_end}（それ以外は社員個人業務）
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* フッター */}
+          <div className="flex items-center justify-end gap-2 p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl border dark:border-gray-600 text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={handleSave}
+              className="px-5 py-2 rounded-xl bg-gradient-to-r from-red-800 to-red-600 text-white text-sm font-bold hover:opacity-90 transition-opacity shadow-md"
+            >
+              保存して反映
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
 // ===== 店舗設定モーダル =====
 function StoreHoursSettingsModal({ onClose, onSave }) {
   const [settings, setSettings] = useState(() => loadStoreSettings());
@@ -1212,6 +1434,7 @@ export default function ProductivityDashboard() {
   const [countdown, setCountdown] = useState(30);
   const [showClosedStores, setShowClosedStores] = useState(false);
   const [showStoreSettings, setShowStoreSettings] = useState(false);
+  const [showStaffSettings, setShowStaffSettings] = useState(false);
   const [storeSettings, setStoreSettings] = useState(() => loadStoreSettings());
 
   const {
@@ -1246,6 +1469,7 @@ export default function ProductivityDashboard() {
 
   const stores = queryData?.stores || [];
   const sources = queryData?.sources || {};
+  const employeeProductivity = queryData?.employeeProductivity || [];
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
   const isLive = sources.tempovisor === 'live' || sources.jobcan === 'live';
   const summary = calcSummary(stores);
@@ -1333,6 +1557,15 @@ export default function ProductivityDashboard() {
             title="店舗設定（営業時間・定休日）"
           >
             <Settings className="h-4 w-4" />
+          </button>
+
+          {/* スタッフ設定 */}
+          <button
+            onClick={() => setShowStaffSettings(true)}
+            className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            title="社員接客時間帯設定"
+          >
+            <Briefcase className="h-4 w-4" />
           </button>
 
           {/* ダークモード */}
@@ -1518,6 +1751,77 @@ export default function ProductivityDashboard() {
         </div>
       )}
 
+      {/* 社員個人生産性セクション */}
+      {employeeProductivity.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
+            <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-700 to-blue-500">
+              <Briefcase className="h-4 w-4 text-white" />
+            </div>
+            社員個人生産性
+          </h2>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {employeeProductivity.map((emp, i) => (
+              <motion.div
+                key={emp.name}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.05 }}
+                className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <p className="font-bold text-sm">{emp.name}</p>
+                    <p className="text-xs text-muted-foreground">{emp.store_name}</p>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                    emp.status === '勤務中' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
+                    emp.status === '休憩中' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' :
+                    'bg-gray-100 dark:bg-gray-700 text-muted-foreground'
+                  }`}>
+                    {emp.status}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">総勤務時間</span>
+                    <span className="font-semibold">{emp.total_work_hours?.toFixed(1)}h</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-green-600 dark:text-green-400">店舗接客時間</span>
+                    <span className="font-semibold text-green-600 dark:text-green-400">{emp.service_hours?.toFixed(1)}h</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-blue-600 dark:text-blue-400">社員業務時間</span>
+                    <span className="font-semibold text-blue-600 dark:text-blue-400">{emp.non_service_hours?.toFixed(1)}h</span>
+                  </div>
+                  {/* 時間帯バー */}
+                  <div className="mt-2">
+                    <div className="flex rounded-full overflow-hidden h-2 bg-gray-100 dark:bg-gray-700">
+                      {emp.total_work_hours > 0 && (
+                        <>
+                          <div
+                            className="bg-green-500 transition-all"
+                            style={{ width: `${Math.round((emp.service_hours / emp.total_work_hours) * 100)}%` }}
+                          />
+                          <div
+                            className="bg-blue-500 transition-all"
+                            style={{ width: `${Math.round((emp.non_service_hours / emp.total_work_hours) * 100)}%` }}
+                          />
+                        </>
+                      )}
+                    </div>
+                    <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                      <span>接客 {emp.service_start}〜{emp.service_end}</span>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 詳細モーダル */}
       {selectedStore && (
         <StoreDetailModal store={selectedStore} onClose={() => setSelectedStore(null)} />
@@ -1529,6 +1833,16 @@ export default function ProductivityDashboard() {
           onClose={() => setShowStoreSettings(false)}
           onSave={(newSettings) => {
             setStoreSettings(newSettings);
+            refetch();
+          }}
+        />
+      )}
+
+      {/* スタッフ設定モーダル */}
+      {showStaffSettings && (
+        <StaffSettingsModal
+          onClose={() => setShowStaffSettings(false)}
+          onSave={(newStaffSettings) => {
             refetch();
           }}
         />
