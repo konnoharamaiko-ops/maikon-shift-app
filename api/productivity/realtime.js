@@ -401,10 +401,17 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   });
 
   // TempoVisorのHTMLはShift-JIS（cp932）エンコーディング
+  console.log('[TV] HTTP status:', hourlyRes.status, hourlyRes.statusText);
   const hourlyBuffer = await hourlyRes.arrayBuffer();
   const hourlyHtml = iconv.decode(Buffer.from(hourlyBuffer), 'cp932');
 
+  // デバッグ: HTMLの最初の500文字と全テーブル数をログ出力
+  console.log('[TV] HTML length:', hourlyHtml.length);
+  console.log('[TV] HTML preview:', hourlyHtml.substring(0, 500));
+
   const $hourly = cheerio.load(hourlyHtml);
+  const tableCount = $hourly('table').length;
+  console.log('[TV] Total tables found:', tableCount);
 
   const storeHourly = {};
   const storeSales = [];
