@@ -59,6 +59,7 @@
     "embla-carousel-react": "^8.5.2",
     "framer-motion": "^11.16.4",
     "html2canvas": "^1.4.1",
+    "iconv-lite": "^0.7.2",
     "input-otp": "^1.4.2",
     "jspdf": "^4.1.0",
     "lodash": "^4.17.21",
