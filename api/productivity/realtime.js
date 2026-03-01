@@ -862,14 +862,17 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
 
   // 現在時刻より後の時間帯は表示しない（現在進行中のスロットまで表示）
   // currentHour=18の場合、表示最大は18時台（18:00～19:00）
-  const safeMaxHour = Math.min(rawMaxHour, currentHour);
+  // TempoVisorのデータ範囲と現在時刻の小さい方を採用するが、
+  // 現在時刻の時間帯は売上¥0でも必ず表示する（人時計算のため）
+  const safeMaxHour = currentHour;
 
   for (let hour = safeMinHour; hour <= safeMaxHour; hour++) {
     // この時間帯が営業時間内かどうか
     const isBusinessHour = hour >= businessHours.open && hour < businessHours.close;
 
     // 営業時間外かつ売上もない時間帯はスキップ
-    if (!isBusinessHour && (hourly[hour] === undefined || hourly[hour] === 0)) {
+    // ただし現在進行中の時間帯（hour === currentHour）は必ず表示
+    if (hour !== currentHour && !isBusinessHour && (hourly[hour] === undefined || hourly[hour] === 0)) {
       continue;
     }
 
