@@ -987,6 +987,84 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     throw new Error(`Jobcan login failed: ${location}`);
   }
 
+  // ===== 出勤簿ページから staffId → シフトグループ（店舗コード）マッピングを取得 =====
+  // 出勤簿の select[id^="group_"] の選択値（option#0）が今日のシフトグループ（実際の勤務店舗）
+  const staffShiftGroupMap = {}; // staffId → { deptCode, storeName }
+
+  // 出勤簿ページは1ページ30件。全ページを取得（最大8ページ = 240件）
+  const today = new Date();
+  const jstToday = new Date(today.getTime() + 9 * 60 * 60 * 1000);
+  const todayStr = `${jstToday.getUTCFullYear()}-${String(jstToday.getUTCMonth() + 1).padStart(2, '0')}-${String(jstToday.getUTCDate()).padStart(2, '0')}`;
+
+  // まず1ページ目を取得して総件数を確認
+  const attendPage1Url = `https://ssl.jobcan.jp/client/adit-manage/?search_type=day&target_date=${todayStr}&number_par_page=30&page=1`;
+  const attendPage1Res = await fetch(attendPage1Url, {
+    headers: {
+      'Cookie': allCookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://ssl.jobcan.jp/client/',
+    },
+    redirect: 'follow',
+  });
+  const attendPage1Html = await attendPage1Res.text();
+  const $attend1 = cheerio.load(attendPage1Html);
+
+  // 総件数を取得（例: "174件中1〜30件表示"）
+  const totalCountMatch = attendPage1Html.match(/(\d+)件中/);
+  const totalCount = totalCountMatch ? parseInt(totalCountMatch[1]) : 30;
+  const totalPages = Math.ceil(totalCount / 30);
+  console.log(`[JC] 出勤簿: 総${totalCount}件, ${totalPages}ページ`);
+
+  // 1ページ目のselect要素を処理
+  const parseAttendPage = ($page) => {
+    $page('select[id^="group_"]').each((_, sel) => {
+      const selId = $page(sel).attr('id') || '';
+      const parts = selId.split('_');
+      if (parts.length < 2) return;
+      const staffId = parts[1];
+      if (!staffId || isNaN(parseInt(staffId))) return;
+      // 選択中のoption（index 0 = デフォルト選択 = 今日のシフトグループ）
+      const firstOption = $page(sel).find('option').first();
+      const groupText = firstOption.text().trim();
+      const groupMatch = groupText.match(/^(\d{5})\s+(.+)$/);
+      if (groupMatch) {
+        const code = groupMatch[1];
+        const name = groupMatch[2];
+        const mappedStore = STORE_DEPT_MAP[code];
+        if (mappedStore) {
+          staffShiftGroupMap[staffId] = { deptCode: code, storeName: mappedStore };
+        }
+      }
+    });
+  };
+
+  parseAttendPage($attend1);
+
+  // 2ページ目以降を並列取得
+  if (totalPages > 1) {
+    const pagePromises = [];
+    for (let p = 2; p <= Math.min(totalPages, 8); p++) {
+      const pageUrl = `https://ssl.jobcan.jp/client/adit-manage/?search_type=day&target_date=${todayStr}&number_par_page=30&page=${p}`;
+      pagePromises.push(
+        fetch(pageUrl, {
+          headers: {
+            'Cookie': allCookies,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://ssl.jobcan.jp/client/',
+          },
+          redirect: 'follow',
+        }).then(r => r.text()).then(html => {
+          const $p = cheerio.load(html);
+          parseAttendPage($p);
+        })
+      );
+    }
+    await Promise.all(pagePromises);
+  }
+
+  console.log(`[JC] シフトグループマッピング取得: ${Object.keys(staffShiftGroupMap).length}件`);
+
+  // ===== 勤務状況一覧ページを取得 =====
   const workUrl = 'https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=300&retirement=work';
   const workRes = await fetch(workUrl, {
     headers: {
@@ -1026,7 +1104,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const staffCell = $work(cells[0]).text().trim().replace(/\s+/g, ' ');
     if (!staffCell) continue;
 
-    // 部署コードを取得
+    // 部署コードを取得（所属店舗）
     const deptMatch = staffCell.match(/(\d{5})\s/);
     if (!deptMatch) continue;
 
@@ -1038,13 +1116,21 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const nameMatch = staffCell.match(/^(.+?)\s*\d{5}/);
     const staffName = nameMatch ? nameMatch[1].replace(/\xa0/g, ' ').trim() : staffCell.split(/\d{5}/)[0].trim();
 
-    // 打刻場所を取得（例: 店1018->かがや店 → かがや店、駅催事出張->駅丸 → エキマル）
-    // 「->」の右側が打刻場所名（店舗タイプに関わらず対応）
+    // スタッフIDをリンクhrefから取得（例: /client/edit-employee?employee_id=701 → "701"）
+    const staffLink = $work(cells[0]).find('a').attr('href') || '';
+    const staffIdMatch = staffLink.match(/employee_id=(\d+)/);
+    const staffId = staffIdMatch ? staffIdMatch[1] : null;
+
+    // シフトグループ（今日の実際の勤務店舗）を出勤簿マッピングから取得
+    const shiftGroup = staffId ? staffShiftGroupMap[staffId] : null;
+    const shiftStoreName = shiftGroup ? shiftGroup.storeName : null;
+
+    // 打刻場所（GPS）も引き続き取得（ログ用）
     const locationMatch = staffCell.match(/->(.+)$/);
     const rawLocation = locationMatch ? locationMatch[1].trim() : null;
     const clockLocation = rawLocation ? (LOCATION_TO_STORE_MAP[rawLocation] || null) : null;
-    if (rawLocation) {
-      console.log(`[JC] ${staffName}: staffCell=${JSON.stringify(staffCell)}, rawLocation=${rawLocation}, clockLocation=${clockLocation}`);
+    if (staffId) {
+      console.log(`[JC] ${staffName}(id=${staffId}): 所属=${deptStoreName}, シフトグループ=${shiftStoreName || 'なし'}, GPS打刻=${clockLocation || 'なし'}`);
     }
 
     // 出勤状況
@@ -1097,12 +1183,9 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const netHours = parseFloat((netMinutes / 60).toFixed(2));
 
     // 振り分け先の店舗を決定
-    // - 勤務中・休憩中・退勤済み：打刻場所があればその店舗に振り分け（掛け持ち・店舗間移動対応）
-    // - 打刻場所なし・未出勤：所属店舗に振り分け
-    let assignedStore = deptStoreName;
-    if ((status === '勤務中' || status === '休憩中' || status === '退勤済み') && clockLocation) {
-      assignedStore = clockLocation;
-    }
+    // 優先順位: シフトグループ（出勤簿の所属グループ）> 所属部署コード
+    // シフトグループ = 今日実際に入っているシフトの店舗（掛け持ち・ヘルプ対応）
+    let assignedStore = shiftStoreName || deptStoreName;
 
     const employee = {
       name: staffName,
