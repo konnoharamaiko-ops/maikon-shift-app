@@ -874,12 +874,21 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
 
       // 更新時刻（最終レジ稼働時間）を取得
       const updateTimeStr = updateTimes[storeName] || '';
-      // 更新時刻から時間・分を取得（例: "03/01 18:46" → hour=18, min=46）
-      const updateTimeMatch = updateTimeStr.match(/(\d{2}):(\d{2})$/);
-      const lastActiveHour = updateTimeMatch ? parseInt(updateTimeMatch[1]) : null;
+      // 更新時刻から日付・時間・分を取得（例: "03/01 18:46" → date="03/01", hour=18, min=46）
+      const updateTimeMatch = updateTimeStr.match(/^(\d{2}\/\d{2})\s+(\d{2}):(\d{2})$/);
+      const lastActiveHour = updateTimeMatch ? parseInt(updateTimeMatch[2]) : null;
+      const updateDateStr = updateTimeMatch ? updateTimeMatch[1] : null;
 
       // 更新時刻が取得できない場合はスキップ
       if (lastActiveHour === null) continue;
+
+      // 更新時刻の日付が今日でない場合はスキップ（昨日以前のデータは補完不要）
+      // todayStr は "YYYY/MM/DD" 形式なので MM/DD 部分を抽出して比較
+      const todayMMDD = todayStr.slice(5).replace('-', '/'); // "YYYY/MM/DD" → "MM/DD"
+      if (updateDateStr !== todayMMDD) {
+        console.log(`[TV] ${storeName}: 更新日付が今日ではないためスキップ (${updateDateStr} !== ${todayMMDD})`);
+        continue;
+      }
 
       const storeDefaultHours = DEFAULT_BUSINESS_HOURS[storeName] || { open: 10, close: 18 };
       const closeHour = storeDefaultHours.close;
@@ -898,12 +907,11 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       // openHour 条件は不要（lastActiveHour 条件でカバー済み）。
 
       hourColumns.forEach(({ colIndex, hour: tomorrowHour }) => {
-        // 翌日の対象範囲：レジ締め時間帯〜閉店時間-1
+        // 翌日の対象範囲：レジ締め時間帯〜閉店時間（含む）
+        // 例： lastActiveHour=19, closeHour=19 → 19時帯も補完対象
         if (tomorrowHour < lastActiveHour) return; // レジ締め前の時間帯はスキップ
-        if (tomorrowHour >= closeHour) return;      // 閉店時間以降はスキップ
-        // 翌日の開店時間が lastActiveHour より後の場合（異常ケース）は除外
-        // 通常は openHour < lastActiveHour なのでこの条件は発動しない
-        if (openHour > lastActiveHour && tomorrowHour >= openHour) return;
+        if (tomorrowHour > closeHour) return;       // 閉店時間より後はスキップ（閉店時間帯は含む）
+        // 翌日の開店時間は lastActiveHour より小さいため、上記の tomorrowHour < lastActiveHour で既に除外済み
 
         const salesText = $tomorrow(cells[colIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
