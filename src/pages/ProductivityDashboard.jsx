@@ -520,7 +520,7 @@ function StoreDetailModal({ store, onClose }) {
           animate={{ opacity: 1 }}
         />
         <motion.div
-          className="relative bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[88vh] overflow-hidden flex flex-col"
+          className="relative bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[88vh] sm:max-h-[88vh] overflow-hidden flex flex-col pb-safe"
           initial={{ y: '100%', scale: 0.95 }}
           animate={{ y: 0, scale: 1 }}
           exit={{ y: '100%', scale: 0.95 }}

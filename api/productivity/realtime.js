@@ -129,7 +129,7 @@ export default async function handler(req, res) {
       fetchStaffMaster(),
     ]);
 
-    const salesData = salesResult.status === 'fulfilled' ? salesResult.value : { stores: [], hourly: {} };
+    const salesData = salesResult.status === 'fulfilled' ? salesResult.value : { stores: [], hourly: {}, yesterdayStores: [], yesterdayHourly: {} };
     const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : { stores: {}, employees: [] };
     const supabaseSettings = supabaseSettingsResult.status === 'fulfilled' ? supabaseSettingsResult.value : {};
     const staffMaster = staffMasterResult.status === 'fulfilled' ? staffMasterResult.value : [];
@@ -147,7 +147,14 @@ export default async function handler(req, res) {
     const adjustedAttendance = rebuildAttendanceWithServiceHours(attendance.stores, storeEmployees);
 
     // 店舗ごとに統合（時間帯別人時生産性を含む）
-    const storeData = mergeStoreData(salesData.stores, salesData.hourly, adjustedAttendance, storeSettings);
+    const storeData = mergeStoreData(
+      salesData.stores,
+      salesData.hourly,
+      adjustedAttendance,
+      storeSettings,
+      salesData.yesterdayStores || [],
+      salesData.yesterdayHourly || {}
+    );
 
     return res.status(200).json({
       success: true,
@@ -723,6 +730,27 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   const hourlyHtml = iconv.decode(Buffer.from(hourlyBuffer), 'cp932');
   console.log('[TV] HTML length:', hourlyHtml.length);
 
+  // 前日のデータも取得（閉店後〜翌日最初の出勤前まで前日売上を表示するため）
+  const jstYesterday = new Date(jstNow.getTime() - 24 * 60 * 60 * 1000);
+  const yyyyy = jstYesterday.getUTCFullYear();
+  const ymm = String(jstYesterday.getUTCMonth() + 1).padStart(2, '0');
+  const ydd = String(jstYesterday.getUTCDate()).padStart(2, '0');
+  const yesterdayStr = `${yyyyy}/${ymm}/${ydd}`;
+
+  const yesterdayRes = await fetch(hourlyUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': cookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': repBaseUrl,
+    },
+    body: makePostBody(yesterdayStr).toString(),
+  });
+  const yesterdayBuffer = await yesterdayRes.arrayBuffer();
+  const yesterdayHtml = iconv.decode(Buffer.from(yesterdayBuffer), 'cp932');
+  console.log('[TV] Yesterday HTML length:', yesterdayHtml.length);
+
   // 翌日のデータも取得（レジ締め後の売上補完のため）
   const jstTomorrow = new Date(jstNow.getTime() + 24 * 60 * 60 * 1000);
   const tyyyy = jstTomorrow.getUTCFullYear();
@@ -925,7 +953,71 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   console.log(`[TV] Total stores parsed: ${storeSales.length}`);
   console.log(`[TV] storeHourly keys: ${Object.keys(storeHourly).join(', ')}`);
   console.log(`[TV] storeSales names: ${storeSales.map(s => s.store_name).join(', ')}`);
-  return { stores: storeSales, hourly: storeHourly };
+
+  // 前日データを解析（閉店後〜翌日最初の出勤前まで表示するため）
+  const yesterdayStores = [];
+  const yesterdayHourly = {};
+  const $yesterday = cheerio.load(yesterdayHtml);
+  $yesterday('table').each((tableIdx, table) => {
+    const rows = $yesterday(table).find('tr').toArray();
+    if (rows.length < 2) return;
+    const headerCells = $yesterday(rows[0]).find('td,th').toArray();
+    if (headerCells.length < 3) return;
+    const firstHeaderText = $yesterday(headerCells[0]).text().trim();
+    const secondHeaderText = headerCells.length > 1 ? $yesterday(headerCells[1]).text().trim() : '';
+    const isHourlyTable = firstHeaderText === '店舗名' ||
+      (firstHeaderText.length > 0 && firstHeaderText !== '合計' && secondHeaderText.match(/\d{1,2}:00/));
+    if (!isHourlyTable) return;
+
+    const hourColumns = [];
+    let totalColIndex = -1;
+    headerCells.forEach((cell, idx) => {
+      if (idx === 0) return;
+      const cellText = $yesterday(cell).text().trim();
+      const hourMatch = cellText.match(/^(\d{1,2})[::]/);
+      if (hourMatch) hourColumns.push({ colIndex: idx, hour: parseInt(hourMatch[1]) });
+      else if (cellText === '合計' || cellText === '計') totalColIndex = idx;
+    });
+    if (hourColumns.length === 0) return;
+
+    for (let r = 1; r < rows.length; r++) {
+      const cells = $yesterday(rows[r]).find('td,th').toArray();
+      if (cells.length < 2) continue;
+      const storeName = $yesterday(cells[0]).text().trim();
+      if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
+
+      const hourly = {};
+      hourColumns.forEach(({ colIndex, hour }) => {
+        if (colIndex >= cells.length) return;
+        const salesText = $yesterday(cells[colIndex]).text().trim()
+          .replace(/[\\\u00a5,]/g, '')
+          .replace(/[^\d-]/g, '');
+        hourly[hour] = parseInt(salesText) || 0;
+      });
+
+      let todaySales = 0;
+      if (totalColIndex >= 0 && totalColIndex < cells.length) {
+        const totalText = $yesterday(cells[totalColIndex]).text().trim()
+          .replace(/[\\\u00a5,]/g, '')
+          .replace(/[^\d-]/g, '');
+        todaySales = parseInt(totalText) || 0;
+      } else {
+        todaySales = Object.values(hourly).reduce((sum, v) => sum + v, 0);
+      }
+
+      yesterdayHourly[storeName] = hourly;
+      yesterdayStores.push({
+        store_name: storeName,
+        store_code: TEMPOVISOR_STORE_CODES[storeName],
+        today_sales: todaySales,
+        monthly_sales: 0,
+        update_time: updateTimes[storeName] || '',
+      });
+    }
+  });
+  console.log(`[TV] Yesterday stores parsed: ${yesterdayStores.length}`);
+
+  return { stores: storeSales, hourly: storeHourly, yesterdayStores, yesterdayHourly };
 }
 
 /**
@@ -1229,7 +1321,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
  * 売上データ・時間別売上・勤怠データを統合
  * 時間帯別人時生産性を計算して返す
  */
-function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}) {
+function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yesterdaySales = [], yesterdayHourlyData = {}) {
   // 現在の日本時間（Vercel環境はUTCなのでgetUTCHours/getUTCMinutesを使用）
   const now = new Date();
   // UTC時刻に9時間を加算してJST時刻を表すDateオブジェクトを作成
@@ -1240,14 +1332,7 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}) {
   const jstDateStr = `${jstNow.getUTCFullYear()}-${String(jstNow.getUTCMonth() + 1).padStart(2, '0')}-${String(jstNow.getUTCDate()).padStart(2, '0')}`;
 
   return ALL_STORES.map(storeName => {
-    const salesInfo = sales.find(s => s.store_name === storeName) || {
-      store_code: TEMPOVISOR_STORE_CODES[storeName] || '',
-      store_name: storeName,
-      today_sales: 0,
-      monthly_sales: 0,
-      update_time: '',
-    };
-
+    const todaySalesInfo = sales.find(s => s.store_name === storeName);
     const attendInfo = attendance[storeName] || {
       store_name: storeName,
       total_employees: 0,
@@ -1266,7 +1351,32 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}) {
     // 臨時休業日チェック
     const isClosed = businessHours.is_closed || isTemporaryClosure(storeName, storeSettings, jstDateStr);
 
-    const hourly = hourlyData[storeName] || {};
+    // 前日データフォールバック判定：
+    // 今日の売上が0かつ出勤者が0（閉店後〜翌日最初の出勤前）の場合は前日データを表示
+    // 翌日最初の従業員が出勤したら今日のデータに切り替え
+    const todayTotalSales = todaySalesInfo ? todaySalesInfo.today_sales : 0;
+    const todayAttended = attendInfo.attended_employees || 0;
+    const useYesterday = todayTotalSales === 0 && todayAttended === 0;
+
+    const salesInfo = useYesterday
+      ? (yesterdaySales.find(s => s.store_name === storeName) || {
+          store_code: TEMPOVISOR_STORE_CODES[storeName] || '',
+          store_name: storeName,
+          today_sales: 0,
+          monthly_sales: 0,
+          update_time: '',
+        })
+      : (todaySalesInfo || {
+          store_code: TEMPOVISOR_STORE_CODES[storeName] || '',
+          store_name: storeName,
+          today_sales: 0,
+          monthly_sales: 0,
+          update_time: '',
+        });
+
+    const hourly = useYesterday
+      ? (yesterdayHourlyData[storeName] || {})
+      : (hourlyData[storeName] || {});
 
     // 時間帯別人時生産性を計算
     const hourlyProductivity = isClosed ? [] : calculateHourlyProductivity(
@@ -1297,6 +1407,7 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}) {
       hourly_productivity: hourlyProductivity,  // 時間帯別人時生産性
       business_hours: businessHours,
       is_closed: isClosed,
+      is_yesterday_data: useYesterday,  // 前日データを使用中かどうか（フロントエンド表示用）
     };
   });
 }
