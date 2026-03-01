@@ -926,13 +926,16 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         const sales = parseInt(salesText) || 0;
         if (sales <= 0) return;
 
-        // 今日の同じ時間帯に加算（翌日16時台 → 今日16時台）
+        // 今日の同じ時間帯を翌日の値で上書き（二重計上を防ぐため今日の値を差し引いてから翌日の値を加算）
+        // 理由：レジ締め後の売上は翌日に計上されるが、今日のデータにも同時間帯の売上が既に含まれている
         if (storeHourly[storeName]) {
-          storeHourly[storeName][tomorrowHour] = (storeHourly[storeName][tomorrowHour] || 0) + sales;
-          // 日次売上合計も更新
+          const todaySales = storeHourly[storeName][tomorrowHour] || 0;
+          // 日次売上合計から今日の同時間帯の売上を引いてから翌日の値を加算
           const saleEntry = storeSales.find(s => s.store_name === storeName);
-          if (saleEntry) saleEntry.today_sales += sales;
-          console.log(`[TV] ${storeName}: レジ締め補完 翌日${tomorrowHour}時台→今日${tomorrowHour}時台 +${sales}円`);
+          if (saleEntry) saleEntry.today_sales = saleEntry.today_sales - todaySales + sales;
+          // 時間帯別売上を翌日の値で上書き
+          storeHourly[storeName][tomorrowHour] = sales;
+          console.log(`[TV] ${storeName}: レジ締め補完 翌日${tomorrowHour}時台→今日${tomorrowHour}時台 今日${todaySales}円→翌日${sales}円（差分${sales - todaySales}円）`);
         }
       });
     }
