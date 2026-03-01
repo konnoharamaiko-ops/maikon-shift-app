@@ -889,8 +889,9 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     if (tableClass.includes('nlist') || secondHeaderText.includes(':00')) {
       console.log(`[TV] 翌日 Table ${tableIdx} class="${tableClass}" firstHeader="${firstHeaderText}" (len=${firstHeaderText.length}) secondHeader="${secondHeaderText}"`);
     }
+    // firstHeaderが空('')または'店舗名'の場合、かつ2列目が時刻形式ならhourlyテーブルと判定
     const isHourlyTable = firstHeaderText === '店舗名' ||
-      (firstHeaderText.length > 0 && firstHeaderText !== '合計' && secondHeaderText.match(/\d{1,2}:00/));
+      (firstHeaderText !== '合計' && secondHeaderText.match(/\d{1,2}:00/));
     if (!isHourlyTable) return;
 
     const hourColumns = [];
@@ -1130,44 +1131,44 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
   const today = new Date();
   const jstToday = new Date(today.getTime() + 9 * 60 * 60 * 1000);
 
-  // バッチサイズ20で並行取得（Vercelの60秒タイムアウト対策）
-  const stampBatchSize = 20;
-  for (let b = 0; b < staffIdList.length; b += stampBatchSize) {
-    const batch = staffIdList.slice(b, b + stampBatchSize);
-    const batchResults = await Promise.allSettled(
-      batch.map(async (empId) => {
-        const aditUrl = `https://ssl.jobcan.jp/client/adit/?employee_id=${empId}&year=${jstToday.getUTCFullYear()}&month=${jstToday.getUTCMonth() + 1}&day=${jstToday.getUTCDate()}`;
-        const aditRes = await fetch(aditUrl, {
-          headers: {
-            'Cookie': allCookies,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://ssl.jobcan.jp/client/',
-          },
-          redirect: 'follow',
-        });
-        const aditHtml = await aditRes.text();
-        const $adit = cheerio.load(aditHtml);
-        // 打刻場所を取得: select[id^="change_group_id"] option[selected]
-        // HTMLソースに selected="selected" 属性が含まれる（ブラウザのJSで動的生成ではなく、サーバーサイドで出力）
-        let stampCode = null;
-        $adit('select[id^="change_group_id"]').each((idx, sel) => {
-          if (stampCode) return; // 最初の打刻場所のみ使用
-          // option[selected] を使用（HTMLソースに selected="selected" 属性あり）
-          const selectedOption = $adit(sel).find('option[selected]');
-          const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
-          if (targetOption.length > 0) {
-            const optText = targetOption.text().trim();
-            const codeMatch = optText.match(/^(\d{5})/);
-            if (codeMatch) stampCode = codeMatch[1];
-          }
-        });
-        return { empId, stampCode };
-      })
-    );
-    for (const result of batchResults) {
-      if (result.status === 'fulfilled' && result.value.stampCode) {
-        stampPlaceMap[result.value.empId] = result.value.stampCode;
-      }
+  // 全員同時並行取得（タイムアウト5秒で高速化）
+  const fetchWithTimeout = (url, options, timeoutMs = 5000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+      .finally(() => clearTimeout(timer));
+  };
+
+  const allStampResults = await Promise.allSettled(
+    staffIdList.map(async (empId) => {
+      const aditUrl = `https://ssl.jobcan.jp/client/adit/?employee_id=${empId}&year=${jstToday.getUTCFullYear()}&month=${jstToday.getUTCMonth() + 1}&day=${jstToday.getUTCDate()}`;
+      const aditRes = await fetchWithTimeout(aditUrl, {
+        headers: {
+          'Cookie': allCookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://ssl.jobcan.jp/client/',
+        },
+        redirect: 'follow',
+      }, 5000);
+      const aditHtml = await aditRes.text();
+      const $adit = cheerio.load(aditHtml);
+      let stampCode = null;
+      $adit('select[id^="change_group_id"]').each((idx, sel) => {
+        if (stampCode) return;
+        const selectedOption = $adit(sel).find('option[selected]');
+        const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
+        if (targetOption.length > 0) {
+          const optText = targetOption.text().trim();
+          const codeMatch = optText.match(/^(\d{5})/);
+          if (codeMatch) stampCode = codeMatch[1];
+        }
+      });
+      return { empId, stampCode };
+    })
+  );
+  for (const result of allStampResults) {
+    if (result.status === 'fulfilled' && result.value.stampCode) {
+      stampPlaceMap[result.value.empId] = result.value.stampCode;
     }
   }
   console.log(`[JC] 打刻場所マッピング取得: ${Object.keys(stampPlaceMap).length}件`);
