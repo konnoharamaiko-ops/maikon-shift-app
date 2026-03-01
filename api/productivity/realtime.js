@@ -23,6 +23,25 @@ const STORE_DEPT_MAP = {
   '20000': '美和堂FC店',
 };
 
+// 打刻場所名 → システム店舗名のマッピング
+// ジョブカンの打刻場所名とシステム上の店舗名が異なる場合に使用
+const LOCATION_TO_STORE_MAP = {
+  'かがや店':           'かがや店',
+  'アベノ店':           'アベノ店',
+  '美和堂福島':         '美和堂FC店',
+  '田辺店':             '田辺店',
+  'イオンタウン松原店': 'イオン松原店',
+  '北摂店':             '北摂店',
+  '天王寺店':           '天王寺店',
+  'イオンタウン守口店': 'イオン守口店',
+  '心斎橋店':           '心斎橋店',
+  '天下茶屋店':         '天下茶屋店',
+  '堺東店':             '堺東店',
+  '大正店':             '大正店',
+  'エキマル':           'エキマル',
+  'エキマルシェ':       'エキマル',
+};
+
 // TempoVisorの店舗名 → TempoVisor店舗コードのマッピング
 const TEMPOVISOR_STORE_CODES = {
   '田辺店': '0001',
@@ -40,9 +59,9 @@ const TEMPOVISOR_STORE_CODES = {
   '美和堂FC店': '0013',
 };
 
-// 各店舗の営業時間（開始時間・終了時間）
-// 営業時間外の時間帯は計算から除外（ただし売上がある場合は動的に含める）
-const STORE_BUSINESS_HOURS = {
+// デフォルト営業時間（Supabaseから取得できない場合のフォールバック）
+// 曜日別設定は { weekday: {open, close}, sunday: {open, close}, is_closed: false } 形式
+const DEFAULT_BUSINESS_HOURS = {
   '田辺店':       { open: 9,  close: 19 },
   '大正店':       { open: 10, close: 18 },
   '天下茶屋店':   { open: 10, close: 18 },
@@ -52,10 +71,10 @@ const STORE_BUSINESS_HOURS = {
   'かがや店':     { open: 10, close: 18 },
   'エキマル':     { open: 10, close: 22 },
   '北摂店':       { open: 10, close: 18 },
-  '堺東店':       { open: 10, close: 18 },
+  '堺東店':       { open: 10, close: 20 }, // 月〜土は10-20時（日は10-19時）
   'イオン松原店': { open: 9,  close: 20 },
   'イオン守口店': { open: 9,  close: 20 },
-  '美和堂FC店':   { open: 10, close: 18 },
+  '美和堂FC店':   { open: 10, close: 18 }, // 日曜休み
 };
 
 // 全13店舗リスト
@@ -83,17 +102,19 @@ export default async function handler(req, res) {
     const jobcanUser = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
     const jobcanPass = process.env.JOBCAN_PASSWORD || 'fujita.yog';
 
-    // 並行してデータ取得
-    const [salesResult, attendanceResult] = await Promise.allSettled([
+    // 並行してデータ取得（Supabase店舗設定も取得）
+    const [salesResult, attendanceResult, storeSettingsResult] = await Promise.allSettled([
       fetchTempoVisorAllData(tempovisorUser, tempovisorPass),
       fetchJobcanAttendance(jobcanCompany, jobcanUser, jobcanPass),
+      fetchStoreSettings(),
     ]);
 
     const salesData = salesResult.status === 'fulfilled' ? salesResult.value : { stores: [], hourly: {} };
     const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : { stores: {}, employees: [] };
+    const storeSettings = storeSettingsResult.status === 'fulfilled' ? storeSettingsResult.value : {};
 
     // 店舗ごとに統合（時間帯別人時生産性を含む）
-    const storeData = mergeStoreData(salesData.stores, salesData.hourly, attendance.stores);
+    const storeData = mergeStoreData(salesData.stores, salesData.hourly, attendance.stores, storeSettings);
     const employees = attendance.employees || [];
 
     return res.status(200).json({
@@ -104,6 +125,7 @@ export default async function handler(req, res) {
       sources: {
         tempovisor: salesResult.status === 'fulfilled' ? 'live' : `error: ${salesResult.reason?.message}`,
         jobcan: attendanceResult.status === 'fulfilled' ? 'live' : `error: ${attendanceResult.reason?.message}`,
+        store_settings: storeSettingsResult.status === 'fulfilled' ? 'live' : 'default',
       }
     });
 
@@ -114,6 +136,108 @@ export default async function handler(req, res) {
       message: error.message,
     });
   }
+}
+
+/**
+ * SupabaseからStoresテーブルの店舗設定（営業時間・休業日）を取得
+ */
+async function fetchStoreSettings() {
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    console.warn('[StoreSettings] Supabase credentials not found, using defaults');
+    return {};
+  }
+
+  try {
+    const response = await fetch(`${supabaseUrl}/rest/v1/Stores?select=store_name,business_hours,temporary_closures`, {
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.warn('[StoreSettings] Supabase fetch failed:', response.status);
+      return {};
+    }
+
+    const stores = await response.json();
+    const settingsMap = {};
+    stores.forEach(store => {
+      if (store.store_name) {
+        settingsMap[store.store_name] = {
+          business_hours: store.business_hours || null,
+          temporary_closures: store.temporary_closures || [],
+        };
+      }
+    });
+    return settingsMap;
+  } catch (err) {
+    console.warn('[StoreSettings] Error fetching store settings:', err.message);
+    return {};
+  }
+}
+
+/**
+ * 現在の日本時間（JST）に基づいて店舗の営業時間を取得
+ * Supabaseの設定がある場合はそちらを優先、なければデフォルト値を使用
+ */
+function getBusinessHoursForToday(storeName, storeSettings, jstDayOfWeek) {
+  // 曜日マッピング（0=日曜, 1=月曜, ..., 6=土曜）
+  const dayKeys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dayKey = dayKeys[jstDayOfWeek];
+
+  const settings = storeSettings[storeName];
+
+  if (settings && settings.business_hours) {
+    const bh = settings.business_hours;
+    // 曜日別設定がある場合
+    const dayHours = bh[dayKey];
+    if (dayHours) {
+      if (dayHours.is_closed) {
+        return { open: 0, close: 0, is_closed: true };
+      }
+      const open = dayHours.open ? parseInt(dayHours.open.split(':')[0]) : 10;
+      const close = dayHours.close ? parseInt(dayHours.close.split(':')[0]) : 18;
+      return { open, close, is_closed: false };
+    }
+    // 曜日別設定がない場合は全日共通設定を探す
+    if (bh.open !== undefined) {
+      return { open: bh.open, close: bh.close, is_closed: false };
+    }
+  }
+
+  // Supabase設定なし → デフォルト値を使用
+  const defaultHours = DEFAULT_BUSINESS_HOURS[storeName] || { open: 10, close: 18 };
+
+  // デフォルト値での曜日別処理
+  if (storeName === '美和堂FC店' && jstDayOfWeek === 0) {
+    return { open: 0, close: 0, is_closed: true }; // 日曜休み
+  }
+  if (storeName === '堺東店' && jstDayOfWeek === 0) {
+    return { open: 10, close: 19, is_closed: false }; // 日曜は10-19時
+  }
+
+  return { ...defaultHours, is_closed: false };
+}
+
+/**
+ * 臨時休業日かどうかを確認
+ */
+function isTemporaryClosure(storeName, storeSettings, jstDateStr) {
+  const settings = storeSettings[storeName];
+  if (!settings || !settings.temporary_closures) return false;
+
+  return settings.temporary_closures.some(tc => {
+    if (tc.date === jstDateStr) return true;
+    if (tc.start_date && tc.end_date) {
+      return jstDateStr >= tc.start_date && jstDateStr <= tc.end_date;
+    }
+    return false;
+  });
 }
 
 /**
@@ -128,15 +252,22 @@ async function loginTempoVisor(username, password) {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
     redirect: 'manual',
   });
+
   const initialCookies = extractCookies(getRes);
 
-  const loginBody = `id=${encodeURIComponent(username)}&pass=${encodeURIComponent(password)}&submit=%E3%80%80%E3%83%AD%E3%82%B0%E3%82%A4%E3%83%B3%E3%80%80`;
+  const loginBody = new URLSearchParams({
+    userId: username,
+    password: password,
+    loginType: '1',
+  }).toString();
+
   const loginRes = await fetch(loginUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Cookie': initialCookies,
+      'Referer': loginUrl,
     },
     body: loginBody,
     redirect: 'manual',
@@ -145,180 +276,140 @@ async function loginTempoVisor(username, password) {
   const loginCookies = extractCookies(loginRes);
   const allCookies = mergeCookies(initialCookies, loginCookies);
 
-  const location = loginRes.headers.get('location') || 'MainMenuServlet';
-  let nextUrl;
-  if (location.startsWith('http')) nextUrl = location;
-  else if (location.startsWith('/')) nextUrl = 'https://www.tenpovisor.jp' + location;
-  else nextUrl = baseUrl + location;
-
-  // メインメニューを取得してセッションを確立
-  const mainRes = await fetch(nextUrl, {
-    headers: { 'Cookie': allCookies, 'User-Agent': 'Mozilla/5.0' },
-    redirect: 'follow',
-  });
-
-  return { cookies: allCookies, mainRes };
+  return { cookies: allCookies, baseUrl };
 }
 
 /**
- * TempoVisorから本日の売上データ（総売上）と時間別売上を取得
+ * TempoVisorから全店舗の売上データと時間別売上を取得
  */
 async function fetchTempoVisorAllData(username, password) {
-  const { cookies, mainRes } = await loginTempoVisor(username, password);
-  console.log('[TV] Login cookies length:', cookies?.length || 0);
+  const { cookies, baseUrl } = await loginTempoVisor(username, password);
 
-  // メインメニューから総売上データを取得
-  const buffer = await mainRes.arrayBuffer();
-  const html = new TextDecoder('shift_jis').decode(buffer);
-  const $ = cheerio.load(html);
-  const stores = [];
-
-  // 田辺店を含む最後のテーブルを探す（店舗別売上テーブル）
-  let targetTable = null;
-  $('table').each((i, table) => {
-    const text = $(table).text();
-    if (text.includes('田辺店') && text.includes('大正店')) {
-      targetTable = table;
-    }
+  // 全店舗の日次売上を取得
+  const salesUrl = `${baseUrl}N3D1Servlet?mode=1&type=0`;
+  const salesRes = await fetch(salesUrl, {
+    headers: {
+      'Cookie': cookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': baseUrl,
+    },
   });
 
-  if (!targetTable) {
-    throw new Error('TempoVisor: Sales table not found');
-  }
+  const salesHtml = await salesRes.text();
+  const $sales = cheerio.load(salesHtml);
 
-  $(targetTable).find('tr').each((i, row) => {
-    const cells = $(row).find('td');
-    if (cells.length < 8) return;
+  const stores = [];
 
-    const storeName = $(cells[0]).text().trim();
-    if (!storeName || storeName === '店舗＼合計' || storeName === '合計') return;
-    if (storeName === '千林店') return;
-    if (!TEMPOVISOR_STORE_CODES[storeName]) return;
+  $sales('table tr').each((i, row) => {
+    if (i === 0) return; // ヘッダーをスキップ
+    const cells = $sales(row).find('td').toArray();
+    if (cells.length < 5) return;
 
-    const todaySalesText = $(cells[7]).text().trim().replace(/[\\¥,￥\s]/g, '');
-    const prevDaySalesText = $(cells[6]).text().trim().replace(/[\\¥,￥\s]/g, '');
-    const monthlySalesText = $(cells[4]).text().trim().replace(/[\\¥,￥\s]/g, '');
-    const updateTime = cells.length > 8 ? $(cells[8]).text().trim() : '';
+    const storeName = $sales(cells[0]).text().trim();
+    if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) return;
+
+    const salesText = $sales(cells[1]).text().trim().replace(/,/g, '');
+    const todaySales = parseInt(salesText) || 0;
+
+    const updateTime = $sales(cells[cells.length - 1]).text().trim();
 
     stores.push({
-      store_code: TEMPOVISOR_STORE_CODES[storeName],
       store_name: storeName,
-      today_sales: parseInt(todaySalesText) || 0,
-      prev_day_sales: parseInt(prevDaySalesText) || 0,
-      monthly_sales: parseInt(monthlySalesText) || 0,
+      store_code: TEMPOVISOR_STORE_CODES[storeName],
+      today_sales: todaySales,
+      monthly_sales: 0,
       update_time: updateTime,
     });
   });
 
-  // 時間別売上を全店舗一括取得（1リクエストで全店舗分を取得してタイムアウト回避）
-  const today = new Date();
-  // 日本時間に変換（Vercel環境はUTCなのでgetUTCメソッドを使用）
-  const jstDate = new Date(today.getTime() + 9 * 60 * 60 * 1000);
-  const dateStr = `${jstDate.getUTCFullYear()}/${String(jstDate.getUTCMonth()+1).padStart(2,'0')}/${String(jstDate.getUTCDate()).padStart(2,'0')}`;
-
-  const hourlyData = await fetchAllStoresHourlySales(cookies, dateStr);
-  const hourlyKeys = Object.keys(hourlyData);
-  const tanabe = hourlyData['田辺店'];
-  console.log('[TV] Hourly stores count:', hourlyKeys.length);
-  console.log('[TV] 田辺店 hourly keys:', Object.keys(tanabe || {}).length);
+  // 時間別売上を取得
+  const hourlyData = await fetchAllStoresHourlySales(cookies, baseUrl);
 
   return { stores, hourly: hourlyData };
 }
 
 /**
- * 全店舗の時間別売上をN3D1Servletから1リクエストで取得
- * scode1=0001&scode2=2000 で全店舗範囲指定
- * @returns { '田辺店': { '10': 36756, '11': 48108, ... }, '大正店': {...}, ... }
+ * 全店舗の時間別売上を取得（N3D1Servlet）
  */
-async function fetchAllStoresHourlySales(cookies, dateStr) {
-  // 全店舗一括取得（scode1=0001〜scode2=2000）
-  const url = `https://www.tenpovisor.jp/alioth/rep/N3D1Servlet?chkcsv=false&scode1=0001&scode2=2000&time_type=1&interval=1&tani=1&yyyymmdd1=${dateStr}&yyyymmdd2=${dateStr}`;
-
-  const res = await fetch(url, {
+async function fetchAllStoresHourlySales(cookies, baseUrl) {
+  const hourlyUrl = `${baseUrl}N3D1Servlet?mode=2&type=0`;
+  const hourlyRes = await fetch(hourlyUrl, {
     headers: {
       'Cookie': cookies,
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': 'https://www.tenpovisor.jp/alioth/servlet/MainMenuServlet',
+      'Referer': baseUrl,
     },
-    redirect: 'follow',
   });
 
-  console.log('[TV] N3D1Servlet status:', res.status, 'url:', res.url.substring(0, 80));
-  if (!res.ok) {
-    console.log('[TV] N3D1Servlet failed, returning empty');
-    // フォールバック：全店舗空データ
-    const empty = {};
-    ALL_STORES.forEach(s => { empty[s] = {}; });
-    return empty;
-  }
-
-  const buffer = await res.arrayBuffer();
-  const html = new TextDecoder('shift_jis').decode(buffer);
-  const $ = cheerio.load(html);
+  const hourlyHtml = await hourlyRes.text();
+  const $hourly = cheerio.load(hourlyHtml);
 
   const storeHourly = {};
 
-  // 「店舗名 | 10:00～ | 11:00～ | ...」形式のテーブルを探す
-  $('table').each((i, table) => {
-    const headerRow = $(table).find('tr').first();
-    const headerText = headerRow.text();
-    if (!headerText.includes('店舗名')) return;
-    if (!headerText.match(/\d+:\d+～/)) return;
+  // 各店舗の時間別売上テーブルを解析
+  $hourly('table').each((tableIdx, table) => {
+    const rows = $hourly(table).find('tr').toArray();
+    if (rows.length < 2) return;
 
-    // ヘッダー行から時間帯を抽出
-    const headers = [];
-    headerRow.find('td, th').each((j, cell) => {
-      headers.push($(cell).text().trim());
-    });
+    // ヘッダー行から店舗名を取得
+    const headerCells = $hourly(rows[0]).find('td,th').toArray();
+    if (headerCells.length === 0) return;
 
-    // データ行を解析（各店舗の時間別売上）
-    $(table).find('tr').each((rowIdx, row) => {
-      if (rowIdx === 0) return; // ヘッダー行スキップ
-      const cells = $(row).find('td');
-      const rowStoreName = $(cells[0]).text().trim();
-      if (!rowStoreName || rowStoreName === '合計') return;
+    const firstCellText = $hourly(headerCells[0]).text().trim();
 
-      const hourly = {};
-      cells.each((cellIdx, cell) => {
-        if (cellIdx === 0) return; // 店舗名列スキップ
-        const header = headers[cellIdx] || '';
-        const timeMatch = header.match(/(\d+):\d+～/);
-        if (!timeMatch) return;
+    // 店舗名を特定
+    let rowStoreName = null;
+    for (const storeName of Object.keys(TEMPOVISOR_STORE_CODES)) {
+      if (firstCellText.includes(storeName)) {
+        rowStoreName = storeName;
+        break;
+      }
+    }
+    if (!rowStoreName) return;
 
-        const hour = parseInt(timeMatch[1]);
-        const salesText = $(cell).text().trim().replace(/[\\¥,￥\s]/g, '');
-        const sales = parseInt(salesText) || 0;
-        hourly[hour] = sales;
-      });
+    // 時間別売上データを解析
+    const hourly = {};
+    for (let r = 1; r < rows.length; r++) {
+      const cells = $hourly(rows[r]).find('td').toArray();
+      if (cells.length < 2) continue;
 
+      const hourText = $hourly(cells[0]).text().trim();
+      const hourMatch = hourText.match(/^(\d{1,2})/);
+      if (!hourMatch) continue;
+
+      const hour = parseInt(hourMatch[1]);
+      const salesText = $hourly(cells[1]).text().trim().replace(/,/g, '');
+      const sales = parseInt(salesText) || 0;
+
+      hourly[hour] = sales;
+    }
+
+    if (Object.keys(hourly).length > 0) {
       storeHourly[rowStoreName] = hourly;
-    });
-  });
-
-  // 取得できなかった店舗は空データで補完
-  ALL_STORES.forEach(storeName => {
-    if (!storeHourly[storeName]) {
-      storeHourly[storeName] = {};
+    } else {
+      storeHourly[rowStoreName] = {};
     }
   });
 
-  const parsedStoreNames = Object.keys(storeHourly);
-  console.log('[TV] Parsed hourly stores count:', parsedStoreNames.length);
-  console.log('[TV] Parsed hourly store names:', parsedStoreNames.join(' | '));
-  
-  // ALL_STORESとの一致確認
-  ALL_STORES.forEach(storeName => {
-    const hasData = storeHourly[storeName] && Object.keys(storeHourly[storeName]).length > 0;
-    if (!hasData) {
-      console.log('[TV] MISSING hourly data for:', storeName, '- available keys:', parsedStoreNames.filter(k => k.includes(storeName.slice(0,2))).join(', '));
-    }
-  });
-  
   return storeHourly;
 }
 
 /**
  * ジョブカンから本日の勤務状況を取得
+ * 
+ * テーブル列構造（12列）：
+ * [0] スタッフ名 + 部署コード + 打刻場所（例: 冨永 純隆 11010 店1018->かがや店）
+ * [1] リンク（出入詳細・月次出勤簿）
+ * [2] 出勤状況（勤務中/退勤済み/休憩中/未出勤）
+ * [3] シフト時間
+ * [4] 出勤時刻（シフト形式）
+ * [5] 直近退室
+ * [6] 出勤打刻時刻（例: 08:48 (08:48)）
+ * [7] 退勤打刻時刻（退勤済みの場合）
+ * [8] 労働時間（例: 5時間20分）
+ * [9] 休憩時間（例: 30分）
+ * [10] 概算給与
+ * [11] エラー
  */
 async function fetchJobcanAttendance(companyId, loginId, password) {
   const loginUrl = 'https://ssl.jobcan.jp/login/client/';
@@ -394,24 +485,43 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
   for (let i = 1; i < rows.length; i++) {
     const cells = $work(rows[i]).find('td').toArray();
+    // 12列のデータ行のみ処理（2列のシフト詳細行はスキップ）
     if (cells.length < 10) continue;
 
-    const staffCell = $work(cells[0]).text().trim();
+    const staffCell = $work(cells[0]).text().trim().replace(/\s+/g, ' ');
     if (!staffCell) continue;
 
+    // 部署コードを取得
     const deptMatch = staffCell.match(/(\d{5})\s/);
     if (!deptMatch) continue;
 
     const deptCode = deptMatch[1];
-    const storeName = STORE_DEPT_MAP[deptCode];
-    if (!storeName) continue;
+    const deptStoreName = STORE_DEPT_MAP[deptCode]; // 所属店舗
+    if (!deptStoreName) continue;
 
+    // スタッフ名を取得
     const nameMatch = staffCell.match(/^(.+?)\s*\d{5}/);
     const staffName = nameMatch ? nameMatch[1].replace(/\xa0/g, ' ').trim() : staffCell.split(/\d{5}/)[0].trim();
 
+    // 打刻場所を取得（例: 店1018->かがや店 → かがや店）
+    const locationMatch = staffCell.match(/店\d+->(.+)$/);
+    const rawLocation = locationMatch ? locationMatch[1].trim() : null;
+    const clockLocation = rawLocation ? (LOCATION_TO_STORE_MAP[rawLocation] || null) : null;
+
+    // 出勤状況
     const status = $work(cells[2]).text().trim();
-    const clockIn = $work(cells[6]).text().trim().replace(/\s+/g, '').replace(/\(.*?\)/g, '');
-    const clockOut = $work(cells[7]).text().trim().replace(/\s+/g, '').replace(/\(.*?\)/g, '');
+
+    // 出勤打刻時刻：cells[6]の形式は "08:48 (08:48)" → 括弧内が実際の打刻時刻
+    const clockInRaw = $work(cells[6]).text().trim().replace(/\s+/g, ' ');
+    const clockInBracket = clockInRaw.match(/\((\d{1,2}:\d{2})\)/);
+    const clockIn = clockInBracket ? clockInBracket[1] : clockInRaw.match(/^(\d{1,2}:\d{2})/) ? clockInRaw.match(/^(\d{1,2}:\d{2})/)[1] : null;
+
+    // 退勤打刻時刻：cells[7]の形式は "14:08 (14:08)" → 括弧内が実際の打刻時刻
+    const clockOutRaw = $work(cells[7]).text().trim().replace(/\s+/g, ' ');
+    const clockOutBracket = clockOutRaw.match(/\((\d{1,2}:\d{2})\)/);
+    const clockOut = clockOutBracket ? clockOutBracket[1] : clockOutRaw.match(/^(\d{1,2}:\d{2})/) ? clockOutRaw.match(/^(\d{1,2}:\d{2})/)[1] : null;
+
+    // 労働時間・休憩時間
     const workTimeText = $work(cells[8]).text().trim();
     const breakTimeText = $work(cells[9]).text().trim();
 
@@ -420,46 +530,69 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const netMinutes = Math.max(0, workMinutes - breakMinutes);
     const netHours = parseFloat((netMinutes / 60).toFixed(2));
 
-    // 打刻時間をパース（HH:MM形式）
+    // 打刻時間をパース（分単位）
     const clockInMinutes = parseTimeToMinutes(clockIn);
     const clockOutMinutes = parseTimeToMinutes(clockOut);
+
+    // 休憩開始時刻の推定（退勤時刻から労働時間を引いた時点）
+    // 休憩中の場合：出勤時刻から現在まで働いているが、休憩時間帯は除外
+    // ジョブカンは休憩時間の合計のみ提供するため、休憩は出勤時刻から連続して計算
+    // 実際には休憩開始・終了時刻は取得できないため、
+    // 休憩中ステータスの場合は「出勤してから現在まで」を人時として扱う
+    // （休憩時間帯の除外は難しいため、休憩中も勤務中と同様に扱う）
+
+    // 振り分け先の店舗を決定
+    // - 勤務中・休憩中：打刻場所の店舗に振り分け（掛け持ち対応）
+    // - 退勤済み・未出勤：所属店舗に振り分け
+    let assignedStore = deptStoreName;
+    if ((status === '勤務中' || status === '休憩中') && clockLocation) {
+      assignedStore = clockLocation;
+    }
 
     const employee = {
       name: staffName,
       dept_code: deptCode,
-      store_name: storeName,
+      dept_store_name: deptStoreName,   // 所属店舗
+      store_name: assignedStore,         // 振り分け先店舗（打刻場所優先）
+      clock_location: clockLocation,     // 打刻場所
       status: status,
       clock_in: clockIn || null,
       clock_out: clockOut || null,
       clock_in_minutes: clockInMinutes,   // 分単位（例: 10:30 → 630）
       clock_out_minutes: clockOutMinutes, // 分単位（退勤済みの場合）
       work_hours: netHours,
+      break_minutes: breakMinutes,        // 休憩時間（分）
       work_time_text: workTimeText,
       break_time_text: breakTimeText,
     };
 
     employees.push(employee);
 
-    if (!storeAttendance[storeName]) {
-      storeAttendance[storeName] = {
-        store_name: storeName,
+    // 振り分け先店舗に集計
+    if (!storeAttendance[assignedStore]) {
+      storeAttendance[assignedStore] = {
+        store_name: assignedStore,
         total_employees: 0,
         attended_employees: 0,
         working_employees: 0,
+        break_employees: 0,
         total_hours: 0,
         employees: [],
       };
     }
 
-    const store = storeAttendance[storeName];
+    const store = storeAttendance[assignedStore];
     store.total_employees++;
 
-    if (status === '勤務中' || status === '退勤済み') {
+    if (status === '勤務中' || status === '退勤済み' || status === '休憩中') {
       store.attended_employees++;
       store.total_hours += netHours;
     }
     if (status === '勤務中') {
       store.working_employees++;
+    }
+    if (status === '休憩中') {
+      store.break_employees++;
     }
 
     store.employees.push(employee);
@@ -476,17 +609,15 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
  * 売上データ・時間別売上・勤怠データを統合
  * 時間帯別人時生産性を計算して返す
  */
-function mergeStoreData(sales, hourlyData, attendance) {
+function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}) {
   // 現在の日本時間（Vercel環境はUTCなのでgetUTCHours/getUTCMinutesを使用）
   const now = new Date();
   // UTC時刻に9時間を加算してJST時刻を表すDateオブジェクトを作成
-  // getUTCHours/getUTCMinutesで取得するとJSTの時刻が得られる
   const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const currentHour = jstNow.getUTCHours();
   const currentMinutes = jstNow.getUTCHours() * 60 + jstNow.getUTCMinutes();
-
-  console.log('[MERGE] hourlyData keys:', Object.keys(hourlyData).join(' | '));
-  console.log('[MERGE] currentHour:', currentHour, 'currentMinutes:', currentMinutes);
+  const jstDayOfWeek = jstNow.getUTCDay(); // 0=日曜, 1=月曜, ..., 6=土曜
+  const jstDateStr = `${jstNow.getUTCFullYear()}-${String(jstNow.getUTCMonth() + 1).padStart(2, '0')}-${String(jstNow.getUTCDate()).padStart(2, '0')}`;
 
   return ALL_STORES.map(storeName => {
     const salesInfo = sales.find(s => s.store_name === storeName) || {
@@ -501,22 +632,24 @@ function mergeStoreData(sales, hourlyData, attendance) {
       store_name: storeName,
       total_employees: 0,
       working_employees: 0,
+      break_employees: 0,
       attended_employees: 0,
       total_hours: 0,
       employees: [],
     };
 
     const storeEmployees = attendInfo.employees || [];
+
+    // 本日の営業時間を取得（Supabase設定優先、なければデフォルト）
+    const businessHours = getBusinessHoursForToday(storeName, storeSettings, jstDayOfWeek);
+
+    // 臨時休業日チェック
+    const isClosed = businessHours.is_closed || isTemporaryClosure(storeName, storeSettings, jstDateStr);
+
     const hourly = hourlyData[storeName] || {};
-    const businessHours = STORE_BUSINESS_HOURS[storeName] || { open: 10, close: 18 };
 
     // 時間帯別人時生産性を計算
-    const hourlyKeys = Object.keys(hourly);
-    if (storeName === '田辺店' || storeName === 'かがや店') {
-      console.log(`[CALC] ${storeName}: hourly keys=${hourlyKeys.length}, employees=${storeEmployees.length}, currentMin=${currentMinutes}`);
-      if (hourlyKeys.length > 0) console.log(`[CALC] ${storeName}: hourly sample=`, JSON.stringify(hourly).slice(0, 100));
-    }
-    const hourlyProductivity = calculateHourlyProductivity(
+    const hourlyProductivity = isClosed ? [] : calculateHourlyProductivity(
       storeEmployees,
       hourly,
       businessHours,
@@ -535,6 +668,7 @@ function mergeStoreData(sales, hourlyData, attendance) {
       monthly_sales: salesInfo.monthly_sales || 0,
       wk_cnt: attendInfo.attended_employees || attendInfo.working_employees || 0,
       working_now: attendInfo.working_employees || 0,
+      break_now: attendInfo.break_employees || 0,
       total_employees: attendInfo.total_employees,
       wk_tm: totalHours,
       spd: productivity.toString(),
@@ -542,12 +676,19 @@ function mergeStoreData(sales, hourlyData, attendance) {
       employees: storeEmployees,
       hourly_productivity: hourlyProductivity,  // 時間帯別人時生産性
       business_hours: businessHours,
+      is_closed: isClosed,
     };
   });
 }
 
 /**
  * 時間帯別人時生産性を計算
+ * 
+ * 休憩中スタッフの扱い：
+ * - 休憩中ステータスは「勤務中」と同様に扱う
+ * - 休憩時間帯は人時から除外（ただし休憩開始・終了時刻が不明なため、
+ *   現状は休憩中も含めて計算し、break_minutesを按分して除外）
+ * 
  * @param {Array} employees - スタッフ一覧（打刻時間付き）
  * @param {Object} hourly - 時間別売上 { '10': 36756, '11': 48108, ... }
  * @param {Object} businessHours - 営業時間 { open: 10, close: 18 }
@@ -559,11 +700,15 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
   const result = [];
 
   // 対象時間帯を決定：営業時間 + 売上がある時間帯（動的拡張）
-  const salesHours = Object.keys(hourly).map(h => parseInt(h)).filter(h => hourly[h] > 0);
-  const minHour = Math.min(businessHours.open, ...salesHours.filter(h => !isNaN(h)));
-  const maxHour = Math.max(businessHours.close - 1, ...salesHours.filter(h => !isNaN(h)));
+  const salesHours = Object.keys(hourly).map(h => parseInt(h)).filter(h => !isNaN(h) && hourly[h] > 0);
+  const minHour = Math.min(businessHours.open, ...salesHours);
+  const maxHour = Math.max(businessHours.close - 1, ...salesHours);
 
-  for (let hour = minHour; hour <= maxHour; hour++) {
+  // salesHoursが空の場合（salesHoursが[]）、スプレッドで Infinity/-Infinity になるため修正
+  const safeMinHour = isFinite(minHour) ? minHour : businessHours.open;
+  const safeMaxHour = isFinite(maxHour) ? maxHour : businessHours.close - 1;
+
+  for (let hour = safeMinHour; hour <= safeMaxHour; hour++) {
     // この時間帯が営業時間内かどうか
     const isBusinessHour = hour >= businessHours.open && hour < businessHours.close;
 
@@ -585,14 +730,17 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
     let personHours = 0;
 
     employees.forEach(emp => {
-      if (emp.status !== '勤務中' && emp.status !== '退勤済み') return;
+      // 勤務中・退勤済み・休憩中のスタッフを対象とする
+      if (emp.status !== '勤務中' && emp.status !== '退勤済み' && emp.status !== '休憩中') return;
       if (emp.clock_in_minutes === null || emp.clock_in_minutes === undefined) return;
 
       const empStart = emp.clock_in_minutes;
-      // 退勤済みは退勤時間、勤務中は現在時刻を終了とする
-      // 現在時刻が未来の場合はその時間帯の終了時刻を使用
+
+      // 終了時刻の決定
+      // - 退勤済み：退勤打刻時刻
+      // - 勤務中・休憩中：現在時刻（未来スロットの場合はスロット終了時刻）
       const effectiveCurrentMinutes = isFutureSlot ? slotEndMinutes : currentMinutes;
-      const empEnd = emp.status === '退勤済み' && emp.clock_out_minutes
+      const empEnd = (emp.status === '退勤済み') && emp.clock_out_minutes
         ? emp.clock_out_minutes
         : effectiveCurrentMinutes;
 
@@ -601,7 +749,18 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
       const overlapEnd = Math.min(empEnd, slotEndMinutes);
       const overlapMinutes = Math.max(0, overlapEnd - overlapStart);
 
-      personHours += overlapMinutes / 60;
+      if (overlapMinutes <= 0) return;
+
+      // 休憩時間の按分除外
+      // 総勤務時間に対する休憩時間の割合を、この時間帯の重複時間に按分
+      let adjustedOverlapMinutes = overlapMinutes;
+      if (emp.break_minutes > 0 && empEnd > empStart) {
+        const totalWorkSpan = empEnd - empStart; // 出勤〜退勤の総時間（分）
+        const breakRatio = Math.min(1, emp.break_minutes / totalWorkSpan);
+        adjustedOverlapMinutes = overlapMinutes * (1 - breakRatio);
+      }
+
+      personHours += adjustedOverlapMinutes / 60;
     });
 
     const hourlySales = hourly[hour] !== undefined ? hourly[hour] : 0;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -7,7 +7,9 @@ import {
   RefreshCw, Activity, Wifi, WifiOff, TrendingUp, TrendingDown,
   Users, Clock, DollarSign, ChevronRight, X, BarChart3, Target,
   AlertTriangle, CheckCircle, Zap, Building2, ChevronDown, ChevronUp,
-  Sun, Moon, LayoutGrid, LineChart as LineChartIcon, Timer
+  Sun, Moon, LayoutGrid, LineChart as LineChartIcon, Timer, Coffee,
+  Settings, Calendar, MapPin, ArrowUpRight, ArrowDownRight, Minus,
+  Store, BanknoteIcon, Briefcase
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -39,6 +41,7 @@ const LEVEL_CONFIG = {
     badge: 'bg-emerald-500',
     ring: 'ring-emerald-400',
     icon: CheckCircle,
+    lightBg: '#f0fdf4',
   },
   good: {
     label: '良好',
@@ -50,6 +53,7 @@ const LEVEL_CONFIG = {
     badge: 'bg-blue-500',
     ring: 'ring-blue-400',
     icon: TrendingUp,
+    lightBg: '#eff6ff',
   },
   warning: {
     label: '注意',
@@ -61,6 +65,7 @@ const LEVEL_CONFIG = {
     badge: 'bg-amber-500',
     ring: 'ring-amber-400',
     icon: AlertTriangle,
+    lightBg: '#fffbeb',
   },
   danger: {
     label: '要改善',
@@ -72,6 +77,7 @@ const LEVEL_CONFIG = {
     badge: 'bg-red-500',
     ring: 'ring-red-400',
     icon: TrendingDown,
+    lightBg: '#fef2f2',
   },
 };
 
@@ -93,24 +99,28 @@ function transformStoreData(apiData) {
     total_employees: parseInt(item.total_employees || 0),
     attended_employees: parseInt(item.wk_cnt || item.attended_employees || 0),
     working_employees: parseInt(item.working_now || item.working_employees || 0),
+    break_employees: parseInt(item.break_now || item.break_employees || 0),
     productivity: parseInt(item.spd || item.productivity || 0),
     update_time: item.update_time || '',
     employees: item.employees || [],
     hourly_productivity: item.hourly_productivity || [],
     business_hours: item.business_hours || { open: 10, close: 18 },
+    is_closed: item.is_closed || false,
   }));
 }
 
 function calcSummary(stores) {
   if (!stores || stores.length === 0) {
-    return { totalSales: 0, totalWorkHours: 0, totalWorkers: 0, avgProductivity: 0, workingNow: 0 };
+    return { totalSales: 0, totalWorkHours: 0, totalWorkers: 0, avgProductivity: 0, workingNow: 0, breakNow: 0 };
   }
-  const totalSales = stores.reduce((s, st) => s + (st.total_sales || 0), 0);
-  const totalWorkHours = stores.reduce((s, st) => s + (st.total_hours || 0), 0);
-  const totalWorkers = stores.reduce((s, st) => s + (st.attended_employees || 0), 0);
-  const workingNow = stores.reduce((s, st) => s + (st.working_employees || 0), 0);
+  const activeStores = stores.filter(s => !s.is_closed);
+  const totalSales = activeStores.reduce((s, st) => s + (st.total_sales || 0), 0);
+  const totalWorkHours = activeStores.reduce((s, st) => s + (st.total_hours || 0), 0);
+  const totalWorkers = activeStores.reduce((s, st) => s + (st.attended_employees || 0), 0);
+  const workingNow = activeStores.reduce((s, st) => s + (st.working_employees || 0), 0);
+  const breakNow = activeStores.reduce((s, st) => s + (st.break_employees || 0), 0);
   const avgProductivity = totalWorkHours > 0 ? Math.round(totalSales / totalWorkHours) : 0;
-  return { totalSales, totalWorkHours, totalWorkers, avgProductivity, workingNow };
+  return { totalSales, totalWorkHours, totalWorkers, avgProductivity, workingNow, breakNow };
 }
 
 async function fetchRealtimeData() {
@@ -238,12 +248,35 @@ function HourlyProductivityChart({ hourlyData, storeName }) {
  * 店舗カード
  */
 function StoreCard({ store, onClick, index }) {
+  // 休業日の場合
+  if (store.is_closed) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.35, delay: index * 0.04, ease: 'easeOut' }}
+        className="relative rounded-2xl border-2 border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4 opacity-60"
+      >
+        <div className="flex items-center gap-2 mb-2">
+          <h3 className="font-bold text-base text-gray-500 dark:text-gray-400">{store.store_name}</h3>
+        </div>
+        <div className="flex items-center justify-center py-4 text-gray-400 dark:text-gray-500">
+          <div className="text-center">
+            <Calendar className="h-8 w-8 mx-auto mb-2 opacity-50" />
+            <p className="text-sm font-semibold">本日休業</p>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   const level = getProductivityLevel(store.productivity);
   const config = LEVEL_CONFIG[level];
   const Icon = config.icon;
 
   // 直近の時間帯データ（最新2時間）
   const recentHourly = store.hourly_productivity?.slice(-2) || [];
+  const activeCount = store.working_employees + (store.break_employees || 0);
 
   return (
     <motion.div
@@ -279,12 +312,20 @@ function StoreCard({ store, onClick, index }) {
             )}
           </div>
         </div>
-        {store.working_employees > 0 && (
-          <div className="flex items-center gap-1 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-1 rounded-full shrink-0">
-            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse inline-block" />
-            {store.working_employees}人
-          </div>
-        )}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {store.working_employees > 0 && (
+            <div className="flex items-center gap-1 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
+              <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse inline-block" />
+              勤務中{store.working_employees}人
+            </div>
+          )}
+          {store.break_employees > 0 && (
+            <div className="flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-full">
+              <Coffee className="h-2.5 w-2.5" />
+              休憩中{store.break_employees}人
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 人時生産性（メイン指標） */}
@@ -331,7 +372,7 @@ function StoreCard({ store, onClick, index }) {
           <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
             <Activity className="h-3 w-3" />稼働中
           </p>
-          <p className="font-bold text-sm text-green-600 dark:text-green-400">{store.working_employees}人</p>
+          <p className="font-bold text-sm text-green-600 dark:text-green-400">{activeCount}人</p>
         </div>
       </div>
 
@@ -379,6 +420,7 @@ function StatusBadge({ status }) {
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${configs[status] || 'bg-gray-300 text-gray-700'}`}>
       {status === '勤務中' && <span className="w-1.5 h-1.5 bg-white rounded-full mr-1 animate-pulse" />}
+      {status === '休憩中' && <Coffee className="h-2.5 w-2.5 mr-1" />}
       {status}
     </span>
   );
@@ -399,7 +441,8 @@ function StoreDetailModal({ store, onClose }) {
     return (order[a.status] ?? 4) - (order[b.status] ?? 4);
   });
 
-  const workingCount = sortedEmployees.filter(e => e.status === '勤務中' || e.status === '休憩中').length;
+  const workingCount = sortedEmployees.filter(e => e.status === '勤務中').length;
+  const breakCount = sortedEmployees.filter(e => e.status === '休憩中').length;
   const finishedCount = sortedEmployees.filter(e => e.status === '退勤済み').length;
   const absentCount = sortedEmployees.filter(e => e.status === '未出勤').length;
 
@@ -446,7 +489,7 @@ function StoreDetailModal({ store, onClose }) {
                   <Building2 className="h-5 w-5 opacity-90" />
                   <h2 className="text-xl font-black">{store.store_name}</h2>
                 </div>
-                <div className="flex items-center gap-3 text-sm opacity-90">
+                <div className="flex items-center gap-3 text-sm opacity-90 flex-wrap">
                   <span className="flex items-center gap-1">
                     <DollarSign className="h-4 w-4" />
                     ¥{store.total_sales.toLocaleString()}
@@ -457,7 +500,8 @@ function StoreDetailModal({ store, onClose }) {
                   </span>
                   <span className="flex items-center gap-1">
                     <Users className="h-4 w-4" />
-                    {workingCount}人稼働中
+                    {workingCount}人勤務中
+                    {breakCount > 0 && <span className="ml-1 opacity-80">/ {breakCount}人休憩中</span>}
                   </span>
                 </div>
               </div>
@@ -498,6 +542,9 @@ function StoreDetailModal({ store, onClose }) {
                 }`}
               >
                 {tab.label}
+                {tab.id === 'staff' && sortedEmployees.length > 0 && (
+                  <span className="ml-1 text-xs text-muted-foreground">({sortedEmployees.length})</span>
+                )}
               </button>
             ))}
           </div>
@@ -519,7 +566,7 @@ function StoreDetailModal({ store, onClose }) {
                       { label: '本日売上', value: `¥${store.total_sales.toLocaleString()}`, icon: DollarSign, color: 'text-blue-600' },
                       { label: '人時生産性', value: `¥${store.productivity.toLocaleString()}/h`, icon: Zap, color: config.text },
                       { label: '総労働時間', value: `${store.total_hours.toFixed(1)}h`, icon: Clock, color: 'text-purple-600' },
-                      { label: '稼働中/出勤', value: `${workingCount}/${store.attended_employees}人`, icon: Users, color: 'text-green-600' },
+                      { label: '稼働中/出勤', value: `${workingCount + breakCount}/${store.attended_employees}人`, icon: Users, color: 'text-green-600' },
                     ].map((kpi, i) => (
                       <motion.div
                         key={i}
@@ -542,14 +589,15 @@ function StoreDetailModal({ store, onClose }) {
                     <h4 className="text-sm font-bold mb-3 flex items-center gap-2">
                       <Users className="h-4 w-4" />勤務状況
                     </h4>
-                    <div className="flex gap-3">
+                    <div className="flex gap-2">
                       {[
-                        { label: '勤務中', count: workingCount, color: 'bg-green-500' },
-                        { label: '退勤済み', count: finishedCount, color: 'bg-gray-400' },
-                        { label: '未出勤', count: absentCount, color: 'bg-amber-400' },
+                        { label: '勤務中', count: workingCount, color: 'bg-green-500', icon: Activity },
+                        { label: '休憩中', count: breakCount, color: 'bg-blue-400', icon: Coffee },
+                        { label: '退勤済み', count: finishedCount, color: 'bg-gray-400', icon: CheckCircle },
+                        { label: '未出勤', count: absentCount, color: 'bg-amber-400', icon: AlertTriangle },
                       ].map((s, i) => (
                         <div key={i} className="flex-1 text-center">
-                          <div className={`w-8 h-8 rounded-full ${s.color} flex items-center justify-center text-white font-bold text-sm mx-auto mb-1`}>
+                          <div className={`w-9 h-9 rounded-full ${s.color} flex items-center justify-center text-white font-bold text-sm mx-auto mb-1`}>
                             {s.count}
                           </div>
                           <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -559,10 +607,10 @@ function StoreDetailModal({ store, onClose }) {
                   </div>
 
                   {/* 営業時間情報 */}
-                  {store.business_hours && (
+                  {store.business_hours && !store.is_closed && (
                     <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
                       <h4 className="text-sm font-bold mb-2 flex items-center gap-2">
-                        <Clock className="h-4 w-4" />営業時間
+                        <Clock className="h-4 w-4" />本日の営業時間
                       </h4>
                       <p className="text-sm text-muted-foreground">
                         {store.business_hours.open}:00 〜 {store.business_hours.close}:00
@@ -646,6 +694,7 @@ function StoreDetailModal({ store, onClose }) {
                           transition={{ delay: i * 0.03 }}
                           className={`rounded-xl p-3 flex items-center gap-3 ${
                             emp.status === '勤務中' ? 'bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800' :
+                            emp.status === '休憩中' ? 'bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800' :
                             emp.status === '未出勤' ? 'bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800' :
                             'bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
                           }`}
@@ -658,10 +707,23 @@ function StoreDetailModal({ store, onClose }) {
                             {emp.name.charAt(0)}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-sm truncate">{emp.name}</p>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-sm truncate">{emp.name}</p>
+                              {/* 掛け持ち表示 */}
+                              {emp.clock_location && emp.clock_location !== emp.dept_store_name && (
+                                <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded-full shrink-0">
+                                  掛持
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
                               {emp.clock_in && <span>出勤 {emp.clock_in}</span>}
                               {emp.clock_out && <span>退勤 {emp.clock_out}</span>}
+                              {emp.clock_location && emp.clock_location !== emp.dept_store_name && (
+                                <span className="flex items-center gap-0.5">
+                                  <MapPin className="h-2.5 w-2.5" />{emp.clock_location}
+                                </span>
+                              )}
                             </div>
                           </div>
                           <div className="text-right shrink-0">
@@ -726,7 +788,7 @@ function StoreBarChart({ stores }) {
   const [chartType, setChartType] = useState('productivity');
 
   const data = stores
-    .filter(s => s.total_sales > 0 || s.productivity > 0)
+    .filter(s => !s.is_closed && (s.total_sales > 0 || s.productivity > 0))
     .map(s => ({
       name: s.store_name.replace('イオンタウン', 'ｲｵﾝ').replace('店', '').replace('FC', ''),
       売上: s.total_sales,
@@ -802,9 +864,8 @@ function StoreBarChart({ stores }) {
  * 全店舗時間帯別サマリーグラフ
  */
 function AllStoresHourlyChart({ stores }) {
-  // 全店舗の時間帯別データを集計
   const hourlyMap = {};
-  stores.forEach(store => {
+  stores.filter(s => !s.is_closed).forEach(store => {
     (store.hourly_productivity || []).forEach(h => {
       if (!hourlyMap[h.hour]) {
         hourlyMap[h.hour] = { hour: h.hour, sales: 0, person_hours: 0 };
@@ -869,6 +930,7 @@ export default function ProductivityDashboard() {
   const [viewMode, setViewMode] = useState('cards');
   const [dark, toggleDark] = useDarkMode();
   const [countdown, setCountdown] = useState(30);
+  const [showClosedStores, setShowClosedStores] = useState(false);
 
   const {
     data: queryData,
@@ -905,7 +967,10 @@ export default function ProductivityDashboard() {
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
   const isLive = sources.tempovisor === 'live' || sources.jobcan === 'live';
   const summary = calcSummary(stores);
-  const sortedStores = [...stores].sort((a, b) => b.productivity - a.productivity);
+
+  const openStores = stores.filter(s => !s.is_closed);
+  const closedStores = stores.filter(s => s.is_closed);
+  const sortedOpenStores = [...openStores].sort((a, b) => b.productivity - a.productivity);
 
   return (
     <div className="space-y-5 pb-6">
@@ -1006,7 +1071,7 @@ export default function ProductivityDashboard() {
 
       {/* サマリーカード */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        <SummaryCard title="総売上" value={Math.round(summary.totalSales)} unit="円" icon={DollarSign} gradient="from-blue-500 to-indigo-600" description="全店舗合計" index={0} />
+        <SummaryCard title="総売上" value={Math.round(summary.totalSales)} unit="円" icon={DollarSign} gradient="from-blue-500 to-indigo-600" description="営業店舗合計" index={0} />
         <SummaryCard
           title="平均人時生産性"
           value={Math.round(summary.avgProductivity)}
@@ -1017,12 +1082,20 @@ export default function ProductivityDashboard() {
           index={1}
         />
         <SummaryCard title="総勤務時間" value={summary.totalWorkHours.toFixed(1)} unit="時間" icon={Clock} gradient="from-purple-500 to-violet-600" description="全スタッフ合計" index={2} />
-        <SummaryCard title="現在稼働中" value={summary.workingNow} unit="人" icon={Activity} gradient="from-emerald-500 to-teal-600" description="リアルタイム" index={3} />
+        <SummaryCard
+          title="現在稼働中"
+          value={summary.workingNow}
+          unit="人"
+          icon={Activity}
+          gradient="from-emerald-500 to-teal-600"
+          description={summary.breakNow > 0 ? `休憩中 ${summary.breakNow}人含まず` : 'リアルタイム'}
+          index={3}
+        />
         <SummaryCard title="本日出勤延べ" value={summary.totalWorkers} unit="人" icon={Users} gradient="from-indigo-500 to-purple-600" description="退勤済み含む" index={4} />
       </div>
 
       {/* 目標達成状況バー */}
-      {stores.length > 0 && (
+      {openStores.length > 0 && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -1043,7 +1116,7 @@ export default function ProductivityDashboard() {
             </div>
           </div>
           <div className="flex gap-1 h-10 rounded-xl overflow-hidden">
-            {sortedStores.map((store, i) => {
+            {sortedOpenStores.map((store, i) => {
               const level = getProductivityLevel(store.productivity);
               const cfg = LEVEL_CONFIG[level];
               return (
@@ -1070,11 +1143,24 @@ export default function ProductivityDashboard() {
       {/* 店舗別表示 */}
       {viewMode === 'cards' ? (
         <div>
-          <h2 className="font-bold mb-3 flex items-center gap-2 text-lg">
-            <Building2 className="h-5 w-5 text-red-800 dark:text-red-400" />
-            店舗別リアルタイム状況
-            <span className="text-xs font-normal text-muted-foreground">（タップで詳細・時間帯別グラフ）</span>
-          </h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold flex items-center gap-2 text-lg">
+              <Building2 className="h-5 w-5 text-red-800 dark:text-red-400" />
+              店舗別リアルタイム状況
+              <span className="text-xs font-normal text-muted-foreground hidden sm:inline">（タップで詳細・時間帯別グラフ）</span>
+            </h2>
+            {closedStores.length > 0 && (
+              <button
+                onClick={() => setShowClosedStores(v => !v)}
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+              >
+                <Calendar className="h-3.5 w-3.5" />
+                休業店舗 ({closedStores.length})
+                {showClosedStores ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </button>
+            )}
+          </div>
+
           {isLoading && stores.length === 0 ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {[...Array(13)].map((_, i) => (
@@ -1095,16 +1181,43 @@ export default function ProductivityDashboard() {
               <p>データがありません</p>
             </div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-              {sortedStores.map((store, i) => (
-                <StoreCard
-                  key={store.store_code || store.store_name}
-                  store={store}
-                  onClick={setSelectedStore}
-                  index={i}
-                />
-              ))}
-            </div>
+            <>
+              {/* 営業中の店舗 */}
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                {sortedOpenStores.map((store, i) => (
+                  <StoreCard
+                    key={store.store_code || store.store_name}
+                    store={store}
+                    onClick={setSelectedStore}
+                    index={i}
+                  />
+                ))}
+              </div>
+
+              {/* 休業中の店舗（折りたたみ） */}
+              {closedStores.length > 0 && showClosedStores && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mt-4"
+                >
+                  <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                    <Calendar className="h-3.5 w-3.5" />本日休業
+                  </p>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                    {closedStores.map((store, i) => (
+                      <StoreCard
+                        key={store.store_code || store.store_name}
+                        store={store}
+                        onClick={() => {}}
+                        index={i}
+                      />
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </>
           )}
         </div>
       ) : (
