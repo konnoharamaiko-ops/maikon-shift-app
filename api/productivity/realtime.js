@@ -498,6 +498,8 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   });
 
   console.log(`[TV] Total stores parsed: ${storeSales.length}`);
+  console.log(`[TV] storeHourly keys: ${Object.keys(storeHourly).join(', ')}`);
+  console.log(`[TV] storeSales names: ${storeSales.map(s => s.store_name).join(', ')}`);
   return { stores: storeSales, hourly: storeHourly };
 }
 
