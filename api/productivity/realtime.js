@@ -1023,10 +1023,11 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       if (parts.length < 2) return;
       const staffId = parts[1];
       if (!staffId || isNaN(parseInt(staffId))) return;
-      // selected属性が付いているoption = 今日のシフトグループ（実際の勤務店舗）
-      // HTMLソースに selected="" 属性が付いているoptionを取得
-      const selectedOption = $page(sel).find('option[selected]');
-      const groupText = selectedOption.length > 0 ? selectedOption.text().trim() : '';
+      // HTMLソースでは最初のoption（index=0）が今日のシフトグループ（実際の勤務店舗）
+      // ブラウザのJavaScriptでselected属性が動的に付与されるため、HTMLソースではoption[selected]は取得不可
+      // → option:first-child（最初のoption）を使用する
+      const firstOption = $page(sel).find('option').first();
+      const groupText = firstOption.length > 0 ? firstOption.text().trim() : '';
       const groupMatch = groupText.match(/^(\d{5})\s+(.+)$/);
       if (groupMatch) {
         const code = groupMatch[1];
@@ -1038,6 +1039,28 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       }
     });
   };
+
+  // デバッグ: HTMLソースにselect[id^="group_"]が含まれているか確認
+  const groupSelects = $attend1('select[id^="group_"]');
+  console.log(`[JC] 出勤簿1ページ目: select[id^="group_"] = ${groupSelects.length}件`);
+  if (groupSelects.length > 0) {
+    const firstSel = groupSelects.first();
+    const firstSelId = firstSel.attr('id');
+    const firstOpt = firstSel.find('option').first();
+    console.log(`[JC] 最初のselect id=${firstSelId}, option#0=${firstOpt.text().trim().substring(0, 30)}`);
+    // HTMLソースの一部を確認
+    const htmlSnippet = attendPage1Html.indexOf('group_') >= 0 ? attendPage1Html.substring(attendPage1Html.indexOf('group_'), attendPage1Html.indexOf('group_') + 200) : 'group_ not found';
+    console.log(`[JC] HTMLソース: ${htmlSnippet.substring(0, 100)}`);
+  } else {
+    // HTMLソースにselect[id^="group_"]がない場合
+    const htmlLen = attendPage1Html.length;
+    const hasGroup = attendPage1Html.includes('group_');
+    console.log(`[JC] HTMLソース長=${htmlLen}, group_含む=${hasGroup}`);
+    if (hasGroup) {
+      const idx = attendPage1Html.indexOf('group_');
+      console.log(`[JC] group_位置: ${attendPage1Html.substring(idx, idx + 100)}`);
+    }
+  }
 
   parseAttendPage($attend1);
 
@@ -1093,13 +1116,14 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
         const aditHtml = await aditRes.text();
         const $adit = cheerio.load(aditHtml);
         // 最初の打刻（出勤打刻）の打刻場所を取得
-        // select[id^="change_group_id"] の selected option のテキストから5桁コードを抽出
+        // select[id^="change_group_id"] の最初のoptionのテキストから5桁コードを抽出
+        // 注意: HTMLソースではoption[selected]は取得不可（ブラウザのJSで動的に付与）、option:first-childを使用
         let stampCode = null;
         $adit('select[id^="change_group_id"]').each((idx, sel) => {
           if (stampCode) return; // 最初の打刻場所のみ使用
-          const selectedOption = $adit(sel).find('option[selected]');
-          if (selectedOption.length > 0) {
-            const optText = selectedOption.text().trim();
+          const firstOption = $adit(sel).find('option').first();
+          if (firstOption.length > 0) {
+            const optText = firstOption.text().trim();
             const codeMatch = optText.match(/^(\d{5})/);
             if (codeMatch) stampCode = codeMatch[1];
           }
