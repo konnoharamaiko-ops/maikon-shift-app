@@ -1344,11 +1344,12 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
   const safeMinHour = isFinite(minHour) ? minHour : businessHours.open;
   const rawMaxHour = isFinite(maxHour) ? maxHour : businessHours.close - 1;
 
-  // 現在時刻より後の時間帯は表示しない（現在進行中のスロットまで表示）
-  // currentHour=18の場合、表示最大は18時台（18:00～19:00）
-  // TempoVisorのデータ範囲と現在時刻の小さい方を採用するが、
-  // 現在時刻の時間帯は売上¥0でも必ず表示する（人時計算のため）
-  const safeMaxHour = currentHour;
+  // 表示する最大時間帯を決定：
+  // - 通常：現在時刻の時間帯まで表示（現在進行中のスロットまで）
+  // - レジ締め補完データがある場合：閉店後の補完データも表示するため、
+  //   rawMaxHour（売上がある最大時間帯）と currentHour の大きい方を採用
+  // これにより、レジ締め後に翌日データから補完された閉店後の売上も表示される
+  const safeMaxHour = Math.max(currentHour, rawMaxHour);
 
   for (let hour = safeMinHour; hour <= safeMaxHour; hour++) {
     // この時間帯が営業時間内かどうか
@@ -1420,13 +1421,33 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
     });
 
     const hourlySales = hourly[hour] !== undefined ? hourly[hour] : 0;
-    const hourlyProductivityValue = personHours > 0 ? Math.round(hourlySales / personHours) : 0;
+
+    // 閉店後の時間帯（補完データがある場合）は、閉店直前の時間帯の人時生産性をそのまま使用する
+    // 閉店後はスタッフが退勤済みのため人時が0になるが、
+    // 売上効率の参考値として閉店直前の人時生産性（円/人時）を引き継ぐ
+    const isAfterClose = hour >= businessHours.close;
+    let finalPersonHours = personHours;
+    let hourlyProductivityValue;
+
+    if (isAfterClose && hourlySales > 0) {
+      // 閉店直前の時間帯（businessHours.close - 1）の人時生産性を取得
+      const lastBusinessSlot = result.findLast(r => r.is_business_hour);
+      if (lastBusinessSlot && lastBusinessSlot.person_hours > 0) {
+        // 閉店直前の人時生産性（円/人時）を使って、補完売上から逆算した人時を算出
+        finalPersonHours = lastBusinessSlot.person_hours;
+        hourlyProductivityValue = Math.round(hourlySales / finalPersonHours);
+      } else {
+        hourlyProductivityValue = 0;
+      }
+    } else {
+      hourlyProductivityValue = personHours > 0 ? Math.round(hourlySales / personHours) : 0;
+    }
 
     result.push({
       hour,
       label: `${hour}:00〜${hour + 1}:00`,
       sales: hourlySales,
-      person_hours: parseFloat(personHours.toFixed(2)),
+      person_hours: parseFloat(finalPersonHours.toFixed(2)),
       productivity: hourlyProductivityValue,
       is_business_hour: isBusinessHour,
     });
