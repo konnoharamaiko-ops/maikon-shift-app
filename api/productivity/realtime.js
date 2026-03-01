@@ -1023,9 +1023,10 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       if (parts.length < 2) return;
       const staffId = parts[1];
       if (!staffId || isNaN(parseInt(staffId))) return;
-      // 選択中のoption（index 0 = デフォルト選択 = 今日のシフトグループ）
-      const firstOption = $page(sel).find('option').first();
-      const groupText = firstOption.text().trim();
+      // selected属性が付いているoption = 今日のシフトグループ（実際の勤務店舗）
+      // HTMLソースに selected="" 属性が付いているoptionを取得
+      const selectedOption = $page(sel).find('option[selected]');
+      const groupText = selectedOption.length > 0 ? selectedOption.text().trim() : '';
       const groupMatch = groupText.match(/^(\d{5})\s+(.+)$/);
       if (groupMatch) {
         const code = groupMatch[1];
