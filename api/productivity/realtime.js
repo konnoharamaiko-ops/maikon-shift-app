@@ -41,6 +41,8 @@ const LOCATION_TO_STORE_MAP = {
   '大正店':             '大正店',
   'エキマル':           'エキマル',
   'エキマルシェ':       'エキマル',
+  '駅丸':               'エキマル',   // 駅催事出張->駅丸 の場合
+  '駅催事出張':         'エキマル',   // 駅催事出張のみの場合
 };
 
 // TempoVisorの店舗名 → TempoVisor店舗コードのマッピング
@@ -636,8 +638,9 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const nameMatch = staffCell.match(/^(.+?)\s*\d{5}/);
     const staffName = nameMatch ? nameMatch[1].replace(/\xa0/g, ' ').trim() : staffCell.split(/\d{5}/)[0].trim();
 
-    // 打刻場所を取得（例: 店1018->かがや店 → かがや店）
-    const locationMatch = staffCell.match(/店\d+->(.+)$/);
+    // 打刻場所を取得（例: 店1018->かがや店 → かがや店、駅催事出張->駅丸 → エキマル）
+    // 「->」の右側が打刻場所名（店舗タイプに関わらず対応）
+    const locationMatch = staffCell.match(/->(.+)$/);
     const rawLocation = locationMatch ? locationMatch[1].trim() : null;
     const clockLocation = rawLocation ? (LOCATION_TO_STORE_MAP[rawLocation] || null) : null;
 
@@ -654,25 +657,41 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const clockOutBracket = clockOutRaw.match(/\((\d{1,2}:\d{2})\)/);
     const clockOut = clockOutBracket ? clockOutBracket[1] : clockOutRaw.match(/^(\d{1,2}:\d{2})/) ? clockOutRaw.match(/^(\d{1,2}:\d{2})/)[1] : null;
 
-    // 労働時間・休憩時間
+    // 休憩時間・打刻時間をパース
     const workTimeText = $work(cells[8]).text().trim();
     const breakTimeText = $work(cells[9]).text().trim();
-
-    const workMinutes = parseJapaneseTime(workTimeText);
     const breakMinutes = parseJapaneseTime(breakTimeText);
-    const netMinutes = Math.max(0, workMinutes - breakMinutes);
-    const netHours = parseFloat((netMinutes / 60).toFixed(2));
 
     // 打刻時間をパース（分単位）
     const clockInMinutes = parseTimeToMinutes(clockIn);
     const clockOutMinutes = parseTimeToMinutes(clockOut);
 
-    // 休憩開始時刻の推定（退勤時刻から労働時間を引いた時点）
-    // 休憩中の場合：出勤時刻から現在まで働いているが、休憩時間帯は除外
-    // ジョブカンは休憩時間の合計のみ提供するため、休憩は出勤時刻から連続して計算
-    // 実際には休憩開始・終了時刻は取得できないため、
-    // 休憩中ステータスの場合は「出勤してから現在まで」を人時として扱う
-    // （休憩時間帯の除外は難しいため、休憩中も勤務中と同様に扱う）
+    // リアルタイム勤務時間計算：現在時刻 - 出勤打刻時刻 - 休憩時間
+    // ジョブカンの「労働時間」は更新タイミングに依存するため、より正確なリアルタイム計算を使用
+    const nowJst = new Date();
+    const jstNowMs = nowJst.getTime() + 9 * 60 * 60 * 1000;
+    const jstNowDate = new Date(jstNowMs);
+    const nowTotalMinutes = jstNowDate.getUTCHours() * 60 + jstNowDate.getUTCMinutes();
+
+    let netMinutes = 0;
+    if (status === '勤務中' || status === '休憩中') {
+      // 勤務中・休憩中：現在時刻 - 出勤打刻時刻 - 休憩時間（リアルタイム）
+      if (clockInMinutes !== null) {
+        const elapsedMinutes = Math.max(0, nowTotalMinutes - clockInMinutes);
+        netMinutes = Math.max(0, elapsedMinutes - breakMinutes);
+      }
+    } else if (status === '退勤済み') {
+      // 退勤済み：退勤打刻時刻 - 出勤打刻時刻 - 休憩時間
+      if (clockInMinutes !== null && clockOutMinutes !== null) {
+        const elapsedMinutes = Math.max(0, clockOutMinutes - clockInMinutes);
+        netMinutes = Math.max(0, elapsedMinutes - breakMinutes);
+      } else {
+        // 打刻データがない場合はジョブカンの労働時間テキストを使用
+        const workMinutes = parseJapaneseTime(workTimeText);
+        netMinutes = Math.max(0, workMinutes - breakMinutes);
+      }
+    }
+    const netHours = parseFloat((netMinutes / 60).toFixed(2));
 
     // 振り分け先の店舗を決定
     // - 勤務中・休憩中：打刻場所の店舗に振り分け（掛け持ち対応）
@@ -855,8 +874,9 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
     const slotEndMinutes = (hour + 1) * 60;
 
     // 現在時刻より未来の時間帯は、売上データがなければスキップ
-    const isFutureSlot = slotStartMinutes >= currentMinutes;
-    if (isFutureSlot && (hourly[hour] === undefined || hourly[hour] === 0)) {
+    // slotEndMinutes > currentMinutes: スロットがまだ終わっていない（現在時刻がスロット内 or 未来）
+    const isFutureSlot = slotEndMinutes > currentMinutes;
+    if (isFutureSlot && slotStartMinutes >= currentMinutes && (hourly[hour] === undefined || hourly[hour] === 0)) {
       continue;
     }
 
@@ -884,11 +904,23 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
 
       if (overlapMinutes <= 0) return;
 
-      // 休憩時間の按分除外
-      // 総勤務時間に対する休憩時間の割合を、この時間帯の重複時間に按分
+      // 休憩時間の除外
+      // ジョブカンは休憩開始・終了時刻を提供しないため、以下の方针で除外する：
+      //
+      // 「休憩中」ステータスの場合：
+      //   現在進行中のスロット（isFutureSlot=true）にいる場合は人時に含めない
+      //   過去のスロットは通常通り計算（その時間帯は勤務していたはず）
+      //
+      // 「退勤済み」ステータスの場合：
+      //   総勤務時間に対する休憩時間の割合を、この時間帯の重複時間に按分して除外
       let adjustedOverlapMinutes = overlapMinutes;
-      if (emp.break_minutes > 0 && empEnd > empStart) {
-        const totalWorkSpan = empEnd - empStart; // 出勤〜退勤の総時間（分）
+
+      if (emp.status === '休憩中' && isFutureSlot) {
+        // 休憩中ステータスかつ現在進行中のスロット：人時に含めない
+        adjustedOverlapMinutes = 0;
+      } else if (emp.break_minutes > 0 && empEnd > empStart) {
+        // 休憩時間を按分除外（退勤済み・勤務中の過去スロット）
+        const totalWorkSpan = empEnd - empStart; // 出勤〜退勤（または現在）の総時間
         const breakRatio = Math.min(1, emp.break_minutes / totalWorkSpan);
         adjustedOverlapMinutes = overlapMinutes * (1 - breakRatio);
       }
