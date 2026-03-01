@@ -278,9 +278,10 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     throw new Error('Jobcan: Work state table not found');
   }
 
-  // 各行を解析（奇数行がデータ行、偶数行はシフト詳細）
+  // Step4: 勤務状況ページから各スタッフの情報を収集（employee_id含む）
+  const staffInfoList = [];
   const rows = $work(targetTable).find('tr').toArray();
-  
+
   for (let i = 1; i < rows.length; i++) {
     const cells = $work(rows[i]).find('td').toArray();
     if (cells.length < 10) continue;
@@ -288,17 +289,22 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const staffCell = $work(cells[0]).text().trim();
     if (!staffCell) continue;
 
-    // 部署コードを抽出（例: "志築 淳一12010 工房0918->北摂工場"）
+    // 所属部署コードを抽出（フォールバック用）
     const deptMatch = staffCell.match(/(\d{5})\s/);
     if (!deptMatch) continue;
 
     const deptCode = deptMatch[1];
-    const storeName = STORE_DEPT_MAP[deptCode];
-    if (!storeName) continue; // 店舗以外（工場、通販部など）はスキップ
+    // 店舗以外（工場、通販部など）もemployee_id取得のため一旦保持
+    // ただし、STORE_DEPT_MAPにないものは最終的にスキップ
 
     // スタッフ名（部署コードより前の部分）
     const nameMatch = staffCell.match(/^(.+?)\s*\d{5}/);
     const staffName = nameMatch ? nameMatch[1].replace(/\xa0/g, ' ').trim() : staffCell.split(/\d{5}/)[0].trim();
+
+    // employee_idをリンクから取得（edit-employee?employee_id=XXX）
+    const editLink = $work(cells[0]).find('a[href*="edit-employee"]').attr('href') || '';
+    const empIdMatch = editLink.match(/employee_id=(\d+)/);
+    const employeeId = empIdMatch ? empIdMatch[1] : null;
 
     // セル構造: [0]スタッフ名, [1]リンク, [2]出勤状況, [3]シフト, [4]シフト時刻, [5]遅刻フラグ, [6]出勤実績, [7]退勤実績, [8]労働時間, [9]休憩時間
     const status = $work(cells[2]).text().trim();
@@ -307,6 +313,85 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const workTimeText = $work(cells[8]).text().trim();
     const breakTimeText = $work(cells[9]).text().trim();
 
+    staffInfoList.push({
+      employeeId,
+      staffName,
+      deptCode,
+      status,
+      clockIn,
+      clockOut,
+      workTimeText,
+      breakTimeText,
+    });
+  }
+
+  // Step5: 本日打刻したスタッフ（勤務中・退勤済み）の出入詳細ページを並行取得して打刻場所を確認
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth() + 1;
+  const day = today.getDate();
+
+  // 打刻場所マップ: employeeId -> 打刻場所コード（5桁）
+  const stampPlaceMap = {};
+
+  // 勤務中・退勤済みのスタッフのみ出入詳細を取得（並行処理、最大20件ずつバッチ処理）
+  const activeStaff = staffInfoList.filter(s => 
+    s.employeeId && (s.status === '勤務中' || s.status === '退勤済み')
+  );
+
+  // バッチサイズ10で並行取得
+  const batchSize = 10;
+  for (let b = 0; b < activeStaff.length; b += batchSize) {
+    const batch = activeStaff.slice(b, b + batchSize);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (staff) => {
+        const aditUrl = `https://ssl.jobcan.jp/client/adit/?employee_id=${staff.employeeId}&year=${year}&month=${month}&day=${day}`;
+        const aditRes = await fetch(aditUrl, {
+          headers: {
+            'Cookie': allCookies,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': workUrl,
+          },
+          redirect: 'follow',
+        });
+        const aditHtml = await aditRes.text();
+        const $adit = cheerio.load(aditHtml);
+
+        // 最初の打刻（出勤打刻）の打刻場所を取得
+        // select[id^="change_group_id"] の selected option のテキストから5桁コードを抽出
+        let stampCode = null;
+        $adit('select[id^="change_group_id"]').each((idx, sel) => {
+          if (stampCode) return; // 最初の打刻場所のみ使用
+          const selectedOption = $adit(sel).find('option[selected]');
+          if (selectedOption.length > 0) {
+            const optText = selectedOption.text().trim();
+            const codeMatch = optText.match(/^(\d{5})/);
+            if (codeMatch) {
+              stampCode = codeMatch[1];
+            }
+          }
+        });
+
+        return { employeeId: staff.employeeId, stampCode };
+      })
+    );
+
+    for (const result of batchResults) {
+      if (result.status === 'fulfilled' && result.value.stampCode) {
+        stampPlaceMap[result.value.employeeId] = result.value.stampCode;
+      }
+    }
+  }
+
+  // Step6: スタッフ情報を統合して店舗振り分け
+  for (const staffInfo of staffInfoList) {
+    const { employeeId, staffName, deptCode, status, clockIn, clockOut, workTimeText, breakTimeText } = staffInfo;
+
+    // 打刻場所コードを優先使用、なければ所属部署コードにフォールバック
+    const effectiveCode = (employeeId && stampPlaceMap[employeeId]) ? stampPlaceMap[employeeId] : deptCode;
+    const storeName = STORE_DEPT_MAP[effectiveCode];
+    if (!storeName) continue; // 店舗以外（工場、通販部など）はスキップ
+
     const workMinutes = parseJapaneseTime(workTimeText);
     const breakMinutes = parseJapaneseTime(breakTimeText);
     const netMinutes = Math.max(0, workMinutes - breakMinutes);
@@ -314,7 +399,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
     const employee = {
       name: staffName,
-      dept_code: deptCode,
+      dept_code: effectiveCode,
       store_name: storeName,
       status: status,
       clock_in: clockIn || null,
