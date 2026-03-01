@@ -848,13 +848,20 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
 
   // 翌日データを解析してレジ締め後の売上を今日分に補完
   const $tomorrow = cheerio.load(tomorrowHtml);
+  console.log(`[TV] 翌日HTML length: ${tomorrowHtml.length}, tables: ${$tomorrow('table').length}`);
   $tomorrow('table').each((tableIdx, table) => {
     const rows = $tomorrow(table).find('tr').toArray();
     if (rows.length < 2) return;
     const headerCells = $tomorrow(rows[0]).find('td,th').toArray();
     if (headerCells.length < 3) return;
     const firstHeaderText = $tomorrow(headerCells[0]).text().trim();
-    const isHourlyTable = firstHeaderText === '店舗名';
+    const secondHeaderText = headerCells.length > 1 ? $tomorrow(headerCells[1]).text().trim() : '';
+    const tableClass = $tomorrow(table).attr('class') || '';
+    if (tableClass.includes('nlist') || secondHeaderText.includes(':00')) {
+      console.log(`[TV] 翌日 Table ${tableIdx} class="${tableClass}" firstHeader="${firstHeaderText}" (len=${firstHeaderText.length}) secondHeader="${secondHeaderText}"`);
+    }
+    const isHourlyTable = firstHeaderText === '店舗名' ||
+      (firstHeaderText.length > 0 && firstHeaderText !== '合計' && secondHeaderText.match(/\d{1,2}:00/));
     if (!isHourlyTable) return;
 
     const hourColumns = [];
