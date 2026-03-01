@@ -428,10 +428,21 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     const firstHeaderText = $hourly(headerCells[0]).text().trim();
     const secondHeaderText = headerCells.length > 1 ? $hourly(headerCells[1]).text().trim() : '';
 
+    // デバッグ: nlistテーブルのヘッダーテキストをログ出力
+    const tableClass = $hourly(table).attr('class') || '';
+    if (tableClass.includes('nlist') || secondHeaderText.includes(':00')) {
+      console.log(`[TV] Table ${tableIdx} class="${tableClass}" firstHeader="${firstHeaderText}" (len=${firstHeaderText.length}) secondHeader="${secondHeaderText}"`);
+      // 文字コードデバッグ: 各文字のコードポイントを出力
+      const codePoints = [...firstHeaderText].map(c => c.codePointAt(0).toString(16)).join(',');
+      console.log(`[TV] firstHeader codepoints: ${codePoints}`);
+    }
+
     // 「店舗名」ヘッダーを持つテーブルのみ処理（合計テーブルは除外）
     // Table 0（合計テーブル）: firstHeaderText='' → 除外
     // Table 1（店舗テーブル）: firstHeaderText='店舗名' → 処理対象
-    const isHourlyTable = firstHeaderText === '店舗名';
+    // 文字コード問題に対応するため、secondHeaderが時間帯かつfirstHeaderが空でない場合も対象とする
+    const isHourlyTable = firstHeaderText === '店舗名' || 
+      (firstHeaderText.length > 0 && firstHeaderText !== '合計' && secondHeaderText.match(/\d{1,2}:00/));
 
     if (!isHourlyTable) return;
 
