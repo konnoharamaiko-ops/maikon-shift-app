@@ -428,10 +428,10 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     const firstHeaderText = $hourly(headerCells[0]).text().trim();
     const secondHeaderText = headerCells.length > 1 ? $hourly(headerCells[1]).text().trim() : '';
 
-    // 「店舗名」ヘッダーか、または時間帯（HH:00～）を含む行を探す
-    const isHourlyTable = firstHeaderText === '店舗名' || 
-                          secondHeaderText.match(/^\d{1,2}:00/) ||
-                          secondHeaderText.match(/^\d{1,2}:/);
+    // 「店舗名」ヘッダーを持つテーブルのみ処理（合計テーブルは除外）
+    // Table 0（合計テーブル）: firstHeaderText='' → 除外
+    // Table 1（店舗テーブル）: firstHeaderText='店舗名' → 処理対象
+    const isHourlyTable = firstHeaderText === '店舗名';
 
     if (!isHourlyTable) return;
 
