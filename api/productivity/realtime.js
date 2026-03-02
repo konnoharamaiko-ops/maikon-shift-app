@@ -1265,39 +1265,46 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     }
   });
 
-  // 翌日（3/3）の最初の伝票時刻より前の時間帯を今日分に補完
+  // 翌日（3/3）のN341の「除外時間帯（今日レジ締め後分）」を今日分に補完
   // 
-  // 翌日（3/3）のN341には「今日（3/2）のレジ締め後分」が最初に記録される
+  // tomorrowRegijimeMap[storeName] は Set<number> 形式
+  // = 翌日N341の「最初の伝票時刻より前に出現した時間帯」= 今日のレジ締め後分
   // 例：3/3のN341に 17:30、18:00（今日レジ締め後）、その後 9:30（翌日分）が記録される
-  // 「最初の伝票時刻（9:30）」より前の時間帯（17時、18時）が今日レジ締め後分
-  // → 翌日データから「最初の伝票時刻より前の時間帯」を今日分に補完する
+  // → tomorrowRegijimeMap[storeName] = Set{17, 18}
+  // → 翌日データの17時台・18時台を今日分に補完する
   for (const [storeName, tomorrowHourly] of Object.entries(tomorrowHourlyAll)) {
-    const tomorrowFirstHour = tomorrowRegijimeMap[storeName];
-    if (tomorrowFirstHour === undefined) {
-      // 翌日のN341データがない場合：翌日の全売上を今日分に補完
-      // （翌日データがある = 今日のレジ締め後売上が計上されている）
+    const tomorrowExcludeSet = tomorrowRegijimeMap[storeName]; // Set<number> または undefined
+    
+    if (!tomorrowExcludeSet || tomorrowExcludeSet.size === 0) {
+      // 翌日のN341除外データがない場合：翌日の全売上を今日分に補完
+      // （翌日TempoVisorデータがある = 今日のレジ締め後売上が計上されている可能性）
+      // ただし翌日の通常営業時間帯（9〜18時台）は除外し、閉店後（19時以降）のみ補完
       for (const [hourStr, sales] of Object.entries(tomorrowHourly)) {
         const hour = parseInt(hourStr);
-        if (!storeHourly[storeName]) storeHourly[storeName] = {};
-        storeHourly[storeName][hour] = (storeHourly[storeName][hour] || 0) + sales;
-        const saleEntry = storeSales.find(s => s.store_name === storeName);
-        if (saleEntry) saleEntry.today_sales += sales;
-        console.log(`[TV] ${storeName}: 翌日${hour}時台 ${sales}円 → 今日に補完（翌日N341データなし）`);
+        // 翌日の通常営業時間帯（現在時刻より前の時間帯）は翌日の通常営業分なので無視
+        // 閉店後（現在時刻より後の時間帯）のみ今日分に補完
+        if (hour > currentHourJST) {
+          if (!storeHourly[storeName]) storeHourly[storeName] = {};
+          storeHourly[storeName][hourStr] = (storeHourly[storeName][hourStr] || 0) + sales;
+          const saleEntry = storeSales.find(s => s.store_name === storeName);
+          if (saleEntry) saleEntry.today_sales += sales;
+          console.log(`[TV] ${storeName}: 翌日${hour}時台 ${sales}円 → 今日に補完（翌日N341データなし・閉店後）`);
+        }
       }
     } else {
-      // 翌日の最初の伝票時刻より前の時間帯のみ今日分に補完
-      // （翌日の最初の伝票時刻以降の売上は「翌日の通常営業分」なので除外）
+      // 翌日のN341除外セットに含まれる時間帯のみ今日分に補完
+      // （tomorrowExcludeSet = 今日のレジ締め後分の時間帯セット）
       for (const [hourStr, sales] of Object.entries(tomorrowHourly)) {
         const hour = parseInt(hourStr);
-        if (hour < tomorrowFirstHour) {
-          // 翌日の最初の伝票時刻より前 = 今日のレジ締め後売上（今日分に補完）
+        if (tomorrowExcludeSet.has(hour) && sales > 0) {
+          // 今日のレジ締め後売上 → 今日分に補完
           if (!storeHourly[storeName]) storeHourly[storeName] = {};
-          storeHourly[storeName][hour] = (storeHourly[storeName][hour] || 0) + sales;
+          storeHourly[storeName][hourStr] = (storeHourly[storeName][hourStr] || 0) + sales;
           const saleEntry = storeSales.find(s => s.store_name === storeName);
           if (saleEntry) saleEntry.today_sales += sales;
           console.log(`[TV] ${storeName}: 翌日${hour}時台 ${sales}円 → 今日に補完（今日レジ締め後）`);
         }
-        // 翌日の最初の伝票時刻以降の売上は翌日の通常営業分なので無視
+        // tomorrowExcludeSetに含まれない時間帯は翌日の通常営業分なので無視
       }
     }
   }
