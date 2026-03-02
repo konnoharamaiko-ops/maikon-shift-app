@@ -1127,17 +1127,25 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     if (!storeHourly[storeName]) continue;
     const saleEntry = storeSales.find(s => s.store_name === storeName);
     let totalExcluded = 0;
+    
+    // デバッグ：storeHourlyのキーと値を確認
+    if (storeName === '田辺店') {
+      const keys = Object.keys(storeHourly[storeName]);
+      const keyTypes = keys.map(k => `${k}(${typeof k}):${storeHourly[storeName][k]}`);
+      console.log(`[N341-DEBUG] 田辺店 storeHourly keys: ${keyTypes.join(', ')}`);
+      console.log(`[N341-DEBUG] 田辺店 firstHour=${firstHour}(${typeof firstHour})`);
+    }
 
     for (const [hourStr, sales] of Object.entries(storeHourly[storeName])) {
       const hour = parseInt(hourStr);
       // 最初の伝票時刻より前の時間帯 = 前日レジ締め後分
       if (hour < firstHour && sales > 0) {
         totalExcluded += sales;
-        // 今日の時間帯別売上から除外（前日レジ締め後分なので今日の売上に含めない）
-        storeHourly[storeName][hour] = 0;
+        // 今日の時間帯別売上から除外（文字列キーで設定して確実に上書き）
+        storeHourly[storeName][hourStr] = 0;
         // 昨日の同じ時間帯に補完（昨日のレジ締め後売上として表示するため）
         if (!yesterdayHourly[storeName]) yesterdayHourly[storeName] = {};
-        yesterdayHourly[storeName][hour] = (yesterdayHourly[storeName][hour] || 0) + sales;
+        yesterdayHourly[storeName][hourStr] = (yesterdayHourly[storeName][hourStr] || 0) + sales;
         console.log(`[N341] ${storeName}: 前日レジ締め後除外 ${hour}時台 ${sales}円 → 昨日${hour}時台に補完`);
       }
     }
