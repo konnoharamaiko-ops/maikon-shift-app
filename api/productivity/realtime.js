@@ -1831,24 +1831,31 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
       if (overlapMinutes <= 0) return;
 
       // 休憩時間の除外
-      // ジョブカンは休憩開始・終了時刻を提供しないため、以下の方针で除外する：
+      // ジョブカンは休憩開始・終了時刻を提供しないため、以下の方針で除外する：
       //
       // 「休憩中」ステータスの場合：
       //   現在進行中のスロット（isFutureSlot=true）にいる場合は人時に含めない
       //   過去のスロットは通常通り計算（その時間帯は勤務していたはず）
       //
-      // 「退勤済み」ステータスの場合：
-      //   総勤務時間に対する休憩時間の割合を、この時間帯の重複時間に按分して除外
+      // 「退勤済み」・「勤務中」ステータスの場合：
+      //   休憩時間は「退勤時刻（または現在時刻）が含まれる時間帯」から集中除外する。
+      //   これにより、最初の時間帯ではなく最後の時間帯から休憩分が引かれる。
+      //   例：10:00〜18:00勤務、休憩60分 → 17:00〜18:00の時間帯から60分除外
       let adjustedOverlapMinutes = overlapMinutes;
 
       if (emp.status === '休憩中' && isFutureSlot) {
         // 休憩中ステータスかつ現在進行中のスロット：人時に含めない
         adjustedOverlapMinutes = 0;
-      } else if (emp.break_minutes > 0 && empEnd > empStart) {
-        // 休憩時間を按分除外（退勤済み・勤務中の過去スロット）
-        const totalWorkSpan = empEnd - empStart; // 出勤〜退勤（または現在）の総時間
-        const breakRatio = Math.min(1, emp.break_minutes / totalWorkSpan);
-        adjustedOverlapMinutes = overlapMinutes * (1 - breakRatio);
+      } else if (emp.break_minutes > 0) {
+        // 休憩時間を「退勤時刻（または現在時刻）が含まれる時間帯」から集中除外
+        // empEnd が含まれる時間帯のスロット = Math.floor(empEnd / 60) 時台
+        const breakSlotHour = Math.floor((empEnd - 1) / 60); // empEnd-1 で境界値を調整
+        if (hour === breakSlotHour) {
+          // このスロットが「休憩除外スロット」：休憩時間分を除外
+          const breakDeduction = Math.min(adjustedOverlapMinutes, emp.break_minutes);
+          adjustedOverlapMinutes = Math.max(0, adjustedOverlapMinutes - breakDeduction);
+        }
+        // それ以外のスロットは按分なし（overlapMinutes そのまま）
       }
 
       personHours += adjustedOverlapMinutes / 60;
