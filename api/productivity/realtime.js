@@ -677,16 +677,23 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
         const html = iconv.decode(Buffer.from(buffer), 'cp932');
         const $ = cheerio.load(html);
         
-        // デバッグ：N341のHTMLテーブル構造をログ出力（店舗名が田辺店の場合のみ）
-        if (storeName === '田辺店') {
-          console.log(`[N341-DEBUG] ${storeName}(${dateStr}): HTML長=${html.length}, テーブル数=${$('table').length}`);
-          $('table').each((tIdx, tbl) => {
-            const rows = $(tbl).find('tr').toArray();
-            if (rows.length === 0) return;
-            const firstRowCells = $(rows[0]).find('td,th').toArray();
-            const cellTexts = firstRowCells.slice(0, 4).map(c => `"${$(c).text().trim()}"`).join(', ');
-            console.log(`[N341-DEBUG] Table ${tIdx}: rows=${rows.length}, first4cells=[${cellTexts}]`);
-          });
+        // デバッグ：N341のHTMLテーブル構造をログ出力（全店舗）
+        console.log(`[N341-DEBUG] ${storeName}(${dateStr}): HTML長=${html.length}, テーブル数=${$('table').length}`);
+        let foundDataTable = false;
+        $('table').each((tIdx, tbl) => {
+          const rows = $(tbl).find('tr').toArray();
+          if (rows.length === 0) return;
+          const firstRowCells = $(rows[0]).find('td,th').toArray();
+          const cellTexts = firstRowCells.slice(0, 4).map(c => `"${$(c).text().trim()}"`).join(', ');
+          // 「日付」「時間」「伝票No」を含むテーブルのみログ出力
+          const headerText = firstRowCells.map(c => $(c).text().trim()).join('|');
+          if (headerText.includes('日付') || headerText.includes('時間') || headerText.includes('伝票')) {
+            console.log(`[N341-DEBUG] ${storeName} Table ${tIdx}: rows=${rows.length}, first4cells=[${cellTexts}]`);
+            foundDataTable = true;
+          }
+        });
+        if (!foundDataTable) {
+          console.log(`[N341-DEBUG] ${storeName}(${dateStr}): データテーブル未検出（HTML長=${html.length}）`);
         }
         
         // データテーブルを探す（日付・時間・伝票Noを含む）
@@ -713,8 +720,16 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
           const h0 = $(headerRow[0]).text().trim();
           const h1 = $(headerRow[1]).text().trim();
           const h2 = $(headerRow[2]).text().trim();
-          // 「日付」「時間」「伝票No」のヘッダーを確認
-          if (h0 !== '日付' || h1 !== '時間' || h2 !== '伝票No') return;
+          // 「日付」「時間」「伝票No」のヘッダーを確認（全角・半角・空白を正規化して比較）
+          const normalize = s => s.replace(/\s/g, '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+          const nh0 = normalize(h0);
+          const nh1 = normalize(h1);
+          const nh2 = normalize(h2);
+          const isDataTable = (nh0 === '日付' || nh0.includes('日付')) &&
+                              (nh1 === '時間' || nh1.includes('時間')) &&
+                              (nh2.includes('伝票') || nh2.includes('No') || nh2.includes('番号'));
+          if (!isDataTable) return;
+          console.log(`[N341] ${storeName}(${dateStr}): データテーブル発見 h0="${h0}" h1="${h1}" h2="${h2}"`);
           
             // このテーブルの全行を走査して「最初の伝票時刻」と「それより前に出現した時間帯」を取得
           // N341のHTMLは時系列順（前日レジ締め後分 → 本日通常営業分）に並んでいる
@@ -1272,25 +1287,16 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   // 例：3/3のN341に 17:30、18:00（今日レジ締め後）、その後 9:30（翌日分）が記録される
   // → tomorrowRegijimeMap[storeName] = Set{17, 18}
   // → 翌日データの17時台・18時台を今日分に補完する
+  //
+  // 重要：翌日N341が存在しない場合（今日の閉店前）は補完しない
+  //       翌日N341が存在する場合（今日の閉店後）は除外時間帯のみ今日に補完
   for (const [storeName, tomorrowHourly] of Object.entries(tomorrowHourlyAll)) {
     const tomorrowExcludeSet = tomorrowRegijimeMap[storeName]; // Set<number> または undefined
     
     if (!tomorrowExcludeSet || tomorrowExcludeSet.size === 0) {
-      // 翌日のN341除外データがない場合：翌日の全売上を今日分に補完
-      // （翌日TempoVisorデータがある = 今日のレジ締め後売上が計上されている可能性）
-      // ただし翌日の通常営業時間帯（9〜18時台）は除外し、閉店後（19時以降）のみ補完
-      for (const [hourStr, sales] of Object.entries(tomorrowHourly)) {
-        const hour = parseInt(hourStr);
-        // 翌日の通常営業時間帯（現在時刻より前の時間帯）は翌日の通常営業分なので無視
-        // 閉店後（現在時刻より後の時間帯）のみ今日分に補完
-        if (hour > currentHourJST) {
-          if (!storeHourly[storeName]) storeHourly[storeName] = {};
-          storeHourly[storeName][hourStr] = (storeHourly[storeName][hourStr] || 0) + sales;
-          const saleEntry = storeSales.find(s => s.store_name === storeName);
-          if (saleEntry) saleEntry.today_sales += sales;
-          console.log(`[TV] ${storeName}: 翌日${hour}時台 ${sales}円 → 今日に補完（翌日N341データなし・閉店後）`);
-        }
-      }
+      // 翌日のN341除外データがない場合：補完しない
+      // （翌日N341が存在しない = 今日の閉店前、または翌日N341にレジ締め後データなし）
+      console.log(`[TV] ${storeName}: 翌日N341除外データなし → 翌日補完スキップ`);
     } else {
       // 翌日のN341除外セットに含まれる時間帯のみ今日分に補完
       // （tomorrowExcludeSet = 今日のレジ締め後分の時間帯セット）
