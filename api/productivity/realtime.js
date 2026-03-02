@@ -610,17 +610,17 @@ async function fetchStoreUpdateTimes(cookies) {
 
 /**
  * N341Servlet（明細管理 - 処理種別）から各店舗のレジ締め時間帯を取得
- * 指定日付の「最後（最新）の伝票時刻」を取得し、その時間帯（時）を返す
  * 
- * 仕様：
- * - レジ締め時間 = 指定日付のN341Servletに記録された「最後の伝票時刻」の時間帯
- * - 例：最後の伝票が16:55 → レジ締め時間帯 = 16時
- * - この時間帯以降の売上は「前日のレジ締め後分」として扱う
+ * 仕様（田辺店3/2の例）：
+ * - 3/2のN341には「3/1のレジ締め後分」と「3/2の通常営業分」が混在する
+ * - 例：16:55、17:17、18:45（前日レジ締め後）、その後9:25、10:22（本日通常営業）
+ * - 「最初の伝票時刻（9:25）」より前の時間帯（16時、17時、18時）が前日レジ締め後分
+ * - つまり「最初の伝票時刻」を取得し、それより前の時間帯を除外する
  * 
  * @param {string} cookies - ログイン済みCookie
  * @param {string} repBaseUrl - TempoVisorのベースURL
  * @param {string} dateStr - 対象日付（YYYY/MM/DD形式）
- * @returns { '田辺店': 16, '大正店': 17, ... } 形式のマップ（レジ締め時間帯）
+ * @returns { '田辺店': 9, '大正店': 10, ... } 形式のマップ（最初の伝票時刻の時間帯）
  */
 async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
   const storeEntries = Object.entries(TEMPOVISOR_STORE_CODES);
@@ -674,10 +674,14 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
         const $ = cheerio.load(html);
         
         // データテーブルを探す（日付・時間・伝票Noを含む）
-        // 「最後（最新）の伝票時刻」を取得するため、全行を走査して最後に見つかった時刻を使用
-        let lastHour = null;
-        let lastTimeStr = null;
+        // 「最初の伝票時刻」を取得する：
+        // 3/2のN341には前日レジ締め後分（16:55等）と本日分（9:25等）が混在する
+        // 「最初の伝票時刻」（9:25）より前の時間帯（16時、17時、18時）が前日レジ締め後分
+        let firstHour = null;
+        let firstMinutes = null; // 最初の伝票の分単位時刻（比較用）
+        let firstTimeStr = null;
         $('table').each((_, table) => {
+          if (firstHour !== null) return; // すでに見つかったらスキップ
           const rows = $(table).find('tr').toArray();
           if (rows.length < 2) return;
           // 最初のデータ行でテーブル形式を確認
@@ -688,29 +692,38 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
           // 日付（2026/03/02形式）と時間（16:55形式）を確認
           if (!cell0.match(/^\d{4}\/\d{2}\/\d{2}$/) || !cell1.match(/^\d{1,2}:\d{2}$/)) return;
           
-          // このテーブルの全行を走査して最後の伝票時刻を取得
+          // このテーブルの全行を走査して最小の時刻（最初の伝票）を取得
           rows.forEach(row => {
             const cells = $(row).find('td,th').toArray();
             if (cells.length < 3) return;
             const c0 = $(cells[0]).text().trim();
             const c1 = $(cells[1]).text().trim();
             if (c0.match(/^\d{4}\/\d{2}\/\d{2}$/) && c1.match(/^\d{1,2}:\d{2}$/)) {
-              const hourMatch = c1.match(/^(\d{1,2}):\d{2}$/);
-              if (hourMatch) {
-                lastHour = parseInt(hourMatch[1]);
-                lastTimeStr = c1;
+              const timeMatch = c1.match(/^(\d{1,2}):(\d{2})$/);
+              if (timeMatch) {
+                const h = parseInt(timeMatch[1]);
+                const m = parseInt(timeMatch[2]);
+                const totalMinutes = h * 60 + m;
+                // 最小の時刻（最初の伝票）を記録
+                if (firstMinutes === null || totalMinutes < firstMinutes) {
+                  firstMinutes = totalMinutes;
+                  firstHour = h;
+                  firstTimeStr = c1;
+                }
               }
             }
           });
         });
         
-        if (lastHour !== null) {
-          console.log(`[N341] ${storeName}(${dateStr}): 最後の伝票時刻=${lastTimeStr} → レジ締め時間帯=${lastHour}時台`);
+        if (firstHour !== null) {
+          console.log(`[N341] ${storeName}(${dateStr}): 最初の伝票時刻=${firstTimeStr} → 開始時間帯=${firstHour}時台`);
+        } else {
+          console.log(`[N341] ${storeName}(${dateStr}): データなし`);
         }
-        return { storeName, lastHour };
+        return { storeName, firstHour };
       } catch (err) {
         console.warn(`[N341] ${storeName}: 取得失敗 ${err.message}`);
-        return { storeName, lastHour: null };
+        return { storeName, firstHour: null };
       }
     })
   );
@@ -718,12 +731,12 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
   // 結果をマップに変換
   const regijimeMap = {};
   results.forEach(result => {
-    if (result.status === 'fulfilled' && result.value.lastHour !== null) {
-      regijimeMap[result.value.storeName] = result.value.lastHour;
+    if (result.status === 'fulfilled' && result.value.firstHour !== null) {
+      regijimeMap[result.value.storeName] = result.value.firstHour;
     }
   });
   
-  console.log(`[N341] レジ締め時間帯マップ(${dateStr}):`, JSON.stringify(regijimeMap));
+  console.log(`[N341] 開始時間帯マップ(${dateStr}):`, JSON.stringify(regijimeMap));
   return regijimeMap;
 }
 
@@ -1062,13 +1075,16 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   // ============================================================
   // N341Servletから当日・翌日のレジ締め時間帯を取得
   // 
-  // 仕様：
-  // - 「今日のレジ締め時間」= 今日(todayStr)のN341の最後の伝票時刻の時間帯
-  //   → 今日の売上から「今日のレジ締め時間帯以降」を除外する
-  //   → 除外した分は「昨日のレジ締め後売上」として yesterdayHourly に補完する
-  // - 「翌日のレジ締め時間」= 翌日(tomorrowStr)のN341の最後の伝票時刻の時間帯
-  //   → 今日の売上から「翌日のレジ締め時間帯以降」を除外する（翌日計上分）
+  // 仕様（田辺店3/2の例）：
+  // 
+  // 「今日（3/2）の売上を表示する場合」のレジ締め時間 = 翌日(3/3)のN341の最新時刻
+  //   → 今日の売上から「翌日(3/3)のレジ締め時間帯以降」を除外する
   //   → 除外した分は「今日のレジ締め後売上」として storeHourly に補完する
+  // 
+  // 「昨日（3/1）の売上を表示する場合」のレジ締め時間 = 今日(3/2)のN341の最新時刻
+  //   → 昨日の売上（yesterdayHourly）はすでに昨日のデータから取得済み
+  //   → 今日のTempoVisorデータに昨日レジ締め後分が計上されているので、
+  //   今日のデータから「今日(3/2)のレジ締め時間帯以降」を除外し、yesterdayHourlyに補完する
   // ============================================================
   const [todayRegijimeMap, tomorrowRegijimeMap] = await Promise.all([
     fetchRegijimeStartHours(cookies, repBaseUrl, todayStr),
@@ -1076,31 +1092,36 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   ]);
 
   // ============================================================
-  // 今日のデータから「今日のレジ締め時間帯以降」を除外
-  // （前日のレジ締め後に今日日付で計上された売上を除外）
-  // 除外した売上は yesterdayHourly に追加（昨日の閉店後売上として補完）
+  // 「今日の売上」から「前日レジ締め後分」を除外
+  // 
+  // TempoVisorの今日（3/2）データには、前日（3/1）のレジ締め後分が混在している
+  // 例：3/2のN341に 16:55、17:17、18:45（前日分）、その後 9:25（本日分）が記録されている
+  // 「最初の伝票時刻（9:25）」より前の時間帯（16時、17時、18時）が前日レジ締め後分
+  // → 今日の売上から「最初の伝票時刻より前の時間帯」を除外する
+  // → 除外した分は昨日（3/1）の売上として yesterdayHourly に補完する
   // ============================================================
-  for (const [storeName, regijimeHour] of Object.entries(todayRegijimeMap)) {
+  for (const [storeName, firstHour] of Object.entries(todayRegijimeMap)) {
     if (!storeHourly[storeName]) continue;
     const saleEntry = storeSales.find(s => s.store_name === storeName);
     let totalExcluded = 0;
 
     for (const [hourStr, sales] of Object.entries(storeHourly[storeName])) {
       const hour = parseInt(hourStr);
-      if (hour >= regijimeHour && sales > 0) {
+      // 最初の伝票時刻より前の時間帯 = 前日レジ締め後分
+      if (hour < firstHour && sales > 0) {
         totalExcluded += sales;
-        // 今日の時間帯別売上から除外
+        // 今日の時間帯別売上から除外（前日レジ締め後分なので今日の売上に含めない）
         storeHourly[storeName][hour] = 0;
         // 昨日の同じ時間帯に補完（昨日のレジ締め後売上として表示するため）
         if (!yesterdayHourly[storeName]) yesterdayHourly[storeName] = {};
         yesterdayHourly[storeName][hour] = (yesterdayHourly[storeName][hour] || 0) + sales;
-        console.log(`[N341] ${storeName}: 今日レジ締め除外 ${hour}時台 ${sales}円 → 昨日${hour}時台に補完`);
+        console.log(`[N341] ${storeName}: 前日レジ締め後除外 ${hour}時台 ${sales}円 → 昨日${hour}時台に補完`);
       }
     }
 
     if (totalExcluded > 0 && saleEntry) {
       saleEntry.today_sales = Math.max(0, saleEntry.today_sales - totalExcluded);
-      console.log(`[N341] ${storeName}: 今日レジ締め除外合計=${totalExcluded}円, 修正後today_sales=${saleEntry.today_sales}円`);
+      console.log(`[N341] ${storeName}: 前日レジ締め後除外合計=${totalExcluded}円, 修正後today_sales=${saleEntry.today_sales}円`);
     }
   }
 
@@ -1171,12 +1192,16 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     }
   });
 
-  // 翌日のレジ締め時間帯以降の売上を今日分に補完
-  // （今日のレジ締め後売上が翌日日付で計上されている分を今日の売上に加算）
+  // 翌日（3/3）の最初の伝票時刻より前の時間帯を今日分に補完
+  // 
+  // 翌日（3/3）のN341には「今日（3/2）のレジ締め後分」が最初に記録される
+  // 例：3/3のN341に 17:30、18:00（今日レジ締め後）、その後 9:30（翌日分）が記録される
+  // 「最初の伝票時刻（9:30）」より前の時間帯（17時、18時）が今日レジ締め後分
+  // → 翌日データから「最初の伝票時刻より前の時間帯」を今日分に補完する
   for (const [storeName, tomorrowHourly] of Object.entries(tomorrowHourlyAll)) {
-    const tomorrowRegijimeHour = tomorrowRegijimeMap[storeName];
-    if (tomorrowRegijimeHour === undefined) {
-      // 翌日のレジ締め時間が不明の場合：翌日の全売上を今日分に補完
+    const tomorrowFirstHour = tomorrowRegijimeMap[storeName];
+    if (tomorrowFirstHour === undefined) {
+      // 翌日のN341データがない場合：翌日の全売上を今日分に補完
       // （翌日データがある = 今日のレジ締め後売上が計上されている）
       for (const [hourStr, sales] of Object.entries(tomorrowHourly)) {
         const hour = parseInt(hourStr);
@@ -1184,22 +1209,22 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         storeHourly[storeName][hour] = (storeHourly[storeName][hour] || 0) + sales;
         const saleEntry = storeSales.find(s => s.store_name === storeName);
         if (saleEntry) saleEntry.today_sales += sales;
-        console.log(`[TV] ${storeName}: 翌日${hour}時台 ${sales}円 → 今日に補完（レジ締め時間不明）`);
+        console.log(`[TV] ${storeName}: 翌日${hour}時台 ${sales}円 → 今日に補完（翌日N341データなし）`);
       }
     } else {
-      // 翌日のレジ締め時間帯以降の売上のみ今日分に補完
-      // （翌日のレジ締め時間帯より前の売上は「翌日の通常営業分」なので除外）
+      // 翌日の最初の伝票時刻より前の時間帯のみ今日分に補完
+      // （翌日の最初の伝票時刻以降の売上は「翌日の通常営業分」なので除外）
       for (const [hourStr, sales] of Object.entries(tomorrowHourly)) {
         const hour = parseInt(hourStr);
-        if (hour >= tomorrowRegijimeHour) {
-          // 翌日のレジ締め時間帯以降 = 今日のレジ締め後売上（今日分に補完）
+        if (hour < tomorrowFirstHour) {
+          // 翌日の最初の伝票時刻より前 = 今日のレジ締め後売上（今日分に補完）
           if (!storeHourly[storeName]) storeHourly[storeName] = {};
           storeHourly[storeName][hour] = (storeHourly[storeName][hour] || 0) + sales;
           const saleEntry = storeSales.find(s => s.store_name === storeName);
           if (saleEntry) saleEntry.today_sales += sales;
-          console.log(`[TV] ${storeName}: 翌日${hour}時台 ${sales}円 → 今日に補完（翌日レジ締め後）`);
+          console.log(`[TV] ${storeName}: 翌日${hour}時台 ${sales}円 → 今日に補完（今日レジ締め後）`);
         }
-        // 翌日のレジ締め時間帯より前の売上は翌日の通常営業分なので無視
+        // 翌日の最初の伝票時刻以降の売上は翌日の通常営業分なので無視
       }
     }
   }
