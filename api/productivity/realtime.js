@@ -673,6 +673,18 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
         const html = iconv.decode(Buffer.from(buffer), 'cp932');
         const $ = cheerio.load(html);
         
+        // デバッグ：N341のHTMLテーブル構造をログ出力（店舗名が田辺店の場合のみ）
+        if (storeName === '田辺店') {
+          console.log(`[N341-DEBUG] ${storeName}(${dateStr}): HTML長=${html.length}, テーブル数=${$('table').length}`);
+          $('table').each((tIdx, tbl) => {
+            const rows = $(tbl).find('tr').toArray();
+            if (rows.length === 0) return;
+            const firstRowCells = $(rows[0]).find('td,th').toArray();
+            const cellTexts = firstRowCells.slice(0, 4).map(c => `"${$(c).text().trim()}"`).join(', ');
+            console.log(`[N341-DEBUG] Table ${tIdx}: rows=${rows.length}, first4cells=[${cellTexts}]`);
+          });
+        }
+        
         // データテーブルを探す（日付・時間・伝票Noを含む）
         // 「最初の伝票時刻」を取得する：
         // 3/2のN341には前日レジ締め後分（16:55等）と本日分（9:25等）が混在する
