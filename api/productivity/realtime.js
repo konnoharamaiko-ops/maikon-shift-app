@@ -630,6 +630,10 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
     storeEntries.map(async ([storeName, storeCode]) => {
       try {
         const body = new URLSearchParams({
+          chkcsv: 'false',          // 検索実行フラグ（必須）
+          slipDetailNo: '',
+          slipDetailDate: '',
+          slipDetailShopCode: '',
           yyyymmdd1: dateStr,
           yyyymmdd2: dateStr,
           scode1: storeCode,
@@ -689,25 +693,32 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
         // 「最初の伝票時刻」を取得する：
         // 3/2のN341には前日レジ締め後分（16:55等）と本日分（9:25等）が混在する
         // 「最初の伝票時刻」（9:25）より前の時間帯（16時、17時、18時）が前日レジ締め後分
+        // 
+        // Table 14の構造：
+        //   Row 0: ヘッダー行（「日付」「時間」「伝票No」「商品コード」「商品名」「数量」「金額」）
+        //   Row 1: 日付グループヘッダー（colspan、c1が空）
+        //   Row 2〜: 実際のデータ行（c0=日付、c1=時刻）
         let firstHour = null;
         let firstMinutes = null; // 最初の伝票の分単位時刻（比較用）
         let firstTimeStr = null;
         $('table').each((_, table) => {
           if (firstHour !== null) return; // すでに見つかったらスキップ
           const rows = $(table).find('tr').toArray();
-          if (rows.length < 2) return;
-          // 最初のデータ行でテーブル形式を確認
-          const firstRow = $(rows[0]).find('td,th').toArray();
-          if (firstRow.length < 3) return;
-          const cell0 = $(firstRow[0]).text().trim();
-          const cell1 = $(firstRow[1]).text().trim();
-          // 日付（2026/03/02形式）と時間（16:55形式）を確認
-          if (!cell0.match(/^\d{4}\/\d{2}\/\d{2}$/) || !cell1.match(/^\d{1,2}:\d{2}$/)) return;
+          if (rows.length < 3) return; // ヘッダー行 + グループヘッダー + データ行が必要
+          
+          // ヘッダー行（Row 0）が「日付」「時間」「伝票No」を含むか確認
+          const headerRow = $(rows[0]).find('td,th').toArray();
+          if (headerRow.length < 3) return;
+          const h0 = $(headerRow[0]).text().trim();
+          const h1 = $(headerRow[1]).text().trim();
+          const h2 = $(headerRow[2]).text().trim();
+          // 「日付」「時間」「伝票No」のヘッダーを確認
+          if (h0 !== '日付' || h1 !== '時間' || h2 !== '伝票No') return;
           
           // このテーブルの全行を走査して最小の時刻（最初の伝票）を取得
           rows.forEach(row => {
             const cells = $(row).find('td,th').toArray();
-            if (cells.length < 3) return;
+            if (cells.length < 3) return; // データ行は7列、グループヘッダーは1列なのでスキップ
             const c0 = $(cells[0]).text().trim();
             const c1 = $(cells[1]).text().trim();
             if (c0.match(/^\d{4}\/\d{2}\/\d{2}$/) && c1.match(/^\d{1,2}:\d{2}$/)) {
