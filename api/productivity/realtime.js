@@ -922,31 +922,27 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       // 翌日に売上がない場合はスキップ（補完不要）
       if (Object.keys(tomorrowSalesMap).length === 0) continue;
 
-      // 翌日の最初の売上時間帯を補完開始時刻として検出
-      // 例：翌日の16時台が最初の売上 → 16時台以降が今日のレジ締め後の売上
+      // レジ締め後の売上除外ロジック：
+      // TempoVisorでは、前日のレジ締め後の売上は「翌日の同じ時間帯」に計上される
+      // 例：3/1の16〜18時台の売上が3/2の16〜18時台に計上される
+      // → 3/2のデータから翌日（3/3）に計上された時間帯の売上を除外する
+      // → 翌日データがない場合は除外せずそのまま表示
       const firstTomorrowSalesHour = Math.min(...Object.keys(tomorrowSalesMap).map(Number));
-      console.log(`[TV] ${storeName}: 翌日最初の売上時間帯=${firstTomorrowSalesHour}時台 対象時間帯=${Object.keys(tomorrowSalesMap).sort().join(',')}時台`);
+      console.log(`[TV] ${storeName}: 翌日売上あり 最初の時間帯=${firstTomorrowSalesHour}時台 除外対象=${Object.keys(tomorrowSalesMap).sort().join(',')}時台`);
 
-      // レジ締め後の売上補完ロジック：
-      // TempoVisorでは、レジ締め後の売上は「翌日の同じ時間帯」に計上される
-      // 例：16:00にレジ締め → 16時台・17時台・18時台の売上が翌日に計上される
-      // 翌日の最初の売上時間帯（firstTomorrowSalesHour）以降を今日に補完・上書きする
-      // 今日のデータにも同時間帯の売上が既に含まれているため、翌日の値で置き換える
-
-      Object.entries(tomorrowSalesMap).forEach(([hourStr, sales]) => {
+      Object.keys(tomorrowSalesMap).forEach((hourStr) => {
         const tomorrowHour = parseInt(hourStr);
-        // 翌日の最初の売上時間帯より前はスキップ（翌日の本来の売上ではない）
-        if (tomorrowHour < firstTomorrowSalesHour) return;
-
-        // 今日の同じ時間帯を翌日の値で上書き（二重計上を防ぐ）
+        // 今日の同じ時間帯の売上を0に除外（前日レジ締め分として除外）
         if (storeHourly[storeName]) {
-          const todaySales = storeHourly[storeName][tomorrowHour] || 0;
-          // 日次売上合計から今日の同時間帯の売上を引いてから翌日の値を加算
-          const saleEntry = storeSales.find(s => s.store_name === storeName);
-          if (saleEntry) saleEntry.today_sales = saleEntry.today_sales - todaySales + sales;
-          // 時間帯別売上を翌日の値で上書き
-          storeHourly[storeName][tomorrowHour] = sales;
-          console.log(`[TV] ${storeName}: レジ締め補完 翌日${tomorrowHour}時台→今日${tomorrowHour}時台 今日${todaySales}円→翌日${sales}円（差分${sales - todaySales}円）`);
+          const todaySalesForHour = storeHourly[storeName][tomorrowHour] || 0;
+          if (todaySalesForHour > 0) {
+            // 日次売上合計から除外分を引く
+            const saleEntry = storeSales.find(s => s.store_name === storeName);
+            if (saleEntry) saleEntry.today_sales = saleEntry.today_sales - todaySalesForHour;
+            // 時間帯別売上を0に設定（前日レジ締め分として除外）
+            storeHourly[storeName][tomorrowHour] = 0;
+            console.log(`[TV] ${storeName}: レジ締め除外 今日${tomorrowHour}時台 ${todaySalesForHour}円→0円`);
+          }
         }
       });
     }
