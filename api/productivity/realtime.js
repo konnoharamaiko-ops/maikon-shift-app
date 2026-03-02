@@ -677,24 +677,15 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
         const html = iconv.decode(Buffer.from(buffer), 'cp932');
         const $ = cheerio.load(html);
         
-        // デバッグ：N341のHTMLテーブル構造をログ出力（全店舗）
+        // デバッグ：N341のHTMLテーブル構造をログ出力（全店舗・全テーブル）
         console.log(`[N341-DEBUG] ${storeName}(${dateStr}): HTML長=${html.length}, テーブル数=${$('table').length}`);
-        let foundDataTable = false;
         $('table').each((tIdx, tbl) => {
           const rows = $(tbl).find('tr').toArray();
           if (rows.length === 0) return;
           const firstRowCells = $(rows[0]).find('td,th').toArray();
-          const cellTexts = firstRowCells.slice(0, 4).map(c => `"${$(c).text().trim()}"`).join(', ');
-          // 「日付」「時間」「伝票No」を含むテーブルのみログ出力
-          const headerText = firstRowCells.map(c => $(c).text().trim()).join('|');
-          if (headerText.includes('日付') || headerText.includes('時間') || headerText.includes('伝票')) {
-            console.log(`[N341-DEBUG] ${storeName} Table ${tIdx}: rows=${rows.length}, first4cells=[${cellTexts}]`);
-            foundDataTable = true;
-          }
+          const cellTexts = firstRowCells.slice(0, 5).map(c => `"${$(c).text().trim().substring(0, 10)}"`).join(', ');
+          console.log(`[N341-DEBUG] ${storeName} T${tIdx}: rows=${rows.length}, cells=[${cellTexts}]`);
         });
-        if (!foundDataTable) {
-          console.log(`[N341-DEBUG] ${storeName}(${dateStr}): データテーブル未検出（HTML長=${html.length}）`);
-        }
         
         // データテーブルを探す（日付・時間・伝票Noを含む）
         // 「最初の伝票時刻」を取得する：
