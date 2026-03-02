@@ -609,6 +609,105 @@ async function fetchStoreUpdateTimes(cookies) {
 }
 
 /**
+ * N341Servlet（明細管理 - 処理種別）から各店舗のレジ締め開始時間帯を取得
+ * 当日の最初の伝票時刻（例：16:55）を取得し、その時間帯（16時）を返す
+ * これにより前日レジ締め後に翌日計上された売上を除外できる
+ * 
+ * @returns { '田辺店': 16, '大正店': 17, ... } 形式のマップ（レジ締め開始時間帯）
+ */
+async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
+  const storeEntries = Object.entries(TEMPOVISOR_STORE_CODES);
+  
+  // 全店舗を並行取得
+  const results = await Promise.allSettled(
+    storeEntries.map(async ([storeName, storeCode]) => {
+      try {
+        const body = new URLSearchParams({
+          yyyymmdd1: dateStr,
+          yyyymmdd2: dateStr,
+          scode1: storeCode,
+          areasearch: 'off',
+          group: '1',
+          syutsuryoku: '2',
+          ssbetsu: 'HANBAI',
+          henpin: 'off',
+          ido_from: '0000',
+          ido_to: '9999',
+          out_method: '2',
+          zeinuki: '1',
+          keykind: 'nasi',
+          searchkey1: '',
+          searchkey2: '',
+          pan2_flag: '1',
+          useZikantai: '2',
+          zikantai1: '00:00',
+          zikantai2: '24:00',
+          useCcode: '2',
+          ccode1: '0000000000',
+          ccode2: '9999999999',
+          useDcode: '2',
+          dcode1: '0000000',
+          dcode2: '9999999',
+        });
+        
+        const res = await fetch(`${repBaseUrl}N341Servlet`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': cookies,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': repBaseUrl,
+          },
+          body: body.toString(),
+          signal: AbortSignal.timeout(8000),
+        });
+        
+        const buffer = await res.arrayBuffer();
+        const html = iconv.decode(Buffer.from(buffer), 'cp932');
+        const $ = cheerio.load(html);
+        
+        // データテーブルを探す（Table[14]相当: 日付・時間・伝票Noを含む）
+        let firstHour = null;
+        $('table').each((_, table) => {
+          if (firstHour !== null) return;
+          const rows = $(table).find('tr').toArray();
+          if (rows.length < 2) return;
+          // 最初のデータ行を確認
+          const firstRow = $(rows[0]).find('td,th').toArray();
+          if (firstRow.length < 3) return;
+          const cell0 = $(firstRow[0]).text().trim();
+          const cell1 = $(firstRow[1]).text().trim();
+          // 日付（2026/03/02形式）と時間（16:55形式）を確認
+          if (cell0.match(/^\d{4}\/\d{2}\/\d{2}$/) && cell1.match(/^\d{1,2}:\d{2}$/)) {
+            const hourMatch = cell1.match(/^(\d{1,2}):\d{2}$/);
+            if (hourMatch) {
+              firstHour = parseInt(hourMatch[1]);
+              console.log(`[N341] ${storeName}: 最初の伝票時刻=${cell1} → レジ締め開始=${firstHour}時台`);
+            }
+          }
+        });
+        
+        return { storeName, firstHour };
+      } catch (err) {
+        console.warn(`[N341] ${storeName}: 取得失敗 ${err.message}`);
+        return { storeName, firstHour: null };
+      }
+    })
+  );
+  
+  // 結果をマップに変換
+  const regijimeMap = {};
+  results.forEach(result => {
+    if (result.status === 'fulfilled' && result.value.firstHour !== null) {
+      regijimeMap[result.value.storeName] = result.value.firstHour;
+    }
+  });
+  
+  console.log('[N341] レジ締め開始時間帯マップ:', JSON.stringify(regijimeMap));
+  return regijimeMap;
+}
+
+/**
  * TempoVisorにログインしてCookieを取得
  */
 async function loginTempoVisor(username, password) {
@@ -874,6 +973,30 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       console.log(`[TV] ${storeName}: today_sales=${todaySales}, hourly_keys=${Object.keys(hourly).length}`);
     }
   });
+
+  // N341Servletからレジ締め開始時間帯を取得して今日のデータから除外
+  const regijimeStartHours = await fetchRegijimeStartHours(cookies, repBaseUrl, todayStr);
+  
+  // レジ締め除外処理：当日の最初の伝票時刻以降の時間帯を除外
+  for (const [storeName, regijimeHour] of Object.entries(regijimeStartHours)) {
+    if (!storeHourly[storeName]) continue;
+    const saleEntry = storeSales.find(s => s.store_name === storeName);
+    let totalExcluded = 0;
+    
+    for (const [hourStr, sales] of Object.entries(storeHourly[storeName])) {
+      const hour = parseInt(hourStr);
+      if (hour >= regijimeHour && sales > 0) {
+        totalExcluded += sales;
+        storeHourly[storeName][hour] = 0;
+        console.log(`[N341] ${storeName}: レジ締め除外 ${hour}時台 ${sales}円→0円`);
+      }
+    }
+    
+    if (totalExcluded > 0 && saleEntry) {
+      saleEntry.today_sales = Math.max(0, saleEntry.today_sales - totalExcluded);
+      console.log(`[N341] ${storeName}: 合計除外額=${totalExcluded}円, 修正後today_sales=${saleEntry.today_sales}円`);
+    }
+  }
 
   // 翌日データを解析してレジ締め後の売上を今日分に補完
   const $tomorrow = cheerio.load(tomorrowHtml);
