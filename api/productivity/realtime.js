@@ -1745,9 +1745,17 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       currentMinutes
     );
 
-    const totalHours = attendInfo.total_hours || 0;
     const todaySales = salesInfo.today_sales || 0;
-    const productivity = totalHours > 0 ? Math.round(todaySales / totalHours) : 0;
+
+    // ヘッダーの人時数・人時生産性を時間帯別データと統一する
+    // attendInfo.total_hours は小数点1桁に丸めた値のため、
+    // 時間帯別テーブルの person_hours 合計と0.1単位の誤差が生じる。
+    // → hourlyProductivity の person_hours を合計して統一した値を使用する。
+    const totalHoursFromHourly = hourlyProductivity.reduce((sum, h) => sum + (h.person_hours || 0), 0);
+    // 小数点1桁に丸めてヘッダー表示用に使用
+    const totalHours = parseFloat(totalHoursFromHourly.toFixed(1));
+    // 人時生産性はhourlyの合計人時数（丸めなし）で割って正確に計算
+    const productivity = totalHoursFromHourly > 0 ? Math.round(todaySales / totalHoursFromHourly) : 0;
 
     return {
       tenpo_name: storeName,
