@@ -1599,10 +1599,13 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       if (stampRows.length > 0) {
         let hasRealClockOut = false;  // 実際の退勤打刻があるか
         let hasOnlyAutoClockOut = false;  // 自動退出打刻のみか
-        stampRows.forEach(({ stampType, placeCode, isAutoClockOut }) => {
+        let realClockInTime = null;   // 実際の出勤打刻時刻
+        let realClockOutTime = null;  // 実際の退勤打刻時刻
+        stampRows.forEach(({ stampType, stampTime, placeCode, isAutoClockOut }) => {
           if (!stampType) return;
           if (stampType.includes('出勤') || stampType === '1') {
             if (placeCode) clockInCode = placeCode;
+            if (stampTime) realClockInTime = stampTime;  // 出勤打刻時刻を保存
           } else if (stampType.includes('休憩開始') || stampType === '3') {
             if (placeCode) breakStartCode = placeCode;
           } else if (stampType.includes('休憩終了') || stampType === '4') {
@@ -1611,11 +1614,13 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
             if (isAutoClockOut) {
               // 自動退出打刻：実際の退勤打刻がない場合のみ退勤打刻として扱わない
               hasOnlyAutoClockOut = true;
-              console.log(`[JC] empId=${empId}: 自動退出打刻を検出`);
+              console.log(`[JC] empId=${empId}: 自動退出打刻を検出 (時刻:${stampTime})`);
             } else {
               // 実際の退勤打刻：有効
               hasRealClockOut = true;
               if (placeCode) clockOutCode = placeCode;
+              if (stampTime) realClockOutTime = stampTime;  // 実際の退勤打刻時刻を保存
+              console.log(`[JC] empId=${empId}: 実際の退勤打刻を検出 (時刻:${stampTime})`);
             }
           }
         });
@@ -1624,7 +1629,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           hasAutoClockOut = true;
           console.log(`[JC] empId=${empId}: 自動退出のみ（実際の退勤打刻なし）→ 勤務中扱い`);
         } else if (hasRealClockOut) {
-          console.log(`[JC] empId=${empId}: 実際の退勤打刻あり → 退勤済み扱い`);
+          console.log(`[JC] empId=${empId}: 実際の退勤打刻あり (時刻:${realClockOutTime}) → 退勤済み扱い`);
         }
       } else {
         // フォールバック: change_group_id / change_type から取得
@@ -1667,14 +1672,14 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
         }
       }
 
-      return { empId, stampCode: clockInCode, clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut };
+      return { empId, stampCode: clockInCode, clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut, realClockInTime: realClockInTime || null, realClockOutTime: realClockOutTime || null };
     })
   );
   for (const result of allStampResults) {
     if (result.status === 'fulfilled') {
       const { empId, stampCode, clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut } = result.value;
       if (stampCode) stampPlaceMap[empId] = stampCode;
-      stampDetailMap[empId] = { clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut: !!hasAutoClockOut };
+      stampDetailMap[empId] = { clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut: !!hasAutoClockOut, realClockInTime: result.value.realClockInTime || null, realClockOutTime: result.value.realClockOutTime || null };
     }
   }
   console.log(`[JC] 打刻場所マッピング取得: ${Object.keys(stampPlaceMap).length}件`);
@@ -1734,6 +1739,10 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       console.log(`[JC] ${staffName}: 自動退出のため「勤務中」に上書き`);
       status = '勤務中'; // 自動退出は退勤打刻として扱わない
       clockOut = null;  // 退勤時刻もクリア
+    } else if (empStampDetail?.realClockOutTime && status === '退勤済み') {
+      // 実際の退勤打刻時刻が出入詳細ページから取得できた場合はそちらを優先使用（cells[7]の自動退出時刻を上書き）
+      clockOut = empStampDetail.realClockOutTime;
+      console.log(`[JC] ${staffName}: 実際の退勤打刻時刻を使用 (${clockOut})（cells[7]を上書き）`);
     }
 
     // 休憩時間・打刻時間をパース
