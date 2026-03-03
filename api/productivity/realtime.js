@@ -1337,28 +1337,41 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   // 翌日N3D1データを使って「今日のレジ締め後分」を今日に加算し、
   // 「前日のレジ締め後分」を今日から除外する
   //
-  // 判定：翌日N3D1に売上がある時間帯 = 今日のレジ締め後分
-  //       今日N3D1の同じ時間帯に売上がある = 前日のレジ締め後分（除外）
+  // 判定ロジック：
+  //   翌日N3D1に売上がある時間帯の「最小時間帯」をレジ締め開始時間と判定
+  //   今日N3D1で「レジ締め開始時間以降」に売上がある全時間帯 = 前日のレジ締め後分（除外）
+  //   翌日N3D1に売上がある全時間帯 = 今日のレジ締め後分（今日に加算）
   // ============================================================
   for (const storeName of Object.keys(TEMPOVISOR_STORE_CODES)) {
     const tomorrowHourly = tomorrowHourlyAll[storeName] || {};
     const todayHourly = storeHourly[storeName] || {};
     
-    // 翌日N3D1に売上がある時間帯を特定（= 今日のレジ締め後分の時間帯）
-    const regijimeHours = Object.entries(tomorrowHourly)
+    // 翌日N3D1に売上がある時間帯の「最小時間帯」を特定（= レジ締め開始時間）
+    const tomorrowSalesHours = Object.entries(tomorrowHourly)
       .filter(([, sales]) => sales > 0)
-      .map(([h]) => parseInt(h));
+      .map(([h]) => parseInt(h))
+      .sort((a, b) => a - b);
     
-    if (regijimeHours.length === 0) {
+    if (tomorrowSalesHours.length === 0) {
       console.log(`[REGIJIME] ${storeName}: 翌日N3D1に売上なし → レジ締め後補完スキップ`);
       continue;
     }
     
-    console.log(`[REGIJIME] ${storeName}: 翌日N3D1に売上あり 時間帯=${JSON.stringify(regijimeHours)}`);
+    // レジ締め開始時間 = 翌日N3D1の最小売上時間帯
+    const regijimeStartHour = tomorrowSalesHours[0];
+    console.log(`[REGIJIME] ${storeName}: 翌日N3D1売上時間帯=${JSON.stringify(tomorrowSalesHours)}, レジ締め開始時間=${regijimeStartHour}時`);
     
-    // ① 今日N3D1の同じ時間帯に売上がある → 前日のレジ締め後分として除外
+    // 今日N3D1で「レジ締め開始時間以降」に売上がある全時間帯を前日レジ締め後分と判定
+    const prevDayRegijimeHours = Object.entries(todayHourly)
+      .filter(([h, sales]) => parseInt(h) >= regijimeStartHour && sales > 0)
+      .map(([h]) => parseInt(h))
+      .sort((a, b) => a - b);
+    
+    console.log(`[REGIJIME] ${storeName}: 前日レジ締め後分時間帯=${JSON.stringify(prevDayRegijimeHours)}`);
+    
+    // ① 今日N3D1のレジ締め開始時間以降の売上を全て除外（前日レジ締め後分）
     let totalExcluded = 0;
-    for (const hour of regijimeHours) {
+    for (const hour of prevDayRegijimeHours) {
       const todaySalesAtHour = todayHourly[hour] || 0;
       if (todaySalesAtHour > 0) {
         totalExcluded += todaySalesAtHour;
@@ -1378,7 +1391,7 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     
     // ② 翌日N3D1の売上を今日分に加算（今日のレジ締め後分）
     let totalAdded = 0;
-    for (const hour of regijimeHours) {
+    for (const hour of tomorrowSalesHours) {
       const tomorrowSalesAtHour = tomorrowHourly[hour] || 0;
       if (tomorrowSalesAtHour > 0) {
         if (!storeHourly[storeName]) storeHourly[storeName] = {};
