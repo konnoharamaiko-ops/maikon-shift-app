@@ -1597,6 +1597,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       let hasAutoClockOut = false; // 自動退出打刻が存在するか
 
       if (stampRows.length > 0) {
+        let hasRealClockOut = false;  // 実際の退勤打刻があるか
+        let hasOnlyAutoClockOut = false;  // 自動退出打刻のみか
         stampRows.forEach(({ stampType, placeCode, isAutoClockOut }) => {
           if (!stampType) return;
           if (stampType.includes('出勤') || stampType === '1') {
@@ -1607,14 +1609,23 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
             if (placeCode) breakEndCode = placeCode;
           } else if (stampType.includes('退勤') || stampType.includes('退室') || stampType === '2') {
             if (isAutoClockOut) {
-              // 自動退出は退勤打刻として扱わない
-              hasAutoClockOut = true;
-              console.log(`[JC] empId=${empId}: 自動退出打刻を除外`);
+              // 自動退出打刻：実際の退勤打刻がない場合のみ退勤打刻として扱わない
+              hasOnlyAutoClockOut = true;
+              console.log(`[JC] empId=${empId}: 自動退出打刻を検出`);
             } else {
+              // 実際の退勤打刻：有効
+              hasRealClockOut = true;
               if (placeCode) clockOutCode = placeCode;
             }
           }
         });
+        // 実際の退勤打刻がなく、自動退出のみの場合はフラグを立てる
+        if (hasOnlyAutoClockOut && !hasRealClockOut) {
+          hasAutoClockOut = true;
+          console.log(`[JC] empId=${empId}: 自動退出のみ（実際の退勤打刻なし）→ 勤務中扱い`);
+        } else if (hasRealClockOut) {
+          console.log(`[JC] empId=${empId}: 実際の退勤打刻あり → 退勤済み扱い`);
+        }
       } else {
         // フォールバック: change_group_id / change_type から取得
         const stampCodes = [];
@@ -2058,14 +2069,16 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
 
     console.log(`[mergeStoreData] ${storeName}: 現在=${nowMinutes}分, 最初出勤=${firstClockInMinutes}分, 最後退勤=${lastClockOutMinutes}分, 営業中=${hasWorkingStaff}, 時間帯=${isBeforeOpen ? '営業前' : isAfterClose ? '営業後' : '営業中'}, useYesterday=${useYesterday}`);
 
-    const salesInfo = useYesterday
-      ? (yesterdaySales.find(s => s.store_name === storeName) || {
-          store_code: TEMPOVISOR_STORE_CODES[storeName] || '',
-          store_name: storeName,
-          today_sales: 0,
-          monthly_sales: 0,
-          update_time: '',
-        })
+    // 前日データを探す（営業前の場合）
+    const yesterdaySalesInfo = useYesterday
+      ? yesterdaySales.find(s => s.store_name === storeName)
+      : null;
+    // 前日データが存在しない（または売上0）場合は今日のデータにフォールバック
+    const hasYesterdayData = yesterdaySalesInfo && (yesterdaySalesInfo.today_sales > 0 || yesterdaySalesInfo.monthly_sales > 0);
+    const isBeforeOpenNoData = useYesterday && !hasYesterdayData;  // 営業前かつ前日データなし
+
+    const salesInfo = (useYesterday && hasYesterdayData)
+      ? yesterdaySalesInfo
       : (todaySalesInfo || {
           store_code: TEMPOVISOR_STORE_CODES[storeName] || '',
           store_name: storeName,
@@ -2074,7 +2087,7 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
           update_time: '',
         });
 
-    const hourly = useYesterday
+    const hourly = (useYesterday && hasYesterdayData)
       ? (yesterdayHourlyData[storeName] || {})
       : (hourlyData[storeName] || {});
 
@@ -2119,7 +2132,8 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       business_hours: businessHours,
       is_closed: isClosed,
       is_after_close: isAfterClose,   // 稼働中0人（閉店済み）フラグ：数字フリーズ用
-      is_yesterday_data: useYesterday,  // 前日データを使用中かどうか（フロントエンド表示用）
+      is_yesterday_data: useYesterday && hasYesterdayData,  // 前日データを実際に使用中かどうか（フロントエンド表示用）
+      is_before_open_no_data: isBeforeOpenNoData,  // 営業前かつ前日データなし（「準備中」表示用）
       time_zone: isBeforeOpen ? 'before_open' : isAfterClose ? 'after_close' : 'during_business',  // 時間帯判定結果
       first_clock_in: firstClockInMinutes,   // 最初の出勤時刻（分単位）
       last_clock_out: lastClockOutMinutes,   // 最後の退勤時刻（分単位）

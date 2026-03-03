@@ -115,6 +115,8 @@ function transformStoreData(apiData) {
     business_hours: item.business_hours || { open: 10, close: 18 },
     is_closed: item.is_closed || false,
     is_after_close: item.is_after_close || false,  // 稼働中0人（閉店済み）フラグ
+    is_before_open_no_data: item.is_before_open_no_data || false,  // 営業前かつ前日データなし（「準備中」表示用）
+    is_yesterday_data: item.is_yesterday_data || false,  // 前日データ使用中フラグ
     time_zone: item.time_zone || 'during_business',
     first_clock_in: item.first_clock_in ?? null,
     last_clock_out: item.last_clock_out ?? null,
