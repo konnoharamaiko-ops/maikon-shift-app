@@ -357,15 +357,17 @@ function StoreCard({ store, onClick, index }) {
       {/* ヘッダー */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-base leading-tight truncate pr-2">{store.store_name}</h3>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-base leading-tight truncate">{store.store_name}</h3>
+            {store.update_time && (
+              <span className="text-[10px] text-muted-foreground shrink-0">{store.update_time}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-1">
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold text-white ${config.badge}`}>
               <Icon className="h-3 w-3" />
               {config.label}
             </span>
-            {store.update_time && (
-              <span className="text-[10px] text-muted-foreground">{store.update_time}</span>
-            )}
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
