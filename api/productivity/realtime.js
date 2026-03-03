@@ -874,24 +874,44 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr, isTomorrow 
           }
         } else {
           // ===== 今日N341の処理 =====
-          // 今日N341の構造：[前日レジ締め後分（先頭）] + [今日の通常営業分（中間〜末尾）]
-          // 最小時刻 = 今日の通常営業開始時刻（例：9:25）
-          // 出現順に走査し、最小時刻に到達するまでに出現した伝票 = 前日レジ締め後分
+          // 今日N341の構造パターン：
+          //   パターンA（今日レジ締め済み）：[前日レジ締め後分（先頭）] + [今日の通常営業分（後半）]
+          //     例：16:16, 17:19, 17:32... → 9:25, 10:13, 11:05...
+          //     → 最小時刻（9:25）より前に出現した伝票 = 前日レジ締め後分
           //
-          // 重要：先頭の伝票が最小時刻と同じ場合（前日レジ締め後分がない場合）は除外しない
-          // 例：今日まだレジ締めをしていない場合、N341の先頭は今日の最初の売上（例：16:13）
-          //     この場合、先頭伝票 = 最小時刻 なので除外対象なし
+          //   パターンB（今日まだレジ締め前）：[前日レジ締め後分のみ]
+          //     例：16:16, 17:19, 17:32, 18:04... （全て昨日の閉店後時刻）
+          //     → 全伝票の最小時刻が開店時刻（9:00）より後 = 全て前日レジ締め後分
           //
-          // エッジケース対応：
-          // - 全伝票が同一時刻（最小時刻のみ）の場合 → 前日分なし（今日の通常営業のみ）
-          // - 同一時間帯に前日分と今日分が混在する場合 → hourlyExclude で正確に差し引き
+          //   パターンC（前日レジ締め後分なし）：[今日の通常営業分のみ]
+          //     例：9:15, 10:22, 11:05... （全て今日の開店後時刻）
+          //     → 最小時刻が開店時刻（9:00）以前 かつ 先頭伝票 = 最小時刻 = 前日分なし
+          //
+          // 判定方法：
+          //   1. 最小時刻が OPEN_HOUR（9:00 = 540分）以上 → パターンB（全て前日分）
+          //   2. 最小時刻が OPEN_HOUR 未満 かつ 先頭伝票 = 最小時刻 → パターンC（前日分なし）
+          //   3. 最小時刻が OPEN_HOUR 未満 かつ 先頭伝票 > 最小時刻 → パターンA（先頭から最小時刻まで前日分）
+          const OPEN_HOUR_MINUTES = 9 * 60; // 9:00 = 540分（開店時刻）
           const firstEntry = allEntries[0];
-          if (!firstEntry || firstEntry.minutes === minMinutes) {
-            // 先頭が最小時刻 = 前日レジ締め後分なし → 除外しない
-            console.log(`[N341] ${storeName}(${dateStr}): 先頭伝票が最小時刻と一致 → 前日レジ締め後分なし`);
+
+          if (minMinutes >= OPEN_HOUR_MINUTES) {
+            // パターンB：全伝票が前日レジ締め後分（今日まだレジ締め前）
+            console.log(`[N341] ${storeName}(${dateStr}): 最小時刻=${minEntry.timeStr}（開店時刻以降）→ 全伝票が前日レジ締め後分`);
+            for (const entry of allEntries) {
+              afterSalesTotal += entry.amount;
+              excludeHours.add(entry.hour);
+              hourlyExclude[entry.hour] = (hourlyExclude[entry.hour] || 0) + entry.amount;
+              if (regijimeMinutes === null || entry.minutes < regijimeMinutes) {
+                regijimeMinutes = entry.minutes;
+              }
+            }
+          } else if (!firstEntry || firstEntry.minutes === minMinutes) {
+            // パターンC：先頭が最小時刻（開店時刻前）= 前日レジ締め後分なし
+            console.log(`[N341] ${storeName}(${dateStr}): 先頭伝票が最小時刻と一致（開店前）→ 前日レジ締め後分なし`);
           } else {
-            // 先頭が最小時刻より大きい = 前日レジ締め後分が先頭にある
+            // パターンA：先頭が最小時刻より大きい = 前日レジ締め後分が先頭にある
             // 出現順に走査し、最小時刻の伝票が出現したら停止
+            console.log(`[N341] ${storeName}(${dateStr}): 先頭伝票=${firstEntry.timeStr} > 最小時刻=${minEntry.timeStr} → 先頭から最小時刻まで前日分`);
             for (const entry of allEntries) {
               if (entry.minutes === minMinutes) {
                 // 最小時刻に到達 = ここから今日の通常営業分
