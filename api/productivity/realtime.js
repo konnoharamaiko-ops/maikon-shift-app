@@ -87,6 +87,18 @@ const ALL_STORES = [
   'イオン松原店', 'イオン守口店', '美和堂FC店'
 ];
 
+// ============================================================
+// サーバーサイドキャッシュ（stale-while-revalidate）
+// Vercelの同一インスタンスが再利用される間、キャッシュが有効
+// 初回リクエスト：フル取得（遅い）
+// 2回目以降：キャッシュを即座に返し、バックグラウンドで更新
+// ============================================================
+let _cache = null;          // キャッシュデータ
+let _cacheTime = 0;         // キャッシュ作成時刻（ms）
+let _isRevalidating = false; // バックグラウンド更新中フラグ
+const CACHE_TTL_MS = 90 * 1000;  // 90秒（自動更新間隔と同じ）
+const CACHE_STALE_MS = 300 * 1000; // 5分（古いデータを返す最大時間）
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -111,6 +123,9 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, staff_master: staffMaster });
     }
 
+    // force=1 の場合はキャッシュを無視して強制更新
+    const forceRefresh = req.query.force === '1';
+
     // クエリパラメータから店舗設定を取得（フロントエンドから渡される）
     let clientStoreSettings = {};
     if (req.query.store_settings) {
@@ -121,54 +136,43 @@ export default async function handler(req, res) {
       }
     }
 
-    // 並行してデータ取得（Supabase店舗設定・スタッフマスタも取得）
-    const [salesResult, attendanceResult, supabaseSettingsResult, staffMasterResult] = await Promise.allSettled([
-      fetchTempoVisorAllData(tempovisorUser, tempovisorPass),
-      fetchJobcanAttendance(jobcanCompany, jobcanUser, jobcanPass),
-      fetchStoreSettings(),
-      fetchStaffMaster(),
-    ]);
+    // ============================================================
+    // キャッシュチェック（stale-while-revalidate）
+    // ============================================================
+    const now = Date.now();
+    const cacheAge = now - _cacheTime;
+    const isCacheValid = _cache !== null && cacheAge < CACHE_TTL_MS;
+    const isCacheStale = _cache !== null && cacheAge < CACHE_STALE_MS;
 
-    const salesData = salesResult.status === 'fulfilled' ? salesResult.value : { stores: [], hourly: {}, yesterdayStores: [], yesterdayHourly: {} };
-    const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : { stores: {}, employees: [] };
-    const supabaseSettings = supabaseSettingsResult.status === 'fulfilled' ? supabaseSettingsResult.value : {};
-    const staffMaster = staffMasterResult.status === 'fulfilled' ? staffMasterResult.value : [];
+    if (!forceRefresh && isCacheValid) {
+      // キャッシュが新鮮：即座に返す
+      console.log(`[Cache] HIT (age: ${Math.round(cacheAge/1000)}s)`);
+      return res.status(200).json({
+        ..._cache,
+        cached: true,
+        cache_age_seconds: Math.round(cacheAge / 1000),
+      });
+    }
 
-    // 店舗設定の優先順位: クライアント設定 > Supabase設定 > デフォルト値
-    // clientStoreSettingsはフロントエンドのlocalStorageから渡される
-    // フォーマット: { '田辺店': { open: 9, close: 19, closed_days: [0], sunday_close: 19 }, ... }
-    const storeSettings = buildStoreSettings(clientStoreSettings, supabaseSettings);
+    if (!forceRefresh && isCacheStale && !_isRevalidating) {
+      // キャッシュが古い（stale）：古いデータを即座に返し、バックグラウンドで更新開始
+      console.log(`[Cache] STALE (age: ${Math.round(cacheAge/1000)}s) - returning stale data, revalidating in background`);
+      _isRevalidating = true;
+      // バックグラウンドで更新（awaitしない）
+      fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings)
+        .catch(e => console.error('[Cache] Background revalidation failed:', e.message))
+        .finally(() => { _isRevalidating = false; });
+      return res.status(200).json({
+        ..._cache,
+        cached: true,
+        cache_age_seconds: Math.round(cacheAge / 1000),
+      });
+    }
 
-    // 社員スタッフの接客時間帯を適用（スタッフマスタから取得）
-    const allEmployees = attendance.employees || [];
-    const { storeEmployees, employeeProductivity } = applyEmployeeServiceHours(allEmployees, staffMaster);
-
-    // 社員の接客時間帯を適用した勤怠データで店舗集計を再構築
-    const adjustedAttendance = rebuildAttendanceWithServiceHours(attendance.stores, storeEmployees);
-
-    // 店舗ごとに統合（時間帯別人時生産性を含む）
-    const storeData = mergeStoreData(
-      salesData.stores,
-      salesData.hourly,
-      adjustedAttendance,
-      storeSettings,
-      salesData.yesterdayStores || [],
-      salesData.yesterdayHourly || {}
-    );
-
-    return res.status(200).json({
-      success: true,
-      data: storeData,
-      employees: storeEmployees,
-      employee_productivity: employeeProductivity,  // 社員個人の生産性データ
-      timestamp: new Date().toISOString(),
-      sources: {
-        tempovisor: salesResult.status === 'fulfilled' ? 'live' : `error: ${salesResult.reason?.message}`,
-        jobcan: attendanceResult.status === 'fulfilled' ? 'live' : `error: ${attendanceResult.reason?.message}`,
-        store_settings: Object.keys(clientStoreSettings).length > 0 ? 'client' : supabaseSettingsResult.status === 'fulfilled' ? 'supabase' : 'default',
-        staff_master: staffMasterResult.status === 'fulfilled' ? `${staffMaster.length}名` : 'error',
-      }
-    });
+    // キャッシュがない（初回）または強制更新：フル取得
+    console.log(`[Cache] MISS - fetching fresh data`);
+    const freshData = await fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings);
+    return res.status(200).json(freshData);
 
   } catch (error) {
     console.error('Realtime API error:', error);
@@ -177,6 +181,61 @@ export default async function handler(req, res) {
       message: error.message,
     });
   }
+}
+
+/**
+ * 実際のデータ取得・計算・キャッシュ更新を行う関数
+ * handlerから分離し、バックグラウンド再検証でも尌用できるようにする
+ */
+async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings) {
+  const [salesResult, attendanceResult, supabaseSettingsResult, staffMasterResult] = await Promise.allSettled([
+    fetchTempoVisorAllData(tempovisorUser, tempovisorPass),
+    fetchJobcanAttendance(jobcanCompany, jobcanUser, jobcanPass),
+    fetchStoreSettings(),
+    fetchStaffMaster(),
+  ]);
+
+  const salesData = salesResult.status === 'fulfilled' ? salesResult.value : { stores: [], hourly: {}, yesterdayStores: [], yesterdayHourly: {} };
+  const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : { stores: {}, employees: [] };
+  const supabaseSettings = supabaseSettingsResult.status === 'fulfilled' ? supabaseSettingsResult.value : {};
+  const staffMaster = staffMasterResult.status === 'fulfilled' ? staffMasterResult.value : [];
+
+  const storeSettings = buildStoreSettings(clientStoreSettings, supabaseSettings);
+
+  const allEmployees = attendance.employees || [];
+  const { storeEmployees, employeeProductivity } = applyEmployeeServiceHours(allEmployees, staffMaster);
+  const adjustedAttendance = rebuildAttendanceWithServiceHours(attendance.stores, storeEmployees);
+
+  const storeData = mergeStoreData(
+    salesData.stores,
+    salesData.hourly,
+    adjustedAttendance,
+    storeSettings,
+    salesData.yesterdayStores || [],
+    salesData.yesterdayHourly || {}
+  );
+
+  const responseData = {
+    success: true,
+    data: storeData,
+    employees: storeEmployees,
+    employee_productivity: employeeProductivity,
+    timestamp: new Date().toISOString(),
+    cached: false,
+    sources: {
+      tempovisor: salesResult.status === 'fulfilled' ? 'live' : `error: ${salesResult.reason?.message}`,
+      jobcan: attendanceResult.status === 'fulfilled' ? 'live' : `error: ${attendanceResult.reason?.message}`,
+      store_settings: Object.keys(clientStoreSettings).length > 0 ? 'client' : supabaseSettingsResult.status === 'fulfilled' ? 'supabase' : 'default',
+      staff_master: staffMasterResult.status === 'fulfilled' ? `${staffMaster.length}名` : 'error',
+    }
+  };
+
+  // キャッシュを更新
+  _cache = responseData;
+  _cacheTime = Date.now();
+  console.log(`[Cache] Updated at ${new Date().toISOString()}`);
+
+  return responseData;
 }
 
 /**

@@ -187,6 +187,8 @@ async function fetchRealtimeData(storeSettings) {
     sources: result.sources || {},
     timestamp: result.timestamp,
     employeeProductivity: result.employee_productivity || [],
+    cached: result.cached || false,
+    cacheAgeSeconds: result.cache_age_seconds || 0,
   };
 }
 
@@ -1505,6 +1507,8 @@ export default function ProductivityDashboard() {
   const employeeProductivity = queryData?.employeeProductivity || [];
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
   const isLive = sources.tempovisor === 'live' || sources.jobcan === 'live';
+  const isCachedData = queryData?.cached || false;  // キャッシュから返ったデータか
+  const cacheAgeSeconds = queryData?.cacheAgeSeconds || 0;
   const summary = calcSummary(stores);
 
   const openStores = stores.filter(s => !s.is_closed);
@@ -1551,12 +1555,15 @@ export default function ProductivityDashboard() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* ライブ/オフライン */}
+          {/* ライブ/オフライン/キャッシュ */}
           <div className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-semibold ${
+            isCachedData ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' :
             isLive ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
             'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
           }`}>
-            {isLive ? (
+            {isCachedData ? (
+              <><RefreshCw className="h-3.5 w-3.5" /><span>キャッシュ {cacheAgeSeconds}秒前</span></>
+            ) : isLive ? (
               <><Wifi className="h-3.5 w-3.5" /><span>ライブ</span></>
             ) : (
               <><WifiOff className="h-3.5 w-3.5" /><span>オフライン</span></>
