@@ -1460,6 +1460,7 @@ export default function ProductivityDashboard() {
   const [showStoreSettings, setShowStoreSettings] = useState(false);
   const [showStaffSettings, setShowStaffSettings] = useState(false);
   const [storeSettings, setStoreSettings] = useState(() => loadStoreSettings());
+  const [storeSort, setStoreSort] = useState('default'); // 'default' | 'productivity' | 'sales' | 'person_hours'
 
   const {
     data: queryData,
@@ -1500,7 +1501,27 @@ export default function ProductivityDashboard() {
 
   const openStores = stores.filter(s => !s.is_closed);
   const closedStores = stores.filter(s => s.is_closed);
-  const sortedOpenStores = [...openStores].sort((a, b) => b.productivity - a.productivity);
+
+  // バイザー順（ALL_STORE_NAMESの定義順）
+  const STORE_DEFAULT_ORDER = ALL_STORE_NAMES;
+  const sortedOpenStores = (() => {
+    const arr = [...openStores];
+    if (storeSort === 'productivity') {
+      arr.sort((a, b) => b.productivity - a.productivity);
+    } else if (storeSort === 'sales') {
+      arr.sort((a, b) => b.total_sales - a.total_sales);
+    } else if (storeSort === 'person_hours') {
+      arr.sort((a, b) => b.total_hours - a.total_hours);
+    } else {
+      // default: バイザー順
+      arr.sort((a, b) => {
+        const ai = STORE_DEFAULT_ORDER.indexOf(a.store_name);
+        const bi = STORE_DEFAULT_ORDER.indexOf(b.store_name);
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      });
+    }
+    return arr;
+  })();
 
   return (
     <div className="space-y-5 pb-6">
@@ -1691,22 +1712,45 @@ export default function ProductivityDashboard() {
       {/* 店舗別表示 */}
       {viewMode === 'cards' ? (
         <div>
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h2 className="font-bold flex items-center gap-2 text-lg">
               <Building2 className="h-5 w-5 text-red-800 dark:text-red-400" />
               店舗別リアルタイム状況
               <span className="text-xs font-normal text-muted-foreground hidden sm:inline">（タップで詳細・時間帯別グラフ）</span>
             </h2>
-            {closedStores.length > 0 && (
-              <button
-                onClick={() => setShowClosedStores(v => !v)}
-                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-              >
-                <Calendar className="h-3.5 w-3.5" />
-                休業店舗 ({closedStores.length})
-                {showClosedStores ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-              </button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* ⚡ 並び順切り替え */}
+              <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
+                {[
+                  { id: 'default', label: 'バイザー順' },
+                  { id: 'productivity', label: '人時生産性順' },
+                  { id: 'sales', label: '売上順' },
+                  { id: 'person_hours', label: '人時数順' },
+                ].map(({ id, label }) => (
+                  <button
+                    key={id}
+                    onClick={() => setStoreSort(id)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      storeSort === id
+                        ? 'bg-white dark:bg-gray-700 shadow-sm text-red-800 dark:text-red-400'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {closedStores.length > 0 && (
+                <button
+                  onClick={() => setShowClosedStores(v => !v)}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                >
+                  <Calendar className="h-3.5 w-3.5" />
+                  休業店舗 ({closedStores.length})
+                  {showClosedStores ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+              )}
+            </div>
           </div>
 
           {isLoading && stores.length === 0 ? (
