@@ -35,8 +35,9 @@ const LEVEL_CONFIG = {
     label: '優秀',
     color: '#16a34a',
     gradient: 'from-emerald-500 to-green-600',
-    bg: 'bg-emerald-50 dark:bg-gray-800',
-    border: 'border-emerald-400 dark:border-emerald-500',
+    bg: 'bg-white dark:bg-gray-800',
+    border: 'border-emerald-300 dark:border-emerald-600',
+    topBar: 'bg-emerald-500',
     text: 'text-emerald-700 dark:text-emerald-400',
     badge: 'bg-emerald-500',
     ring: 'ring-emerald-400',
@@ -48,8 +49,9 @@ const LEVEL_CONFIG = {
     label: '良好',
     color: '#2563eb',
     gradient: 'from-blue-500 to-indigo-600',
-    bg: 'bg-blue-50 dark:bg-gray-800',
-    border: 'border-blue-400 dark:border-blue-500',
+    bg: 'bg-white dark:bg-gray-800',
+    border: 'border-blue-300 dark:border-blue-600',
+    topBar: 'bg-blue-500',
     text: 'text-blue-700 dark:text-blue-400',
     badge: 'bg-blue-500',
     ring: 'ring-blue-400',
@@ -61,8 +63,9 @@ const LEVEL_CONFIG = {
     label: '注意',
     color: '#d97706',
     gradient: 'from-amber-500 to-orange-500',
-    bg: 'bg-amber-50 dark:bg-gray-800',
-    border: 'border-amber-400 dark:border-amber-500',
+    bg: 'bg-white dark:bg-gray-800',
+    border: 'border-amber-300 dark:border-amber-600',
+    topBar: 'bg-amber-500',
     text: 'text-amber-700 dark:text-amber-400',
     badge: 'bg-amber-500',
     ring: 'ring-amber-400',
@@ -74,8 +77,9 @@ const LEVEL_CONFIG = {
     label: '要改善',
     color: '#dc2626',
     gradient: 'from-red-500 to-rose-600',
-    bg: 'bg-red-50 dark:bg-gray-800',
-    border: 'border-red-400 dark:border-red-500',
+    bg: 'bg-white dark:bg-gray-800',
+    border: 'border-red-300 dark:border-red-600',
+    topBar: 'bg-red-500',
     text: 'text-red-700 dark:text-red-400',
     badge: 'bg-red-500',
     ring: 'ring-red-400',
@@ -362,12 +366,13 @@ function StoreCard({ store, onClick, index }) {
     );
   }
 
-  const level = getProductivityLevel(store.productivity);
+  const hasData = store.total_sales > 0 || store.productivity > 0;
+  const level = hasData ? getProductivityLevel(store.productivity) : 'danger';
   const config = LEVEL_CONFIG[level];
   const Icon = config.icon;
   const recentHourly = store.hourly_productivity?.slice(-2) || [];
   const activeCount = store.working_employees || 0;
-  const achieveRate = Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100));
+  const achieveRate = hasData ? Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100)) : 0;
 
   return (
     <motion.div
@@ -375,11 +380,11 @@ function StoreCard({ store, onClick, index }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.35, delay: index * 0.04, ease: 'easeOut' }}
       className={`
-        relative rounded-2xl border-2 ${config.border} ${config.bg}
+        relative rounded-2xl border ${hasData ? config.border : 'border-gray-200 dark:border-gray-700'} ${config.bg}
         cursor-pointer group
-        hover:shadow-2xl hover:-translate-y-1
+        hover:shadow-xl hover:-translate-y-0.5
         transition-all duration-200
-        overflow-hidden
+        overflow-hidden shadow-sm
       `}
       onClick={() => onClick(store)}
       role="button"
@@ -387,7 +392,7 @@ function StoreCard({ store, onClick, index }) {
       onKeyDown={(e) => e.key === 'Enter' && onClick(store)}
     >
       {/* トップカラーバー */}
-      <div className={`h-1 w-full bg-gradient-to-r ${config.gradient}`} />
+      <div className={`h-1.5 w-full ${hasData ? config.topBar : 'bg-gray-300 dark:bg-gray-600'}`} />
 
       {/* カード本体 */}
       <div className="p-4">
@@ -406,9 +411,9 @@ function StoreCard({ store, onClick, index }) {
           </div>
           {/* ステータスバッジグループ */}
           <div className="flex flex-col items-end gap-1 shrink-0 ml-2">
-            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-sm ${config.badge}`}>
+            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-sm ${hasData ? config.badge : 'bg-gray-400'}`}>
               <Icon className="h-3 w-3" />
-              {config.label}
+              {hasData ? config.label : '取得中'}
             </span>
             {store.working_employees > 0 && (
               <div className="flex items-center gap-1 text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
@@ -426,12 +431,12 @@ function StoreCard({ store, onClick, index }) {
         </div>
 
         {/* 人時生産性（メイン指標） */}
-        <div className="rounded-2xl p-3 mb-3 bg-white/60 dark:bg-gray-700/40 border border-white/80 dark:border-gray-600/50 shadow-sm">
+        <div className="rounded-xl p-3 mb-3 bg-gray-50 dark:bg-gray-700/50 border border-gray-100 dark:border-gray-600/50">
           <div className="flex items-center justify-between mb-2">
             <div>
               <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-0.5">人時生産性</p>
               <div className="flex items-baseline gap-1">
-                <span className={`text-2xl font-black ${config.text} leading-none`}>
+                <span className={`text-2xl font-black ${hasData ? config.text : 'text-gray-400 dark:text-gray-500'} leading-none`}>
                   ¥{store.productivity.toLocaleString()}
                 </span>
                 <span className="text-xs text-muted-foreground">/h</span>
@@ -440,8 +445,8 @@ function StoreCard({ store, onClick, index }) {
             <div className="text-right">
               <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-0.5">達成率</p>
               <div className="flex items-baseline gap-0.5 justify-end">
-                <span className={`text-xl font-black ${config.text}`}>{achieveRate}</span>
-                <span className={`text-xs font-bold ${config.text}`}>%</span>
+                <span className={`text-xl font-black ${hasData ? config.text : 'text-gray-400 dark:text-gray-500'}`}>{achieveRate}</span>
+                <span className={`text-xs font-bold ${hasData ? config.text : 'text-gray-400 dark:text-gray-500'}`}>%</span>
               </div>
             </div>
           </div>
@@ -450,22 +455,22 @@ function StoreCard({ store, onClick, index }) {
 
         {/* メトリクスグリッド */}
         <div className="grid grid-cols-4 gap-1.5 text-xs mb-3">
-          <div className="bg-white/70 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
+          <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
             <DollarSign className="h-3 w-3 mx-auto mb-0.5 text-muted-foreground" />
             <p className="text-[9px] text-muted-foreground leading-none mb-0.5">売上</p>
             <p className="font-black text-xs leading-none">¥{(store.total_sales / 1000).toFixed(0)}k</p>
           </div>
-          <div className="bg-white/70 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
+          <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
             <Clock className="h-3 w-3 mx-auto mb-0.5 text-muted-foreground" />
             <p className="text-[9px] text-muted-foreground leading-none mb-0.5">動務h</p>
             <p className="font-black text-xs leading-none">{store.total_hours.toFixed(1)}h</p>
           </div>
-          <div className="bg-white/70 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
+          <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
             <Users className="h-3 w-3 mx-auto mb-0.5 text-muted-foreground" />
             <p className="text-[9px] text-muted-foreground leading-none mb-0.5">出勤</p>
             <p className="font-black text-xs leading-none">{store.attended_employees}人</p>
           </div>
-          <div className="bg-white/70 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
+          <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
             <Activity className="h-3 w-3 mx-auto mb-0.5 text-green-500" />
             <p className="text-[9px] text-muted-foreground leading-none mb-0.5">稼働中</p>
             <p className="font-black text-xs leading-none text-green-600 dark:text-green-400">{activeCount}人</p>
@@ -483,7 +488,7 @@ function StoreCard({ store, onClick, index }) {
                 const lv = getProductivityLevel(h.productivity);
                 const cfg = LEVEL_CONFIG[lv];
                 return (
-                  <div key={i} className={`flex-1 rounded-xl p-2 text-center bg-white/70 dark:bg-gray-700/50 border-2 ${cfg.border}`}>
+                  <div key={i} className={`flex-1 rounded-xl p-2 text-center bg-gray-50 dark:bg-gray-700/50 border ${cfg.border}`}>
                     <p className="text-[9px] text-muted-foreground font-semibold">{h.hour}時台</p>
                     <p className={`text-xs font-black ${cfg.text}`}>¥{h.productivity.toLocaleString()}</p>
                   </div>
@@ -1923,29 +1928,36 @@ export default function ProductivityDashboard() {
           </div>
           <div className="flex gap-1 rounded-2xl overflow-hidden" style={{ height: '140px' }}>
             {sortedOpenStores.map((store, i) => {
-              const level = getProductivityLevel(store.productivity);
-              const cfg = LEVEL_CONFIG[level];
+              // 売上0円（データ未取得）の場合はグレー表示
+              const hasData = store.total_sales > 0 || store.productivity > 0;
+              const level = hasData ? getProductivityLevel(store.productivity) : null;
+              const cfg = hasData ? LEVEL_CONFIG[level] : null;
+              const barColor = hasData ? cfg.color : '#9ca3af';
               const displayName = store.store_name
+                .replace('イオンタウン', 'ｲｵﾝ')
                 .replace('イオン', 'ｲｵﾝ')
                 .replace('FC店', 'FC');
-              const achieveRate = Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100));
+              const achieveRate = hasData ? Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100)) : null;
               return (
                 <motion.div
                   key={store.store_name}
                   className="flex-1 flex flex-col items-center justify-between cursor-pointer hover:brightness-110 hover:scale-y-105 transition-all origin-bottom py-2 px-0.5"
-                  style={{ backgroundColor: cfg.color }}
+                  style={{ backgroundColor: barColor }}
                   initial={{ scaleY: 0, originY: 1 }}
                   animate={{ scaleY: 1 }}
                   transition={{ duration: 0.45, delay: i * 0.03, ease: 'backOut' }}
                   onClick={() => setSelectedStore(store)}
-                  title={`${store.store_name}: ¥${store.productivity.toLocaleString()}/h (達成率${achieveRate}%)`}
+                  title={hasData
+                    ? `${store.store_name}: ¥${store.productivity.toLocaleString()}/h (達成率${achieveRate}%)`
+                    : `${store.store_name}: データ取得中`
+                  }
                 >
-                  {/* 達成率 */}
+                  {/* 達成率 or ロード中 */}
                   <span
                     className="text-white/90 font-black leading-none select-none"
                     style={{ fontSize: '11px', textShadow: '0 1px 2px rgba(0,0,0,0.4)' }}
                   >
-                    {achieveRate}%
+                    {hasData ? `${achieveRate}%` : '-'}
                   </span>
                   {/* 店舗名 */}
                   <span
@@ -1966,7 +1978,7 @@ export default function ProductivityDashboard() {
                     className="text-white/80 font-semibold leading-none select-none"
                     style={{ fontSize: '9px', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
                   >
-                    ¥{(store.productivity / 1000).toFixed(1)}k
+                    {hasData ? `¥${(store.productivity / 1000).toFixed(1)}k` : '---'}
                   </span>
                 </motion.div>
               );
