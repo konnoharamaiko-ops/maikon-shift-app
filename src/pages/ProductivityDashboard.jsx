@@ -35,49 +35,53 @@ const LEVEL_CONFIG = {
     label: '優秀',
     color: '#16a34a',
     gradient: 'from-emerald-500 to-green-600',
-    bg: 'bg-emerald-50 dark:bg-emerald-950/20',
-    border: 'border-emerald-400 dark:border-emerald-600',
+    bg: 'bg-emerald-50 dark:bg-gray-800',
+    border: 'border-emerald-400 dark:border-emerald-500',
     text: 'text-emerald-700 dark:text-emerald-400',
     badge: 'bg-emerald-500',
     ring: 'ring-emerald-400',
     icon: CheckCircle,
     lightBg: '#f0fdf4',
+    darkAccent: '#10b981',
   },
   good: {
     label: '良好',
     color: '#2563eb',
     gradient: 'from-blue-500 to-indigo-600',
-    bg: 'bg-blue-50 dark:bg-blue-950/20',
-    border: 'border-blue-400 dark:border-blue-600',
+    bg: 'bg-blue-50 dark:bg-gray-800',
+    border: 'border-blue-400 dark:border-blue-500',
     text: 'text-blue-700 dark:text-blue-400',
     badge: 'bg-blue-500',
     ring: 'ring-blue-400',
     icon: TrendingUp,
     lightBg: '#eff6ff',
+    darkAccent: '#3b82f6',
   },
   warning: {
     label: '注意',
     color: '#d97706',
     gradient: 'from-amber-500 to-orange-500',
-    bg: 'bg-amber-50 dark:bg-amber-950/20',
-    border: 'border-amber-400 dark:border-amber-600',
+    bg: 'bg-amber-50 dark:bg-gray-800',
+    border: 'border-amber-400 dark:border-amber-500',
     text: 'text-amber-700 dark:text-amber-400',
     badge: 'bg-amber-500',
     ring: 'ring-amber-400',
     icon: AlertTriangle,
     lightBg: '#fffbeb',
+    darkAccent: '#f59e0b',
   },
   danger: {
     label: '要改善',
     color: '#dc2626',
     gradient: 'from-red-500 to-rose-600',
-    bg: 'bg-red-50 dark:bg-red-950/20',
-    border: 'border-red-400 dark:border-red-600',
+    bg: 'bg-red-50 dark:bg-gray-800',
+    border: 'border-red-400 dark:border-red-500',
     text: 'text-red-700 dark:text-red-400',
     badge: 'bg-red-500',
     ring: 'ring-red-400',
     icon: TrendingDown,
     lightBg: '#fef2f2',
+    darkAccent: '#ef4444',
   },
 };
 
@@ -340,12 +344,16 @@ function StoreCard({ store, onClick, index }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.35, delay: index * 0.04, ease: 'easeOut' }}
       className={`
-        relative rounded-2xl border-2 ${config.border} ${config.bg}
+        relative rounded-2xl border ${config.border} ${config.bg}
         p-4 cursor-pointer group
         hover:shadow-xl hover:-translate-y-0.5
         transition-all duration-200
         overflow-hidden
       `}
+      style={{
+        borderLeftWidth: '4px',
+        borderLeftColor: config.color,
+      }}
       onClick={() => onClick(store)}
       role="button"
       tabIndex={0}
@@ -385,7 +393,7 @@ function StoreCard({ store, onClick, index }) {
       </div>
 
       {/* 人時生産性（メイン指標） */}
-      <div className={`rounded-xl p-3 mb-3 ${config.bg} border ${config.border}`}>
+      <div className="rounded-xl p-3 mb-3 bg-white/50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600">
         <div className="flex items-end justify-between">
           <div>
             <p className="text-xs text-muted-foreground mb-0.5">人時生産性</p>
@@ -406,25 +414,25 @@ function StoreCard({ store, onClick, index }) {
 
       {/* メトリクス */}
       <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+        <div className="bg-white/70 dark:bg-gray-700/60 rounded-lg p-2">
           <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
             <DollarSign className="h-3 w-3" />本日売上
           </p>
           <p className="font-bold text-sm">¥{store.total_sales.toLocaleString()}</p>
         </div>
-        <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+        <div className="bg-white/70 dark:bg-gray-700/60 rounded-lg p-2">
           <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
             <Clock className="h-3 w-3" />総労働時間
           </p>
           <p className="font-bold text-sm">{store.total_hours.toFixed(1)}h</p>
         </div>
-        <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+        <div className="bg-white/70 dark:bg-gray-700/60 rounded-lg p-2">
           <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
             <Users className="h-3 w-3" />出勤人数
           </p>
           <p className="font-bold text-sm">{store.attended_employees}人</p>
         </div>
-        <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+        <div className="bg-white/70 dark:bg-gray-700/60 rounded-lg p-2">
           <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
             <Activity className="h-3 w-3" />稼働中
           </p>
@@ -443,7 +451,7 @@ function StoreCard({ store, onClick, index }) {
               const lv = getProductivityLevel(h.productivity);
               const cfg = LEVEL_CONFIG[lv];
               return (
-                <div key={i} className={`flex-1 rounded-lg p-1.5 text-center ${cfg.bg} border ${cfg.border}`}>
+                <div key={i} className={`flex-1 rounded-lg p-1.5 text-center ${cfg.bg} dark:bg-gray-700/50 border ${cfg.border}`}>
                   <p className="text-[9px] text-muted-foreground">{h.hour}時台</p>
                   <p className={`text-xs font-bold ${cfg.text}`}>¥{h.productivity.toLocaleString()}</p>
                 </div>
