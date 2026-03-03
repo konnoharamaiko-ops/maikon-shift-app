@@ -620,9 +620,12 @@ async function fetchStoreUpdateTimes(cookies) {
  * @param {string} cookies - ログイン済みCookie
  * @param {string} repBaseUrl - TempoVisorのベースURL
  * @param {string} dateStr - 対象日付（YYYY/MM/DD形式）
+ * @param {boolean} [isTomorrow=false] - 翌日N341を処理する場合はtrue
+ *   今日N341（isTomorrow=false）：前日レジ締め後分が先頭に出現 → 最小時刻より前に出現した伝票を集計
+ *   翌日N341（isTomorrow=true）：今日レジ締め後分が末尾に出現 → 最小時刻より大きい時刻の伝票を集計
  * @returns { '田辺店': { afterSalesTotal: 15230, regijimeMinutes: 1050, excludeHours: Set{16,17,18} }, ... }
  */
-async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
+async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr, isTomorrow = false) {
   const storeEntries = Object.entries(TEMPOVISOR_STORE_CODES);
   
   // 全店舗を並行取得
@@ -755,34 +758,41 @@ async function fetchRegijimeStartHours(cookies, repBaseUrl, dateStr) {
         const minEntry = allEntries.find(e => e.minutes === minMinutes);
         console.log(`[N341] ${storeName}(${dateStr}): 最小時刻=${minEntry.timeStr}, 全伝票数=${allEntries.length}`);
 
-        // 通常営業開始時刻（10:00 = 600分）
-        // 最小時刻が通常営業開始時刻以降の場合、全伝票がレジ締め後分
-        const NORMAL_OPEN_MINUTES = 600; // 10:00
-
         let afterSalesTotal = 0;
         let excludeHours = new Set();
         let regijimeMinutes = null; // レジ締め時刻（分単位）
 
-        if (minMinutes >= NORMAL_OPEN_MINUTES) {
-          // 最小時刻が10時以降 → 全伝票がレジ締め後分（翌日N341の全伝票を今日分に補完）
-          afterSalesTotal = allEntries.reduce((sum, e) => sum + e.amount, 0);
-          allEntries.forEach(e => excludeHours.add(e.hour));
-          regijimeMinutes = minMinutes; // 最初の伝票時刻 = レジ締め時刻
-          console.log(`[N341] ${storeName}(${dateStr}): 全伝票がレジ締め後分（最小時刻=${minEntry.timeStr}が10時以降）`);
+        if (isTomorrow) {
+          // ===== 翌日N341の処理 =====
+          // 翌日N341の構造：[今日のレジ締め後分（末尾）] + [明日の通常営業分（先頭〜中間）]
+          // 最小時刻 = 明日の通常営業開始時刻（例：9:30）
+          // 最小時刻より大きい時刻の伝票 = 今日のレジ締め後分（例：17:30〜）
+          for (const entry of allEntries) {
+            if (entry.minutes > minMinutes) {
+              afterSalesTotal += entry.amount;
+              excludeHours.add(entry.hour);
+              if (regijimeMinutes === null || entry.minutes < regijimeMinutes) {
+                regijimeMinutes = entry.minutes; // 最初のレジ締め後伝票の時刻
+              }
+            }
+          }
         } else {
-          // 最小時刻が10時より前 → 出現順に走査し、最小時刻より前に出現した伝票 = レジ締め後分
+          // ===== 今日N341の処理 =====
+          // 今日N341の構造：[前日レジ締め後分（先頭）] + [今日の通常営業分（中間〜末尾）]
+          // 最小時刻 = 今日の通常営業開始時刻（例：9:25）
+          // 出現順に走査し、最小時刻より前に出現した伝票 = 前日レジ締め後分
           let reachedMin = false;
           for (const entry of allEntries) {
-            if (reachedMin) break; // 最小時刻に到達したら停止
+            if (reachedMin) break;
             if (entry.minutes === minMinutes) {
               reachedMin = true;
               break;
             }
-            // 最小時刻より大きい時刻が先に出現 = レジ締め後分
+            // 最小時刻より大きい時刻が先に出現 = 前日レジ締め後分
             afterSalesTotal += entry.amount;
             excludeHours.add(entry.hour);
             if (regijimeMinutes === null || entry.minutes < regijimeMinutes) {
-              regijimeMinutes = entry.minutes; // 最初のレジ締め後伝票の時刻 = レジ締め時刻
+              regijimeMinutes = entry.minutes;
             }
           }
         }
@@ -1164,8 +1174,8 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   //   今日のデータから「今日(3/2)のレジ締め時間帯以降」を除外し、yesterdayHourlyに補完する
   // ============================================================
   const [todayRegijimeMap, tomorrowRegijimeMap] = await Promise.all([
-    fetchRegijimeStartHours(cookies, repBaseUrl, todayStr),
-    fetchRegijimeStartHours(cookies, repBaseUrl, tomorrowStr),
+    fetchRegijimeStartHours(cookies, repBaseUrl, todayStr, false),
+    fetchRegijimeStartHours(cookies, repBaseUrl, tomorrowStr, true),
   ]);
 
   // ============================================================
