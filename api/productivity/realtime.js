@@ -1512,6 +1512,9 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
   // 例: 佐藤美咲（所属: 心斎橋店）がアベノ店で打刻した場合、打刻場所=アベノ店を使用する
   // 出入詳細ページの select[id^="change_group_id"] option[selected] のテキストが実際の打刻場所
   const stampPlaceMap = {}; // staffId → 打刻場所コード（5桁）
+  // 打刻種別ごとの場所マップ
+  // 構造: { staffId: { clockIn: code, breakStart: code, breakEnd: code, clockOut: code } }
+  const stampDetailMap = {};
 
   const today = new Date();
   const jstToday = new Date(today.getTime() + 9 * 60 * 60 * 1000);
@@ -1537,23 +1540,69 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       }, 5000);
       const aditHtml = await aditRes.text();
       const $adit = cheerio.load(aditHtml);
-      let stampCode = null;
+
+      // 全打刻の場所コードを順番に取得
+      // ジョブカン出入詳細ページの打刻順序: 出勤(0) → 休憩開始(1) → 休憩終了(2) → 退勤(3)
+      // ※ 休憩なしの場合: 出勤(0) → 退勤(1)
+      const stampCodes = [];
       $adit('select[id^="change_group_id"]').each((idx, sel) => {
-        if (stampCode) return;
         const selectedOption = $adit(sel).find('option[selected]');
         const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
         if (targetOption.length > 0) {
           const optText = targetOption.text().trim();
           const codeMatch = optText.match(/^(\d{5})/);
-          if (codeMatch) stampCode = codeMatch[1];
+          stampCodes.push(codeMatch ? codeMatch[1] : null);
         }
       });
-      return { empId, stampCode };
+
+      // 打刻種別を判定するため、打刻タイプ（出勤/休憩開始/休憩終了/退勤）のラベルも取得
+      // change_type または 打刻種別のテキストから判定
+      const stampTypes = [];
+      $adit('select[id^="change_type"]').each((idx, sel) => {
+        const selectedOption = $adit(sel).find('option[selected]');
+        const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
+        stampTypes.push(targetOption.length > 0 ? targetOption.text().trim() : null);
+      });
+
+      // 打刻種別マッピング
+      // change_typeが取得できた場合はそれを使用、取得できない場合はインデックスで推定
+      let clockInCode = null, breakStartCode = null, breakEndCode = null, clockOutCode = null;
+
+      if (stampTypes.length > 0 && stampTypes.length === stampCodes.length) {
+        // 打刻種別が取得できた場合
+        stampTypes.forEach((type, idx) => {
+          const code = stampCodes[idx];
+          if (!type || !code) return;
+          if (type.includes('出勤') || type === '1') clockInCode = code;
+          else if (type.includes('休憩開始') || type === '3') breakStartCode = code;
+          else if (type.includes('休憩終了') || type === '4') breakEndCode = code;
+          else if (type.includes('退勤') || type === '2') clockOutCode = code;
+        });
+      } else {
+        // 打刻種別が取得できない場合はインデックスで推定
+        // 2打刻: 出勤(0) 退勤(1)
+        // 4打刻: 出勤(0) 休憩開始(1) 休憩終了(2) 退勤(3)
+        if (stampCodes.length >= 1) clockInCode = stampCodes[0];
+        if (stampCodes.length === 2) clockOutCode = stampCodes[1];
+        if (stampCodes.length >= 4) {
+          breakStartCode = stampCodes[1];
+          breakEndCode = stampCodes[2];
+          clockOutCode = stampCodes[3];
+        } else if (stampCodes.length === 3) {
+          // 3打刻: 出勤 休憩開始 退勤 or 出勤 休憩終了 退勤（稀）
+          breakStartCode = stampCodes[1];
+          clockOutCode = stampCodes[2];
+        }
+      }
+
+      return { empId, stampCode: clockInCode, clockInCode, breakStartCode, breakEndCode, clockOutCode };
     })
   );
   for (const result of allStampResults) {
-    if (result.status === 'fulfilled' && result.value.stampCode) {
-      stampPlaceMap[result.value.empId] = result.value.stampCode;
+    if (result.status === 'fulfilled') {
+      const { empId, stampCode, clockInCode, breakStartCode, breakEndCode, clockOutCode } = result.value;
+      if (stampCode) stampPlaceMap[empId] = stampCode;
+      stampDetailMap[empId] = { clockInCode, breakStartCode, breakEndCode, clockOutCode };
     }
   }
   console.log(`[JC] 打刻場所マッピング取得: ${Object.keys(stampPlaceMap).length}件`);
@@ -1643,11 +1692,157 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     }
     const netHours = parseFloat((netMinutes / 60).toFixed(2));
 
-    // 栲り分け先の店舗を決定
+    // 振り分け先の店舗を決定
     // 優先順位: 打刻場所（出入詳細ページのGPS打刻エリア）> 所属部署コード
     // 打刻場所 = 実際に打刻した場所（ヘルプ対応や所属外店舗での勤務に対応）
     let assignedStore = stampStoreName || deptStoreName;
 
+    // ===== 休憩中の店舗間移動検出 =====
+    // 休憩開始打刻場所 ≠ 休憩終了打刻場所 の場合は店舗間移動とみなす
+    const stampDetail = staffId ? stampDetailMap[staffId] : null;
+    const empBreakStartCode = stampDetail?.breakStartCode || null;
+    const empBreakEndCode = stampDetail?.breakEndCode || null;
+    const empBreakStartStore = empBreakStartCode ? STORE_DEPT_MAP[empBreakStartCode] : null;
+    const empBreakEndStore = empBreakEndCode ? STORE_DEPT_MAP[empBreakEndCode] : null;
+
+    // 店舗間移動の判定条件:
+    // 1. 休憩開始打刻場所が存在する
+    // 2. 休憩終了打刻場所が存在する
+    // 3. 休憩開始場所 ≠ 休憩終了場所
+    const hasCrossStoreBreak = empBreakStartStore && empBreakEndStore && empBreakStartStore !== empBreakEndStore;
+
+    if (hasCrossStoreBreak) {
+      // 店舗間移動あり
+      if (status === '退出中' || status === '休憩中') {
+        // 現在休憩中（まだ移動先に到着していない）
+        // 元店舗（休憩開始場所）での退勤済みとして扱う
+        const breakStartTime = clockOut; // 退出中の場合、clockOutが休憩開始時刻
+        const breakStartMinutes = parseTimeToMinutes(breakStartTime);
+        const workMinutesBeforeBreak = (breakStartMinutes !== null && clockInMinutes !== null)
+          ? Math.max(0, breakStartMinutes - clockInMinutes)
+          : netMinutes;
+
+        const empOrigin = {
+          name: staffName,
+          dept_code: deptCode,
+          dept_store_name: deptStoreName,
+          store_name: empBreakStartStore,
+          clock_location: clockLocation,
+          status: '退勤済み',  // 元店舗では退勤済み扱い
+          clock_in: clockIn || null,
+          clock_out: breakStartTime || null,  // 休憩開始時刻を退勤時刻として表示
+          break_start: null,
+          had_break: false,
+          clock_in_minutes: clockInMinutes,
+          clock_out_minutes: breakStartMinutes,
+          work_hours: parseFloat((workMinutesBeforeBreak / 60).toFixed(2)),
+          break_minutes: 0,
+          work_time_text: '',
+          break_time_text: '',
+          cross_store_transfer: true,
+          transfer_to: empBreakEndStore,
+          transfer_from: empBreakStartStore,
+        };
+
+        // 元店舗に集計
+        if (!storeAttendance[empBreakStartStore]) {
+          storeAttendance[empBreakStartStore] = { store_name: empBreakStartStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
+        }
+        const originStore = storeAttendance[empBreakStartStore];
+        originStore.total_employees++;
+        originStore.attended_employees++;
+        originStore.total_hours += empOrigin.work_hours;
+        originStore.employees.push(empOrigin);
+        employees.push(empOrigin);
+
+        console.log(`[JC] 店舗間移動(休憩中): ${staffName} ${empBreakStartStore}→${empBreakEndStore}(移動中)`);
+        continue;
+
+      } else {
+        // 休憩終了後（移動先店舗で勤務中または退勤済み）
+        // 元店舗レコードと移動先店舗レコードの2件を生成
+
+        // 元店舗の勤務時間: 全体勤務時間から移動先勤務時間を引いた分
+        // 簡略化: 休憩時間分を元店舗に割り当て、残りを移動先に割り当て
+        const originHours = parseFloat((breakMinutes / 60).toFixed(2));
+        const destHours = parseFloat(Math.max(0, netHours - originHours).toFixed(2));
+
+        // 元店舗レコード
+        const empOrigin = {
+          name: staffName,
+          dept_code: deptCode,
+          dept_store_name: deptStoreName,
+          store_name: empBreakStartStore,
+          clock_location: clockLocation,
+          status: '退勤済み',
+          clock_in: clockIn || null,
+          clock_out: null,  // 休憩開始時刻（不明のためnull）
+          break_start: null,
+          had_break: false,
+          clock_in_minutes: clockInMinutes,
+          clock_out_minutes: null,
+          work_hours: originHours,
+          break_minutes: 0,
+          work_time_text: '',
+          break_time_text: '',
+          cross_store_transfer: true,
+          transfer_to: empBreakEndStore,
+          transfer_from: empBreakStartStore,
+        };
+
+        // 移動先店舗レコード
+        const empDest = {
+          name: staffName,
+          dept_code: deptCode,
+          dept_store_name: deptStoreName,
+          store_name: empBreakEndStore,
+          clock_location: clockLocation,
+          status: status,
+          clock_in: null,  // 休憩終了時刻（不明のためnull）
+          clock_out: (status === '退勤済み') ? (clockOut || null) : null,
+          break_start: null,
+          had_break: false,
+          clock_in_minutes: null,
+          clock_out_minutes: clockOutMinutes,
+          work_hours: destHours,
+          break_minutes: 0,
+          work_time_text: '',
+          break_time_text: '',
+          cross_store_transfer: true,
+          transfer_to: empBreakEndStore,
+          transfer_from: empBreakStartStore,
+          is_transfer_arrival: true,  // 移動先店舗への到着フラグ
+        };
+
+        // 元店舗に集計
+        if (!storeAttendance[empBreakStartStore]) {
+          storeAttendance[empBreakStartStore] = { store_name: empBreakStartStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
+        }
+        const originStoreData = storeAttendance[empBreakStartStore];
+        originStoreData.total_employees++;
+        originStoreData.attended_employees++;
+        originStoreData.total_hours += empOrigin.work_hours;
+        originStoreData.employees.push(empOrigin);
+
+        // 移動先店舗に集計
+        if (!storeAttendance[empBreakEndStore]) {
+          storeAttendance[empBreakEndStore] = { store_name: empBreakEndStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
+        }
+        const destStoreData = storeAttendance[empBreakEndStore];
+        destStoreData.total_employees++;
+        destStoreData.attended_employees++;
+        destStoreData.total_hours += empDest.work_hours;
+        if (status === '勤務中') destStoreData.working_employees++;
+        destStoreData.employees.push(empDest);
+
+        employees.push(empOrigin);
+        employees.push(empDest);
+        console.log(`[JC] 店舗間移動(完了): ${staffName} ${empBreakStartStore}→${empBreakEndStore}`);
+        continue;
+      }
+    }
+
+    // 通常の店舗間移動なしのケース
     const employee = {
       name: staffName,
       dept_code: deptCode,

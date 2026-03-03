@@ -9,7 +9,7 @@ import {
   AlertTriangle, CheckCircle, Zap, Building2, ChevronDown, ChevronUp,
   Sun, Moon, LayoutGrid, LineChart as LineChartIcon, Timer, Coffee,
   Settings, Calendar, MapPin, ArrowUpRight, ArrowDownRight, Minus,
-  Store, BanknoteIcon, Briefcase
+  Store, BanknoteIcon, Briefcase, ArrowRight
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -835,10 +835,17 @@ function StoreDetailModal({ store, onClose }) {
                             {emp.name.charAt(0)}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-semibold text-sm truncate">{emp.name}</p>
-                              {/* 掛け持ち表示 */}
-                              {emp.clock_location && emp.clock_location !== emp.dept_store_name && (
+                              {/* 店舗間移動バッジ */}
+                              {emp.cross_store_transfer && (
+                                <span className="text-[9px] bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded-full shrink-0 flex items-center gap-0.5">
+                                  <ArrowRight className="h-2.5 w-2.5" />
+                                  {emp.is_transfer_arrival ? `${emp.transfer_from}より移動` : `${emp.transfer_to}へ移動`}
+                                </span>
+                              )}
+                              {/* 掛け持ち表示（店舗間移動でない場合のみ） */}
+                              {!emp.cross_store_transfer && emp.clock_location && emp.clock_location !== emp.dept_store_name && (
                                 <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded-full shrink-0">
                                   掛持
                                 </span>
@@ -851,11 +858,15 @@ function StoreDetailModal({ store, onClose }) {
                               {!emp.break_start && emp.had_break && emp.break_minutes > 0 && (
                                 <span className="text-blue-500">休憩 {Math.floor(emp.break_minutes / 60) > 0 ? `${Math.floor(emp.break_minutes / 60)}時間` : ''}{emp.break_minutes % 60 > 0 ? `${emp.break_minutes % 60}分` : ''}</span>
                               )}
-                              {emp.clock_out && <span>退勤 {emp.clock_out}</span>}
-                              {emp.clock_location && emp.clock_location !== emp.dept_store_name && (
+                              {emp.clock_out && <span>{emp.cross_store_transfer && !emp.is_transfer_arrival ? '移動前退勤' : '退勤'} {emp.clock_out}</span>}
+                              {!emp.cross_store_transfer && emp.clock_location && emp.clock_location !== emp.dept_store_name && (
                                 <span className="flex items-center gap-0.5">
                                   <MapPin className="h-2.5 w-2.5" />{emp.clock_location}
                                 </span>
+                              )}
+                              {/* 所属店舗が異なる場合は所属店舗名を表示 */}
+                              {emp.dept_store_name && emp.dept_store_name !== emp.store_name && (
+                                <span className="text-[10px] text-muted-foreground">(所属:{emp.dept_store_name})</span>
                               )}
                             </div>
                           </div>
