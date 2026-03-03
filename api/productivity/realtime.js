@@ -1153,6 +1153,8 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       if (cells.length < 2) continue;
 
       const storeName = $hourly(cells[0]).text().trim();
+      // デバッグ: 全店舗名をログ出力（マッチしない店舗名も含む）
+      if (storeName) console.log(`[TV] Row ${r} storeName="${storeName}" codepoints=${[...storeName].map(c=>c.codePointAt(0).toString(16)).join(',')} matched=${!!TEMPOVISOR_STORE_CODES[storeName]}`);
       if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
 
       // 時間別売上を取得
@@ -1559,68 +1561,109 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       const aditHtml = await aditRes.text();
       const $adit = cheerio.load(aditHtml);
 
-      // 全打刻の場所コードを順番に取得
-      // ジョブカン出入詳細ページの打刻順序: 出勤(0) → 休憩開始(1) → 休憩終了(2) → 退勤(3)
-      // ※ 休憩なしの場合: 出勤(0) → 退勤(1)
-      const stampCodes = [];
-      $adit('select[id^="change_group_id"]').each((idx, sel) => {
-        const selectedOption = $adit(sel).find('option[selected]');
-        const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
-        if (targetOption.length > 0) {
-          const optText = targetOption.text().trim();
-          const codeMatch = optText.match(/^(\d{5})/);
-          stampCodes.push(codeMatch ? codeMatch[1] : null);
+      // ===== 出入詳細テーブルの各行を解析 =====
+      // テーブル構造: 打刻区分 | 時刻 | 打刻方法 | 打刻場所 | 備考等 | 承認・削除
+      // 「自動退出」の打刻は退勤打刻として扱わない
+      const stampRows = [];
+      $adit('table').each((ti, tbl) => {
+        const hdr = $adit(tbl).find('tr').first().text();
+        if (hdr.includes('打刻区分') && hdr.includes('打刻方法')) {
+          $adit(tbl).find('tr').each((ri, row) => {
+            if (ri === 0) return; // ヘッダースキップ
+            const tds = $adit(row).find('td');
+            if (tds.length < 4) return;
+            // 打刻区分: select[name^="adit_type"] または td[0]のテキスト
+            const typeEl = $adit(tds[0]).find('select option[selected]');
+            const stampType = typeEl.length > 0 ? typeEl.text().trim() : $adit(tds[0]).text().trim();
+            const stampTime = $adit(tds[1]).text().trim(); // 時刻
+            const stampMethod = $adit(tds[2]).text().trim(); // 打刻方法（Web打刻/自動退出など）
+            // 打刻場所コード
+            const placeEl = $adit(tds[3]).find('select option[selected]');
+            const placeText = placeEl.length > 0 ? placeEl.text().trim() : $adit(tds[3]).text().trim();
+            const codeMatch = placeText.match(/^(\d{5})/);
+            const placeCode = codeMatch ? codeMatch[1] : null;
+            // 備考
+            const note = tds.length > 4 ? $adit(tds[4]).text().trim() : '';
+            // 自動退出かどうか
+            const isAutoClockOut = stampMethod.includes('自動退出') || note.includes('自動退出');
+            stampRows.push({ stampType, stampTime, stampMethod, placeCode, note, isAutoClockOut });
+          });
         }
       });
 
-      // 打刻種別を判定するため、打刻タイプ（出勤/休憩開始/休憩終了/退勤）のラベルも取得
-      // change_type または 打刻種別のテキストから判定
-      const stampTypes = [];
-      $adit('select[id^="change_type"]').each((idx, sel) => {
-        const selectedOption = $adit(sel).find('option[selected]');
-        const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
-        stampTypes.push(targetOption.length > 0 ? targetOption.text().trim() : null);
-      });
-
-      // 打刻種別マッピング
-      // change_typeが取得できた場合はそれを使用、取得できない場合はインデックスで推定
+      // stampRowsが取得できた場合はそちらを優先使用
+      // 取得できなかった場合は旧方式（change_group_id/change_type）にフォールバック
       let clockInCode = null, breakStartCode = null, breakEndCode = null, clockOutCode = null;
+      let hasAutoClockOut = false; // 自動退出打刻が存在するか
 
-      if (stampTypes.length > 0 && stampTypes.length === stampCodes.length) {
-        // 打刻種別が取得できた場合
-        stampTypes.forEach((type, idx) => {
-          const code = stampCodes[idx];
-          if (!type || !code) return;
-          if (type.includes('出勤') || type === '1') clockInCode = code;
-          else if (type.includes('休憩開始') || type === '3') breakStartCode = code;
-          else if (type.includes('休憩終了') || type === '4') breakEndCode = code;
-          else if (type.includes('退勤') || type === '2') clockOutCode = code;
+      if (stampRows.length > 0) {
+        stampRows.forEach(({ stampType, placeCode, isAutoClockOut }) => {
+          if (!stampType) return;
+          if (stampType.includes('出勤') || stampType === '1') {
+            if (placeCode) clockInCode = placeCode;
+          } else if (stampType.includes('休憩開始') || stampType === '3') {
+            if (placeCode) breakStartCode = placeCode;
+          } else if (stampType.includes('休憩終了') || stampType === '4') {
+            if (placeCode) breakEndCode = placeCode;
+          } else if (stampType.includes('退勤') || stampType.includes('退室') || stampType === '2') {
+            if (isAutoClockOut) {
+              // 自動退出は退勤打刻として扱わない
+              hasAutoClockOut = true;
+              console.log(`[JC] empId=${empId}: 自動退出打刻を除外`);
+            } else {
+              if (placeCode) clockOutCode = placeCode;
+            }
+          }
         });
       } else {
-        // 打刻種別が取得できない場合はインデックスで推定
-        // 2打刻: 出勤(0) 退勤(1)
-        // 4打刻: 出勤(0) 休憩開始(1) 休憩終了(2) 退勤(3)
-        if (stampCodes.length >= 1) clockInCode = stampCodes[0];
-        if (stampCodes.length === 2) clockOutCode = stampCodes[1];
-        if (stampCodes.length >= 4) {
-          breakStartCode = stampCodes[1];
-          breakEndCode = stampCodes[2];
-          clockOutCode = stampCodes[3];
-        } else if (stampCodes.length === 3) {
-          // 3打刻: 出勤 休憩開始 退勤 or 出勤 休憩終了 退勤（稀）
-          breakStartCode = stampCodes[1];
-          clockOutCode = stampCodes[2];
+        // フォールバック: change_group_id / change_type から取得
+        const stampCodes = [];
+        $adit('select[id^="change_group_id"]').each((idx, sel) => {
+          const selectedOption = $adit(sel).find('option[selected]');
+          const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
+          if (targetOption.length > 0) {
+            const optText = targetOption.text().trim();
+            const codeMatch = optText.match(/^(\d{5})/);
+            stampCodes.push(codeMatch ? codeMatch[1] : null);
+          }
+        });
+        const stampTypes = [];
+        $adit('select[id^="change_type"]').each((idx, sel) => {
+          const selectedOption = $adit(sel).find('option[selected]');
+          const targetOption = selectedOption.length > 0 ? selectedOption : $adit(sel).find('option').first();
+          stampTypes.push(targetOption.length > 0 ? targetOption.text().trim() : null);
+        });
+        if (stampTypes.length > 0 && stampTypes.length === stampCodes.length) {
+          stampTypes.forEach((type, idx) => {
+            const code = stampCodes[idx];
+            if (!type || !code) return;
+            if (type.includes('出勤') || type === '1') clockInCode = code;
+            else if (type.includes('休憩開始') || type === '3') breakStartCode = code;
+            else if (type.includes('休憩終了') || type === '4') breakEndCode = code;
+            else if (type.includes('退勤') || type === '2') clockOutCode = code;
+          });
+        } else {
+          if (stampCodes.length >= 1) clockInCode = stampCodes[0];
+          if (stampCodes.length === 2) clockOutCode = stampCodes[1];
+          if (stampCodes.length >= 4) {
+            breakStartCode = stampCodes[1];
+            breakEndCode = stampCodes[2];
+            clockOutCode = stampCodes[3];
+          } else if (stampCodes.length === 3) {
+            breakStartCode = stampCodes[1];
+            clockOutCode = stampCodes[2];
+          }
         }
       }
 
-      return { empId, stampCode: clockInCode, clockInCode, breakStartCode, breakEndCode, clockOutCode };
+      return { empId, stampCode: clockInCode, clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut };
     })
   );
   for (const result of allStampResults) {
     if (result.status === 'fulfilled') {
-      const { empId, stampCode, clockInCode, breakStartCode, breakEndCode, clockOutCode } = result.value;
+      const { empId, stampCode, clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut } = result.value;
       if (stampCode) stampPlaceMap[empId] = stampCode;
-      stampDetailMap[empId] = { clockInCode, breakStartCode, breakEndCode, clockOutCode };
+      stampDetailMap[empId] = { clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut: !!hasAutoClockOut };
     }
   }
   console.log(`[JC] 打刻場所マッピング取得: ${Object.keys(stampPlaceMap).length}件`);
@@ -1661,8 +1704,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       console.log(`[JC] ${staffName}(id=${staffId}): 所属=${deptStoreName}, 打刻場所=${stampStoreName || 'なし'}(コード:${stampCode || '-'}), GPS打刻=${clockLocation || 'なし'}`);
     }
 
-    // 出勤状況
-    const status = $work(cells[2]).text().trim();
+    // 出勤状況（JobCanから取得）
+    let status = $work(cells[2]).text().trim();
 
     // 出勤打刻時刻：cells[6]の形式は "08:48 (08:48)" → 括弧内が実際の打刻時刻
     const clockInRaw = $work(cells[6]).text().trim().replace(/\s+/g, ' ');
@@ -1672,7 +1715,15 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     // 退勤打刻時刻：cells[7]の形式は "14:08 (14:08)" → 括弧内が実際の打刻時刻
     const clockOutRaw = $work(cells[7]).text().trim().replace(/\s+/g, ' ');
     const clockOutBracket = clockOutRaw.match(/\((\d{1,2}:\d{2})\)/);
-    const clockOut = clockOutBracket ? clockOutBracket[1] : clockOutRaw.match(/^(\d{1,2}:\d{2})/) ? clockOutRaw.match(/^(\d{1,2}:\d{2})/)[1] : null;
+    let clockOut = clockOutBracket ? clockOutBracket[1] : clockOutRaw.match(/^(\d{1,2}:\d{2})/) ? clockOutRaw.match(/^(\d{1,2}:\d{2})/)[1] : null;
+
+    // 自動退出打刻の除外：出入詳細ページで自動退出と判定された場合は退勤打刻なしとみなす
+    const empStampDetail = staffId ? stampDetailMap[staffId] : null;
+    if (empStampDetail?.hasAutoClockOut && status === '退勤済み') {
+      console.log(`[JC] ${staffName}: 自動退出のため「勤務中」に上書き`);
+      status = '勤務中'; // 自動退出は退勤打刻として扱わない
+      clockOut = null;  // 退勤時刻もクリア
+    }
 
     // 休憩時間・打刻時間をパース
     const workTimeText = $work(cells[8]).text().trim();
@@ -1684,7 +1735,6 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const clockOutMinutes = parseTimeToMinutes(clockOut);
 
     // リアルタイム勤務時間計算：現在時刻 - 出勤打刻時刻 - 休憩時間
-    // ジョブカンの「労働時間」は更新タイミングに依存するため、より正確なリアルタイム計算を使用
     const nowJst = new Date();
     const jstNowMs = nowJst.getTime() + 9 * 60 * 60 * 1000;
     const jstNowDate = new Date(jstNowMs);
