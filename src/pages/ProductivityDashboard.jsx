@@ -114,6 +114,10 @@ function transformStoreData(apiData) {
     hourly_productivity: item.hourly_productivity || [],
     business_hours: item.business_hours || { open: 10, close: 18 },
     is_closed: item.is_closed || false,
+    is_after_close: item.is_after_close || false,  // 稼働中0人（閉店済み）フラグ
+    time_zone: item.time_zone || 'during_business',
+    first_clock_in: item.first_clock_in ?? null,
+    last_clock_out: item.last_clock_out ?? null,
   }));
 }
 
@@ -366,6 +370,12 @@ function StoreCard({ store, onClick, index }) {
     );
   }
 
+  // 閉店済み判定：稼働中0人かつ少なくとも1人以上退勤済みがいる場合
+  const isAfterClose = store.is_after_close === true;
+  // 閉店済みの場合は「3/3の結果」のように日付を表示
+  const today = new Date();
+  const frozenDateLabel = `${today.getMonth() + 1}/${today.getDate()}の結果`;
+
   const hasData = store.total_sales > 0 || store.productivity > 0;
   const level = hasData ? getProductivityLevel(store.productivity) : 'danger';
   const config = LEVEL_CONFIG[level];
@@ -391,8 +401,13 @@ function StoreCard({ store, onClick, index }) {
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && onClick(store)}
     >
-      {/* トップカラーバー */}
-      <div className={`h-1.5 w-full ${hasData ? config.topBar : 'bg-gray-300 dark:bg-gray-600'}`} />
+      {/* トップカラーバー：閉店済みはグレー */}
+      <div className={`h-1.5 w-full ${isAfterClose ? 'bg-gray-400 dark:bg-gray-500' : hasData ? config.topBar : 'bg-gray-300 dark:bg-gray-600'}`} />
+
+      {/* 閉店済みオーバーレイ（薄いグレー） */}
+      {isAfterClose && (
+        <div className="absolute inset-0 bg-gray-100/60 dark:bg-gray-900/50 pointer-events-none z-10 rounded-2xl" />
+      )}
 
       {/* カード本体 */}
       <div className="p-4">
@@ -405,16 +420,29 @@ function StoreCard({ store, onClick, index }) {
             <div className="flex items-center gap-2 mb-0.5">
               <h3 className="font-black text-base leading-tight tracking-tight">{store.store_name}</h3>
             </div>
-            {store.update_time && (
+            {/* 閉店済みの場合は「3/3の結果」ラベルを表示 */}
+            {isAfterClose ? (
+              <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-400" />
+                {frozenDateLabel}
+              </p>
+            ) : store.update_time ? (
               <p className="text-[10px] text-muted-foreground">{store.update_time}</p>
-            )}
+            ) : null}
           </div>
           {/* ステータスバッジグループ */}
           <div className="flex flex-col items-end gap-1 shrink-0 ml-2">
-            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-sm ${hasData ? config.badge : 'bg-gray-400'}`}>
-              <Icon className="h-3 w-3" />
-              {hasData ? config.label : '取得中'}
-            </span>
+            {isAfterClose ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-sm bg-gray-500">
+                <Store className="h-3 w-3" />
+                閉店済み
+              </span>
+            ) : (
+              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-sm ${hasData ? config.badge : 'bg-gray-400'}`}>
+                <Icon className="h-3 w-3" />
+                {hasData ? config.label : '取得中'}
+              </span>
+            )}
             {store.working_employees > 0 && (
               <div className="flex items-center gap-1 text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
                 <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse inline-block" />
@@ -470,10 +498,10 @@ function StoreCard({ store, onClick, index }) {
             <p className="text-[9px] text-muted-foreground leading-none mb-0.5">出勤</p>
             <p className="font-black text-xs leading-none">{store.attended_employees}人</p>
           </div>
-          <div className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
-            <Activity className="h-3 w-3 mx-auto mb-0.5 text-green-500" />
+          <div className={`rounded-xl p-2 text-center border ${isAfterClose ? 'bg-gray-100 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700' : 'bg-gray-50 dark:bg-gray-700/50 border-gray-100 dark:border-gray-600/50'}`}>
+            <Activity className={`h-3 w-3 mx-auto mb-0.5 ${isAfterClose ? 'text-gray-400' : 'text-green-500'}`} />
             <p className="text-[9px] text-muted-foreground leading-none mb-0.5">稼働中</p>
-            <p className="font-black text-xs leading-none text-green-600 dark:text-green-400">{activeCount}人</p>
+            <p className={`font-black text-xs leading-none ${isAfterClose ? 'text-gray-400 dark:text-gray-500' : 'text-green-600 dark:text-green-400'}`}>{activeCount}人</p>
           </div>
         </div>
 
@@ -1741,6 +1769,8 @@ export default function ProductivityDashboard() {
 
   const openStores = stores.filter(s => !s.is_closed);
   const closedStores = stores.filter(s => s.is_closed);
+  // 閉店済み表示用日付
+  const today = new Date();
 
   // バイザー順（ALL_STORE_NAMESの定義順）
   const STORE_DEFAULT_ORDER = ALL_STORE_NAMES;
@@ -1941,9 +1971,11 @@ export default function ProductivityDashboard() {
             {sortedOpenStores.map((store, i) => {
               // 売上0円（データ未取得）の場合はグレー表示
               const hasData = store.total_sales > 0 || store.productivity > 0;
+              const storeIsAfterClose = store.is_after_close === true;
               const level = hasData ? getProductivityLevel(store.productivity) : null;
               const cfg = hasData ? LEVEL_CONFIG[level] : null;
-              const barColor = hasData ? cfg.color : '#9ca3af';
+              // 閉店済みはグレー、データ未取得はライトグレー、それ以外はレベル色
+              const barColor = storeIsAfterClose ? '#6b7280' : hasData ? cfg.color : '#9ca3af';
               const displayName = store.store_name
                 .replace('イオンタウン', 'ｲｵﾝ')
                 .replace('イオン', 'ｲｵﾝ')
@@ -1953,22 +1985,24 @@ export default function ProductivityDashboard() {
                 <motion.div
                   key={store.store_name}
                   className="flex-1 flex flex-col items-center justify-between cursor-pointer hover:brightness-110 hover:scale-y-105 transition-all origin-bottom py-2 px-0.5"
-                  style={{ backgroundColor: barColor }}
+                  style={{ backgroundColor: barColor, opacity: storeIsAfterClose ? 0.75 : 1 }}
                   initial={{ scaleY: 0, originY: 1 }}
                   animate={{ scaleY: 1 }}
                   transition={{ duration: 0.45, delay: i * 0.03, ease: 'backOut' }}
                   onClick={() => setSelectedStore(store)}
-                  title={hasData
-                    ? `${store.store_name}: ¥${store.productivity.toLocaleString()}/h (達成率${achieveRate}%)`
-                    : `${store.store_name}: データ取得中`
+                  title={storeIsAfterClose
+                    ? `${store.store_name}: 閉店済み（${today.getMonth()+1}/${today.getDate()}の結果）`
+                    : hasData
+                      ? `${store.store_name}: ¥${store.productivity.toLocaleString()}/h (達成率${achieveRate}%)`
+                      : `${store.store_name}: データ取得中`
                   }
                 >
-                  {/* 達成率 or ロード中 */}
+                  {/* 達成率 or 閉店済み or ロード中 */}
                   <span
                     className="text-white/90 font-black leading-none select-none"
                     style={{ fontSize: '11px', textShadow: '0 1px 2px rgba(0,0,0,0.4)' }}
                   >
-                    {hasData ? `${achieveRate}%` : '-'}
+                    {storeIsAfterClose ? '閉店' : hasData ? `${achieveRate}%` : '-'}
                   </span>
                   {/* 店舗名 */}
                   <span
@@ -1989,7 +2023,9 @@ export default function ProductivityDashboard() {
                     className="text-white/80 font-semibold leading-none select-none"
                     style={{ fontSize: '9px', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
                   >
-                    {hasData ? `¥${(store.productivity / 1000).toFixed(1)}k` : '---'}
+                    {storeIsAfterClose
+                      ? `¥${(store.productivity / 1000).toFixed(1)}k`
+                      : hasData ? `¥${(store.productivity / 1000).toFixed(1)}k` : '---'}
                   </span>
                 </motion.div>
               );

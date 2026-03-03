@@ -2068,6 +2068,7 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       hourly_productivity: hourlyProductivity,  // 時間帯別人時生産性
       business_hours: businessHours,
       is_closed: isClosed,
+      is_after_close: isAfterClose,   // 稼働中0人（閉店済み）フラグ：数字フリーズ用
       is_yesterday_data: useYesterday,  // 前日データを使用中かどうか（フロントエンド表示用）
       time_zone: isBeforeOpen ? 'before_open' : isAfterClose ? 'after_close' : 'during_business',  // 時間帯判定結果
       first_clock_in: firstClockInMinutes,   // 最初の出勤時刻（分単位）
