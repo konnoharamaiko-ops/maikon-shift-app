@@ -1618,12 +1618,18 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
               hasOnlyAutoClockOut = true;
               console.log(`[JC] empId=${empId}: 自動退出打刻を検出 (時刻:${stampTime})`);
             } else {
-              // 実際の退勤打刻：有効
+              // 実際の退勤打刻（Web打刻・未承認含む）：有効
               hasRealClockOut = true;
               if (placeCode) clockOutCode = placeCode;
-              if (stampTime) realClockOutTime = stampTime;  // 実際の退勤打刻時刻を保存
-              console.log(`[JC] empId=${empId}: 実際の退勤打刻を検出 (時刻:${stampTime})`);
+              if (stampTime) realClockOutTime = stampTime;  // 実際の退勤打刻時刻を保存（未承認でも使用）
+              console.log(`[JC] empId=${empId}: 実際の退勤打刻を検出 (時刻:${stampTime}, 方法:${stampMethod})`);
             }
+          } else if (stampMethod && !isAutoClockOut && (stampType === '-退室' || stampType.includes('-退'))) {
+            // -退室など「-」付きの退室行で自動退出でない場合は実際の退勤打刻として扱う
+            hasRealClockOut = true;
+            if (placeCode) clockOutCode = placeCode;
+            if (stampTime) realClockOutTime = stampTime;
+            console.log(`[JC] empId=${empId}: -退室打刻（実際）を検出 (時刻:${stampTime}, 方法:${stampMethod})`);
           }
         });
         // 実際の退勤打刻がなく、自動退出のみの場合はフラグを立てる
