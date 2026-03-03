@@ -878,8 +878,59 @@ function StoreDetailModal({ store, onClose }) {
 }
 
 /**
- * サマリーカード
+ * ローディング中の進捗表示コンポーネント
+ * 初回読み込み時に外部サービスへの接続状況を表示し、待ち時間の体感を軽減する
  */
+function LoadingProgress() {
+  const [step, setStep] = useState(0);
+  const steps = [
+    { label: 'TempoVisorに接続中...', icon: '📊', color: 'text-blue-600 dark:text-blue-400' },
+    { label: '売上データを取得中...', icon: '💴', color: 'text-green-600 dark:text-green-400' },
+    { label: 'ジョブカンに接続中...', icon: '👥', color: 'text-purple-600 dark:text-purple-400' },
+    { label: '勤怠データを取得中...', icon: '⏰', color: 'text-orange-600 dark:text-orange-400' },
+    { label: '人時生産性を計算中...', icon: '⚙️', color: 'text-red-600 dark:text-red-400' },
+  ];
+
+  useEffect(() => {
+    const intervals = [1200, 2500, 4000, 5500];
+    const timers = intervals.map((delay, i) =>
+      setTimeout(() => setStep(i + 1), delay)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  const current = steps[Math.min(step, steps.length - 1)];
+
+  return (
+    <div className="mb-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4">
+      <div className="flex items-center gap-3">
+        <div className="relative">
+          <div className="w-8 h-8 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+        </div>
+        <div className="flex-1">
+          <p className={`text-sm font-semibold ${current.color}`}>
+            {current.icon} {current.label}
+          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            初回読み込みは10秒程度かかる場合があります。しばらくお待ちください。
+          </p>
+        </div>
+        {/* ステップインジケーター */}
+        <div className="flex gap-1">
+          {steps.map((_, i) => (
+            <div
+              key={i}
+              className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${
+                i <= step ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SummaryCard({ title, value, unit, icon: Icon, gradient, description, index }) {
   return (
     <motion.div
@@ -1756,7 +1807,7 @@ export default function ProductivityDashboard() {
               ))}
             </div>
           </div>
-          <div className="flex gap-1 rounded-xl overflow-hidden" style={{ height: '110px' }}>
+          <div className="flex gap-1 rounded-xl overflow-hidden" style={{ height: '130px' }}>
             {sortedOpenStores.map((store, i) => {
               const level = getProductivityLevel(store.productivity);
               const cfg = LEVEL_CONFIG[level];
@@ -1778,11 +1829,12 @@ export default function ProductivityDashboard() {
                   <span
                     className="text-white font-bold leading-none select-none"
                     style={{
-                      fontSize: '12px',
+                      fontSize: '14px',
                       writingMode: 'vertical-rl',
                       textOrientation: 'mixed',
-                      letterSpacing: '0.1em',
+                      letterSpacing: '0.12em',
                       whiteSpace: 'nowrap',
+                      textShadow: '0 1px 2px rgba(0,0,0,0.3)',
                     }}
                   >
                     {displayName}
@@ -1839,18 +1891,22 @@ export default function ProductivityDashboard() {
           </div>
 
           {isLoading && stores.length === 0 ? (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-              {[...Array(13)].map((_, i) => (
-                <div key={i} className="rounded-2xl border bg-gray-50 dark:bg-gray-800 p-4 animate-pulse">
-                  <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-lg mb-3 w-2/3" />
-                  <div className="h-16 bg-gray-200 dark:bg-gray-700 rounded-xl mb-3" />
-                  <div className="grid grid-cols-2 gap-2">
-                    {[...Array(4)].map((_, j) => (
-                      <div key={j} className="h-12 bg-gray-200 dark:bg-gray-700 rounded-lg" />
-                    ))}
+            <div>
+              {/* ローディングメッセージ */}
+              <LoadingProgress />
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+                {[...Array(13)].map((_, i) => (
+                  <div key={i} className="rounded-2xl border bg-gray-50 dark:bg-gray-800 p-4 animate-pulse">
+                    <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded-lg mb-3 w-2/3" />
+                    <div className="h-16 bg-gray-200 dark:bg-gray-700 rounded-xl mb-3" />
+                    <div className="grid grid-cols-2 gap-2">
+                      {[...Array(4)].map((_, j) => (
+                        <div key={j} className="h-12 bg-gray-200 dark:bg-gray-700 rounded-lg" />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           ) : stores.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground">
