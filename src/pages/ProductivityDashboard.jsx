@@ -329,7 +329,8 @@ function StoreCard({ store, onClick, index }) {
 
   // 直近の時間帯データ（最新2時間）
   const recentHourly = store.hourly_productivity?.slice(-2) || [];
-  const activeCount = store.working_employees + (store.break_employees || 0);
+  // 稼働中 = 勤務中のみ（休憩中・退出中は除く）
+  const activeCount = store.working_employees || 0;
 
   return (
     <motion.div
@@ -621,7 +622,7 @@ function StoreDetailModal({ store, onClose }) {
                       { label: '本日売上', value: `¥${store.total_sales.toLocaleString()}`, icon: DollarSign, color: 'text-blue-600' },
                       { label: '人時生産性', value: `¥${store.productivity.toLocaleString()}/h`, icon: Zap, color: config.text },
                       { label: '総労働時間', value: `${store.total_hours.toFixed(1)}h`, icon: Clock, color: 'text-purple-600' },
-                      { label: '稼働中/出勤', value: `${workingCount + breakCount}/${store.attended_employees}人`, icon: Users, color: 'text-green-600' },
+                      { label: '勤務中/出勤', value: `${workingCount}/${store.attended_employees}人`, icon: Users, color: 'text-green-600' },
                     ].map((kpi, i) => (
                       <motion.div
                         key={i}
@@ -797,6 +798,11 @@ function StoreDetailModal({ store, onClose }) {
                             </div>
                             <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
                               {emp.clock_in && <span>出勤 {emp.clock_in}</span>}
+                              {emp.break_start && <span>休憩開始 {emp.break_start}</span>}
+                              {/* 勤務中に戻った後も休憩実績があれば表示 */}
+                              {!emp.break_start && emp.had_break && emp.break_minutes > 0 && (
+                                <span className="text-blue-500">休憩 {Math.floor(emp.break_minutes / 60) > 0 ? `${Math.floor(emp.break_minutes / 60)}時間` : ''}{emp.break_minutes % 60 > 0 ? `${emp.break_minutes % 60}分` : ''}</span>
+                              )}
                               {emp.clock_out && <span>退勤 {emp.clock_out}</span>}
                               {emp.clock_location && emp.clock_location !== emp.dept_store_name && (
                                 <span className="flex items-center gap-0.5">

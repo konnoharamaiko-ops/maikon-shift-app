@@ -434,6 +434,7 @@ function applyEmployeeServiceHours(employees, staffMaster) {
       status: emp.status,
       clock_in: emp.clock_in,
       clock_out: emp.clock_out,
+      break_start: emp.break_start || null,
       total_work_hours: emp.work_hours,
       service_hours: parseFloat((serviceMinutes / 60).toFixed(2)),
       non_service_hours: parseFloat((nonServiceMinutes / 60).toFixed(2)),
@@ -1580,7 +1581,9 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       clock_location: clockLocation,     // 打刻場所
       status: status,
       clock_in: clockIn || null,
-      clock_out: clockOut || null,
+      clock_out: (status === '退勤済み') ? (clockOut || null) : null,  // 退勤済みのみ退勤時刻
+      break_start: (status === '退出中') ? (clockOut || null) : null,  // 退出中は休憩開始時刻
+      had_break: breakMinutes > 0,  // 休憩実績があるか（勤務中に戻った後も休憩ログを表示するため）
       clock_in_minutes: clockInMinutes,   // 分単位（例: 10:30 → 630）
       clock_out_minutes: clockOutMinutes, // 分単位（退勤済みの場合）
       work_hours: netHours,
