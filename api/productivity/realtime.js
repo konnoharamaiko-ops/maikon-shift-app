@@ -246,7 +246,8 @@ async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, 
  */
 function buildStoreSettings(clientSettings, supabaseSettings) {
   // クライアント設定がある場合はそれを優先
-  // フォーマット: { '田辺店': { open: 9, close: 19, closed_days: [0], sunday_close: 19 }, ... }
+  // フォーマットv2: { '田辺店': { days: [{open,close,is_closed}, ...x7] }, ... }
+  // フォーマットv1: { '田辺店': { open: 9, close: 19, closed_days: [0], sunday_close: 19 }, ... }
   const result = {};
 
   ALL_STORES.forEach(storeName => {
@@ -254,24 +255,39 @@ function buildStoreSettings(clientSettings, supabaseSettings) {
     const supabase = supabaseSettings[storeName];
 
     if (client) {
-      // クライアント設定をSupabase形式に変換
       const dayKeys = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
       const businessHours = {};
 
-      dayKeys.forEach((dayKey, dayIndex) => {
-        const isClosed = (client.closed_days || []).includes(dayIndex);
-        if (isClosed) {
-          businessHours[dayKey] = { is_closed: true, open: null, close: null };
-        } else {
-          // 日曜日の特別閉店時間（堺東店など）
-          const closeHour = (dayIndex === 0 && client.sunday_close) ? client.sunday_close : client.close;
-          businessHours[dayKey] = {
-            is_closed: false,
-            open: `${String(client.open).padStart(2, '0')}:00`,
-            close: `${String(closeHour).padStart(2, '0')}:00`,
-          };
-        }
-      });
+      if (client.days && Array.isArray(client.days)) {
+        // 新形式v2: days[]配列から変換
+        dayKeys.forEach((dayKey, dayIndex) => {
+          const d = client.days[dayIndex] || { open: 10, close: 18, is_closed: false };
+          if (d.is_closed) {
+            businessHours[dayKey] = { is_closed: true, open: null, close: null };
+          } else {
+            businessHours[dayKey] = {
+              is_closed: false,
+              open: `${String(d.open).padStart(2, '0')}:00`,
+              close: `${String(d.close).padStart(2, '0')}:00`,
+            };
+          }
+        });
+      } else {
+        // 旧形式v1: open/close/closed_daysから変換（後方互換）
+        dayKeys.forEach((dayKey, dayIndex) => {
+          const isClosed = (client.closed_days || []).includes(dayIndex);
+          if (isClosed) {
+            businessHours[dayKey] = { is_closed: true, open: null, close: null };
+          } else {
+            const closeHour = (dayIndex === 0 && client.sunday_close) ? client.sunday_close : client.close;
+            businessHours[dayKey] = {
+              is_closed: false,
+              open: `${String(client.open).padStart(2, '0')}:00`,
+              close: `${String(closeHour).padStart(2, '0')}:00`,
+            };
+          }
+        });
+      }
 
       result[storeName] = { business_hours: businessHours, temporary_closures: [] };
     } else if (supabase) {

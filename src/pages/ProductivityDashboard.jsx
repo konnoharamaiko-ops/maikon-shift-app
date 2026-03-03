@@ -128,24 +128,7 @@ function calcSummary(stores) {
 }
 
 // ===== 店舗設定（localStorageキー） =====
-const STORE_SETTINGS_KEY = 'maikon_store_settings';
-
-// デフォルト店舗設定
-const DEFAULT_STORE_SETTINGS = {
-  '田辺店':       { open: 9,  close: 19, closed_days: [] },
-  '大正店':       { open: 10, close: 18, closed_days: [] },
-  '天下茶屋店':   { open: 10, close: 18, closed_days: [] },
-  '天王寺店':     { open: 10, close: 18, closed_days: [] },
-  'アベノ店':     { open: 10, close: 18, closed_days: [] },
-  '心斎橋店':     { open: 10, close: 18, closed_days: [] },
-  'かがや店':     { open: 10, close: 18, closed_days: [] },
-  'エキマル':     { open: 10, close: 22, closed_days: [] },
-  '北摂店':       { open: 10, close: 18, closed_days: [] },
-  '堺東店':       { open: 10, close: 20, closed_days: [], sunday_close: 19 },
-  'イオン松原店': { open: 9,  close: 20, closed_days: [] },
-  'イオン守口店': { open: 9,  close: 20, closed_days: [] },
-  '美和堂FC店':   { open: 10, close: 18, closed_days: [0] }, // 0=日曜
-};
+const STORE_SETTINGS_KEY = 'maikon_store_settings_v2'; // v2: 曜日別対応
 
 const ALL_STORE_NAMES = [
   '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
@@ -154,14 +137,62 @@ const ALL_STORE_NAMES = [
 ];
 
 const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+const DAY_FULL_LABELS = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'];
+
+// 曜日別設定のデフォルト値を生成するヘルパー
+function makeDefaultDays(open, close, closedDayIndexes = []) {
+  return Array.from({ length: 7 }, (_, i) => ({
+    open,
+    close,
+    is_closed: closedDayIndexes.includes(i),
+  }));
+}
+
+// デフォルト店舗設定（曜日別構造）
+const DEFAULT_STORE_SETTINGS = {
+  '田辺店':       { days: makeDefaultDays(9,  19) },
+  '大正店':       { days: makeDefaultDays(10, 18) },
+  '天下茶屋店':   { days: makeDefaultDays(10, 18) },
+  '天王寺店':     { days: makeDefaultDays(10, 18) },
+  'アベノ店':     { days: makeDefaultDays(10, 18) },
+  '心斎橋店':     { days: makeDefaultDays(10, 18) },
+  'かがや店':     { days: makeDefaultDays(10, 18) },
+  'エキマル':     { days: makeDefaultDays(10, 22) },
+  '北摂店':       { days: makeDefaultDays(10, 18) },
+  '堺東店':       { days: (() => {
+    const d = makeDefaultDays(10, 20);
+    d[0] = { open: 10, close: 19, is_closed: false }; // 日曜日は19時閉店
+    return d;
+  })() },
+  'イオン松原店': { days: makeDefaultDays(9,  20) },
+  'イオン守口店': { days: makeDefaultDays(9,  20) },
+  '美和堂FC店':   { days: makeDefaultDays(10, 18, [0]) }, // 日曜定休
+};
+
+// 旧形式（open/close/closed_days）を新形式（days[]）に変換
+function migrateLegacySettings(legacy) {
+  if (!legacy || legacy.days) return legacy; // 既に新形式
+  const { open = 10, close = 18, closed_days = [], sunday_close } = legacy;
+  const days = makeDefaultDays(open, close, closed_days);
+  if (sunday_close) {
+    days[0] = { open, close: sunday_close, is_closed: closed_days.includes(0) };
+  }
+  return { days };
+}
 
 function loadStoreSettings() {
   try {
     const saved = localStorage.getItem(STORE_SETTINGS_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      // デフォルト値とマージ（新しい店舗が追加された場合のフォールバック）
-      return { ...DEFAULT_STORE_SETTINGS, ...parsed };
+      // 新形式で保存されている場合はそのまま使用
+      const merged = { ...DEFAULT_STORE_SETTINGS };
+      ALL_STORE_NAMES.forEach(name => {
+        if (parsed[name]) {
+          merged[name] = migrateLegacySettings(parsed[name]);
+        }
+      });
+      return merged;
     }
   } catch (e) {}
   return { ...DEFAULT_STORE_SETTINGS };
@@ -1243,20 +1274,26 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
   const [settings, setSettings] = useState(() => loadStoreSettings());
   const [activeStore, setActiveStore] = useState(ALL_STORE_NAMES[0]);
 
-  const updateSetting = (storeName, key, value) => {
-    setSettings(prev => ({
-      ...prev,
-      [storeName]: { ...prev[storeName], [key]: value },
-    }));
+  // 曜日別設定を更新する
+  const updateDaySetting = (storeName, dayIndex, key, value) => {
+    setSettings(prev => {
+      const storeSetting = prev[storeName] || DEFAULT_STORE_SETTINGS[storeName] || { days: makeDefaultDays(10, 18) };
+      const days = [...(storeSetting.days || makeDefaultDays(10, 18))];
+      days[dayIndex] = { ...days[dayIndex], [key]: value };
+      return { ...prev, [storeName]: { ...storeSetting, days } };
+    });
   };
 
-  const toggleClosedDay = (storeName, dayIndex) => {
+  // 全曜日に同じ時間を適用
+  const applyToAllDays = (storeName, open, close) => {
     setSettings(prev => {
-      const current = prev[storeName]?.closed_days || [];
-      const newDays = current.includes(dayIndex)
-        ? current.filter(d => d !== dayIndex)
-        : [...current, dayIndex];
-      return { ...prev, [storeName]: { ...prev[storeName], closed_days: newDays } };
+      const storeSetting = prev[storeName] || DEFAULT_STORE_SETTINGS[storeName] || { days: makeDefaultDays(10, 18) };
+      const days = (storeSetting.days || makeDefaultDays(10, 18)).map(d => ({
+        ...d,
+        open,
+        close,
+      }));
+      return { ...prev, [storeName]: { ...storeSetting, days } };
     });
   };
 
@@ -1268,11 +1305,13 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
 
   const handleReset = () => {
     if (window.confirm('全店舗の設定をデフォルトに戻しますか？')) {
-      setSettings({ ...DEFAULT_STORE_SETTINGS });
+      setSettings(JSON.parse(JSON.stringify(DEFAULT_STORE_SETTINGS)));
     }
   };
 
-  const currentSettings = settings[activeStore] || DEFAULT_STORE_SETTINGS[activeStore] || { open: 10, close: 18, closed_days: [] };
+  const currentStoreSetting = settings[activeStore] || DEFAULT_STORE_SETTINGS[activeStore] || { days: makeDefaultDays(10, 18) };
+  const currentDays = currentStoreSetting.days || makeDefaultDays(10, 18);
+  const today = new Date().getDay();
 
   return (
     <AnimatePresence>
@@ -1287,7 +1326,7 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+          className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
         >
           {/* ヘッダー */}
           <div className="flex items-center justify-between p-5 border-b dark:border-gray-700">
@@ -1297,7 +1336,7 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
               </div>
               <div>
                 <h2 className="text-lg font-black">店舗設定</h2>
-                <p className="text-xs text-muted-foreground">営業時間・定休日を設定</p>
+                <p className="text-xs text-muted-foreground">曜日別営業時間・定休日を設定</p>
               </div>
             </div>
             <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
@@ -1307,11 +1346,11 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
 
           <div className="flex flex-1 overflow-hidden">
             {/* 店舗リスト */}
-            <div className="w-36 border-r dark:border-gray-700 overflow-y-auto shrink-0">
+            <div className="w-32 border-r dark:border-gray-700 overflow-y-auto shrink-0">
               {ALL_STORE_NAMES.map(name => {
-                const s = settings[name] || {};
-                const today = new Date().getDay();
-                const isTodayClosed = (s.closed_days || []).includes(today);
+                const s = settings[name] || DEFAULT_STORE_SETTINGS[name] || {};
+                const todayDay = s.days?.[today];
+                const isTodayClosed = todayDay?.is_closed || false;
                 return (
                   <button
                     key={name}
@@ -1323,116 +1362,127 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
                     }`}
                   >
                     <span className="truncate">{name.replace('イオン', 'ｲｵﾝ').replace('FC店', 'FC')}</span>
-                    {isTodayClosed && <span className="text-[9px] bg-gray-200 dark:bg-gray-700 text-gray-500 px-1 rounded shrink-0">休</span>}
+                    {isTodayClosed && <span className="text-[9px] bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-1 rounded shrink-0">休</span>}
                   </button>
                 );
               })}
             </div>
 
             {/* 設定パネル */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              <h3 className="font-bold text-base">{activeStore}</h3>
-
-              {/* 営業時間 */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-red-800 dark:text-red-400" />
-                  通常営業時間
-                </h4>
-                <div className="flex items-center gap-3">
-                  <div className="flex-1">
-                    <label className="text-xs text-muted-foreground block mb-1">開店時刻</label>
-                    <select
-                      value={currentSettings.open}
-                      onChange={e => updateSetting(activeStore, 'open', parseInt(e.target.value))}
-                      className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm"
-                    >
-                      {Array.from({ length: 24 }, (_, i) => (
-                        <option key={i} value={i}>{i}:00</option>
-                      ))}
-                    </select>
-                  </div>
-                  <span className="text-muted-foreground mt-5">〜</span>
-                  <div className="flex-1">
-                    <label className="text-xs text-muted-foreground block mb-1">閉店時刻</label>
-                    <select
-                      value={currentSettings.close}
-                      onChange={e => updateSetting(activeStore, 'close', parseInt(e.target.value))}
-                      className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm"
-                    >
-                      {Array.from({ length: 24 }, (_, i) => i + 1).map(i => (
-                        <option key={i} value={i}>{i}:00</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* 堺東店の日曜特別設定 */}
-                {activeStore === '堺東店' && (
-                  <div className="bg-amber-50 dark:bg-amber-950/20 rounded-xl p-3">
-                    <label className="text-xs font-semibold text-amber-700 dark:text-amber-400 block mb-2">
-                      日曜日の閉店時刻（特別設定）
-                    </label>
-                    <select
-                      value={currentSettings.sunday_close || currentSettings.close}
-                      onChange={e => updateSetting(activeStore, 'sunday_close', parseInt(e.target.value))}
-                      className="w-full rounded-lg border border-amber-200 dark:border-amber-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm"
-                    >
-                      {Array.from({ length: 24 }, (_, i) => i + 1).map(i => (
-                        <option key={i} value={i}>{i}:00</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-base">{activeStore}</h3>
+                {/* 一括設定ボタン */}
+                <button
+                  onClick={() => {
+                    const firstDay = currentDays[0];
+                    if (window.confirm(`全曜日を ${firstDay.open}:00〜${firstDay.close}:00 に一括設定しますか？`)) {
+                      applyToAllDays(activeStore, firstDay.open, firstDay.close);
+                    }
+                  }}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                >
+                  <RefreshCw className="h-3 w-3" />日曜に一括適用
+                </button>
               </div>
 
-              {/* 定休日 */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-red-800 dark:text-red-400" />
-                  定休日
-                </h4>
-                <div className="flex gap-2 flex-wrap">
-                  {DAY_LABELS.map((label, dayIndex) => {
-                    const isSelected = (currentSettings.closed_days || []).includes(dayIndex);
-                    return (
-                      <button
-                        key={dayIndex}
-                        onClick={() => toggleClosedDay(activeStore, dayIndex)}
-                        className={`w-10 h-10 rounded-xl text-sm font-bold transition-all ${
-                          isSelected
-                            ? 'bg-red-800 text-white shadow-md'
-                            : 'bg-gray-100 dark:bg-gray-800 text-muted-foreground hover:bg-gray-200 dark:hover:bg-gray-700'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {(currentSettings.closed_days || []).length > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    定休日: {(currentSettings.closed_days || []).sort().map(d => DAY_LABELS[d]).join('・')}曜日
-                  </p>
-                )}
+              {/* 曜日別設定テーブル */}
+              <div className="space-y-2">
+                {DAY_LABELS.map((label, dayIndex) => {
+                  const dayConfig = currentDays[dayIndex] || { open: 10, close: 18, is_closed: false };
+                  const isToday = dayIndex === today;
+                  return (
+                    <div
+                      key={dayIndex}
+                      className={`rounded-xl border p-3 transition-all ${
+                        dayConfig.is_closed
+                          ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-70'
+                          : isToday
+                          ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800'
+                          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {/* 曜日ラベル */}
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black shrink-0 ${
+                          dayConfig.is_closed
+                            ? 'bg-gray-200 dark:bg-gray-700 text-gray-400'
+                            : isToday
+                            ? 'bg-red-800 text-white'
+                            : dayIndex === 0 ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
+                            : dayIndex === 6 ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                        }`}>
+                          {label}
+                        </div>
+
+                        {/* 定休日トグル */}
+                        <button
+                          onClick={() => updateDaySetting(activeStore, dayIndex, 'is_closed', !dayConfig.is_closed)}
+                          className={`px-2 py-1 rounded-lg text-xs font-semibold transition-all shrink-0 ${
+                            dayConfig.is_closed
+                              ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
+                              : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                          }`}
+                        >
+                          {dayConfig.is_closed ? '定休日' : '営業'}
+                        </button>
+
+                        {/* 時間設定（営業日のみ表示） */}
+                        {!dayConfig.is_closed && (
+                          <div className="flex items-center gap-2 flex-1">
+                            <select
+                              value={dayConfig.open}
+                              onChange={e => updateDaySetting(activeStore, dayIndex, 'open', parseInt(e.target.value))}
+                              className="flex-1 rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-xs"
+                            >
+                              {Array.from({ length: 24 }, (_, i) => (
+                                <option key={i} value={i}>{i}:00</option>
+                              ))}
+                            </select>
+                            <span className="text-muted-foreground text-xs shrink-0">〜</span>
+                            <select
+                              value={dayConfig.close}
+                              onChange={e => updateDaySetting(activeStore, dayIndex, 'close', parseInt(e.target.value))}
+                              className="flex-1 rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-xs"
+                            >
+                              {Array.from({ length: 24 }, (_, i) => i + 1).map(i => (
+                                <option key={i} value={i}>{i}:00</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        {dayConfig.is_closed && (
+                          <span className="text-xs text-muted-foreground flex-1">定休日（営業なし）</span>
+                        )}
+
+                        {/* 今日バッジ */}
+                        {isToday && (
+                          <span className="text-[9px] bg-red-800 text-white px-1.5 py-0.5 rounded-full shrink-0">今日</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
 
-              {/* 現在の設定プレビュー */}
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
-                <h4 className="text-xs font-semibold text-muted-foreground mb-2">設定プレビュー</h4>
-                <p className="text-sm font-bold">
-                  {activeStore}: {currentSettings.open}:00 〜 {currentSettings.close}:00
-                </p>
-                {activeStore === '堺東店' && currentSettings.sunday_close && (
-                  <p className="text-xs text-muted-foreground mt-1">日曜日のみ {currentSettings.open}:00 〜 {currentSettings.sunday_close}:00</p>
-                )}
-                {(currentSettings.closed_days || []).length > 0 ? (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    定休日: {(currentSettings.closed_days || []).sort().map(d => DAY_LABELS[d]).join('・')}曜日
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground mt-1">定休日なし（年中無休）</p>
-                )}
+              {/* 設定サマリー */}
+              <div className="mt-4 bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
+                <p className="text-xs font-semibold text-muted-foreground mb-2">設定サマリー</p>
+                <div className="flex flex-wrap gap-1">
+                  {currentDays.map((d, i) => (
+                    <span
+                      key={i}
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        d.is_closed
+                          ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
+                          : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                      }`}
+                    >
+                      {DAY_LABELS[i]}: {d.is_closed ? '定休' : `${d.open}-${d.close}`}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
