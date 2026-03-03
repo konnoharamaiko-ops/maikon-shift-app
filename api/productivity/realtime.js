@@ -1591,6 +1591,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
         }
       });
 
+      // stampRowsの内容をデバッグログに出力
+      console.log(`[JC] empId=${empId}: stampRows=${JSON.stringify(stampRows)}`);
       // stampRowsが取得できた場合はそちらを優先使用
       // 取得できなかった場合は旧方式（change_group_id/change_type）にフォールバック
       let clockInCode = null, breakStartCode = null, breakEndCode = null, clockOutCode = null;
