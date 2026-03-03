@@ -537,27 +537,26 @@ function StoreDetailModal({ store, onClose }) {
           </div>
 
           {/* ヘッダー */}
-          <div className={`px-5 py-4 bg-gradient-to-r ${config.gradient} text-white relative overflow-hidden`}>
-            <div className="absolute inset-0 opacity-10">
-              <div className="absolute top-0 right-0 w-32 h-32 rounded-full bg-white -translate-y-16 translate-x-16" />
-            </div>
-            <div className="relative flex items-start justify-between">
-              <div>
+          <div className={`px-5 pt-4 pb-4 bg-gradient-to-r ${config.gradient} text-white relative`}>
+            {/* 菌った円デコレーション（クリップしない） */}
+            <div className="absolute top-0 right-0 w-32 h-32 rounded-full bg-white/10 -translate-y-16 translate-x-16 pointer-events-none" />
+            <div className="relative flex items-start justify-between gap-2">
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <Building2 className="h-5 w-5 opacity-90" />
-                  <h2 className="text-xl font-black">{store.store_name}</h2>
+                  <Building2 className="h-5 w-5 opacity-90 shrink-0" />
+                  <h2 className="text-xl font-black truncate">{store.store_name}</h2>
                 </div>
-                <div className="flex items-center gap-3 text-sm opacity-90 flex-wrap">
+                <div className="flex items-center gap-2 text-xs opacity-90 flex-wrap">
                   <span className="flex items-center gap-1">
-                    <DollarSign className="h-4 w-4" />
+                    <DollarSign className="h-3.5 w-3.5" />
                     ¥{store.total_sales.toLocaleString()}
                   </span>
                   <span className="flex items-center gap-1">
-                    <Zap className="h-4 w-4" />
+                    <Zap className="h-3.5 w-3.5" />
                     ¥{store.productivity.toLocaleString()}/h
                   </span>
                   <span className="flex items-center gap-1">
-                    <Users className="h-4 w-4" />
+                    <Users className="h-3.5 w-3.5" />
                     {workingCount}人勤務中
                     {breakCount > 0 && <span className="ml-1 opacity-80">/ {breakCount}人休憩中</span>}
                   </span>
@@ -565,7 +564,7 @@ function StoreDetailModal({ store, onClose }) {
               </div>
               <button
                 onClick={onClose}
-                className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+                className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors shrink-0"
               >
                 <X className="h-5 w-5" />
               </button>
