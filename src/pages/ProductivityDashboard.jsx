@@ -338,22 +338,24 @@ function HourlyProductivityChart({ hourlyData, storeName }) {
  * 店舗カード
  */
 function StoreCard({ store, onClick, index }) {
-  // 休業日の場合
   if (store.is_closed) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 20, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.35, delay: index * 0.04, ease: 'easeOut' }}
-        className="relative rounded-2xl border-2 border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4 opacity-60"
+        className="relative rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/30 p-4 opacity-60"
       >
-        <div className="flex items-center gap-2 mb-2">
-          <h3 className="font-bold text-base text-gray-500 dark:text-gray-400">{store.store_name}</h3>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-xl bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+            <Store className="h-4 w-4 text-gray-400" />
+          </div>
+          <h3 className="font-bold text-sm text-gray-500 dark:text-gray-400">{store.store_name}</h3>
         </div>
-        <div className="flex items-center justify-center py-4 text-gray-400 dark:text-gray-500">
+        <div className="flex items-center justify-center py-5 text-gray-400 dark:text-gray-500">
           <div className="text-center">
-            <Calendar className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p className="text-sm font-semibold">本日休業</p>
+            <Calendar className="h-7 w-7 mx-auto mb-2 opacity-40" />
+            <p className="text-xs font-bold">本日休業</p>
           </div>
         </div>
       </motion.div>
@@ -363,11 +365,9 @@ function StoreCard({ store, onClick, index }) {
   const level = getProductivityLevel(store.productivity);
   const config = LEVEL_CONFIG[level];
   const Icon = config.icon;
-
-  // 直近の時間帯データ（最新2時間）
   const recentHourly = store.hourly_productivity?.slice(-2) || [];
-  // 稼働中 = 勤務中のみ（休憩中・退出中は除く）
   const activeCount = store.working_employees || 0;
+  const achieveRate = Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100));
 
   return (
     <motion.div
@@ -375,127 +375,130 @@ function StoreCard({ store, onClick, index }) {
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.35, delay: index * 0.04, ease: 'easeOut' }}
       className={`
-        relative rounded-2xl border ${config.border} ${config.bg}
-        p-4 cursor-pointer group
-        hover:shadow-xl hover:-translate-y-0.5
+        relative rounded-2xl border-2 ${config.border} ${config.bg}
+        cursor-pointer group
+        hover:shadow-2xl hover:-translate-y-1
         transition-all duration-200
         overflow-hidden
       `}
-      style={{
-        borderLeftWidth: '4px',
-        borderLeftColor: config.color,
-      }}
       onClick={() => onClick(store)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && onClick(store)}
     >
-      {/* 背景デコレーション */}
-      <div className={`absolute top-0 right-0 w-24 h-24 rounded-full bg-gradient-to-br ${config.gradient} opacity-5 -translate-y-8 translate-x-8`} />
+      {/* トップカラーバー */}
+      <div className={`h-1 w-full bg-gradient-to-r ${config.gradient}`} />
 
-      {/* ヘッダー */}
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-base leading-tight">{store.store_name}</h3>
-          {store.update_time && (
-            <p className="text-[10px] text-muted-foreground mt-0.5">{store.update_time}</p>
-          )}
-          <div className="flex items-center gap-2 mt-1">
-            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold text-white ${config.badge}`}>
+      {/* カード本体 */}
+      <div className="p-4">
+        {/* 背景デコレーション */}
+        <div className={`absolute top-0 right-0 w-28 h-28 rounded-full bg-gradient-to-br ${config.gradient} opacity-[0.06] -translate-y-10 translate-x-10`} />
+
+        {/* ヘッダー */}
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5">
+              <h3 className="font-black text-base leading-tight tracking-tight">{store.store_name}</h3>
+            </div>
+            {store.update_time && (
+              <p className="text-[10px] text-muted-foreground">{store.update_time}</p>
+            )}
+          </div>
+          {/* ステータスバッジグループ */}
+          <div className="flex flex-col items-end gap-1 shrink-0 ml-2">
+            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold text-white shadow-sm ${config.badge}`}>
               <Icon className="h-3 w-3" />
               {config.label}
             </span>
+            {store.working_employees > 0 && (
+              <div className="flex items-center gap-1 text-[10px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
+                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse inline-block" />
+                勤務中{store.working_employees}人
+              </div>
+            )}
+            {store.break_employees > 0 && (
+              <div className="flex items-center gap-1 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-full">
+                <Coffee className="h-2.5 w-2.5" />
+                休憩{store.break_employees}人
+              </div>
+            )}
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          {store.working_employees > 0 && (
-            <div className="flex items-center gap-1 text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
-              <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse inline-block" />
-              勤務中{store.working_employees}人
+
+        {/* 人時生産性（メイン指標） */}
+        <div className="rounded-2xl p-3 mb-3 bg-white/60 dark:bg-gray-700/40 border border-white/80 dark:border-gray-600/50 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-0.5">人時生産性</p>
+              <div className="flex items-baseline gap-1">
+                <span className={`text-2xl font-black ${config.text} leading-none`}>
+                  ¥{store.productivity.toLocaleString()}
+                </span>
+                <span className="text-xs text-muted-foreground">/h</span>
+              </div>
             </div>
-          )}
-          {store.break_employees > 0 && (
-            <div className="flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-full">
-              <Coffee className="h-2.5 w-2.5" />
-              休憩中{store.break_employees}人
+            <div className="text-right">
+              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide mb-0.5">達成率</p>
+              <div className="flex items-baseline gap-0.5 justify-end">
+                <span className={`text-xl font-black ${config.text}`}>{achieveRate}</span>
+                <span className={`text-xs font-bold ${config.text}`}>%</span>
+              </div>
             </div>
-          )}
+          </div>
+          <ProductivityGauge value={store.productivity} compact />
         </div>
-      </div>
 
-      {/* 人時生産性（メイン指標） */}
-      <div className="rounded-xl p-3 mb-3 bg-white/50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600">
-        <div className="flex items-end justify-between">
-          <div>
-            <p className="text-xs text-muted-foreground mb-0.5">人時生産性</p>
-            <p className={`text-3xl font-black ${config.text} leading-none`}>
-              ¥{store.productivity.toLocaleString()}
-              <span className="text-xs font-normal text-muted-foreground ml-1">/h</span>
+        {/* メトリクスグリッド */}
+        <div className="grid grid-cols-4 gap-1.5 text-xs mb-3">
+          <div className="bg-white/70 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
+            <DollarSign className="h-3 w-3 mx-auto mb-0.5 text-muted-foreground" />
+            <p className="text-[9px] text-muted-foreground leading-none mb-0.5">売上</p>
+            <p className="font-black text-xs leading-none">¥{(store.total_sales / 1000).toFixed(0)}k</p>
+          </div>
+          <div className="bg-white/70 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
+            <Clock className="h-3 w-3 mx-auto mb-0.5 text-muted-foreground" />
+            <p className="text-[9px] text-muted-foreground leading-none mb-0.5">動務h</p>
+            <p className="font-black text-xs leading-none">{store.total_hours.toFixed(1)}h</p>
+          </div>
+          <div className="bg-white/70 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
+            <Users className="h-3 w-3 mx-auto mb-0.5 text-muted-foreground" />
+            <p className="text-[9px] text-muted-foreground leading-none mb-0.5">出勤</p>
+            <p className="font-black text-xs leading-none">{store.attended_employees}人</p>
+          </div>
+          <div className="bg-white/70 dark:bg-gray-700/50 rounded-xl p-2 text-center border border-gray-100 dark:border-gray-600/50">
+            <Activity className="h-3 w-3 mx-auto mb-0.5 text-green-500" />
+            <p className="text-[9px] text-muted-foreground leading-none mb-0.5">稼働中</p>
+            <p className="font-black text-xs leading-none text-green-600 dark:text-green-400">{activeCount}人</p>
+          </div>
+        </div>
+
+        {/* 直近時間帯ミニグラフ */}
+        {recentHourly.length > 0 && (
+          <div className="border-t border-current/10 pt-2.5">
+            <p className="text-[10px] text-muted-foreground mb-1.5 flex items-center gap-1">
+              <Timer className="h-3 w-3" />直近の人時生産性
             </p>
+            <div className="flex gap-1.5">
+              {recentHourly.map((h, i) => {
+                const lv = getProductivityLevel(h.productivity);
+                const cfg = LEVEL_CONFIG[lv];
+                return (
+                  <div key={i} className={`flex-1 rounded-xl p-2 text-center bg-white/70 dark:bg-gray-700/50 border-2 ${cfg.border}`}>
+                    <p className="text-[9px] text-muted-foreground font-semibold">{h.hour}時台</p>
+                    <p className={`text-xs font-black ${cfg.text}`}>¥{h.productivity.toLocaleString()}</p>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div className="text-right">
-            <p className="text-xs text-muted-foreground">目標達成率</p>
-            <p className={`text-lg font-bold ${config.text}`}>
-              {Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100))}%
-            </p>
-          </div>
-        </div>
-        <ProductivityGauge value={store.productivity} compact />
+        )}
       </div>
 
-      {/* メトリクス */}
-      <div className="grid grid-cols-2 gap-2 text-xs">
-        <div className="bg-white/70 dark:bg-gray-700/60 rounded-lg p-2">
-          <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
-            <DollarSign className="h-3 w-3" />本日売上
-          </p>
-          <p className="font-bold text-sm">¥{store.total_sales.toLocaleString()}</p>
-        </div>
-        <div className="bg-white/70 dark:bg-gray-700/60 rounded-lg p-2">
-          <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
-            <Clock className="h-3 w-3" />総労働時間
-          </p>
-          <p className="font-bold text-sm">{store.total_hours.toFixed(1)}h</p>
-        </div>
-        <div className="bg-white/70 dark:bg-gray-700/60 rounded-lg p-2">
-          <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
-            <Users className="h-3 w-3" />出勤人数
-          </p>
-          <p className="font-bold text-sm">{store.attended_employees}人</p>
-        </div>
-        <div className="bg-white/70 dark:bg-gray-700/60 rounded-lg p-2">
-          <p className="text-muted-foreground flex items-center gap-1 mb-0.5">
-            <Activity className="h-3 w-3" />稼働中
-          </p>
-          <p className="font-bold text-sm text-green-600 dark:text-green-400">{activeCount}人</p>
-        </div>
-      </div>
-
-      {/* 直近時間帯ミニグラフ */}
-      {recentHourly.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-current/10">
-          <p className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
-            <Timer className="h-3 w-3" />直近の人時生産性
-          </p>
-          <div className="flex gap-1">
-            {recentHourly.map((h, i) => {
-              const lv = getProductivityLevel(h.productivity);
-              const cfg = LEVEL_CONFIG[lv];
-              return (
-                <div key={i} className={`flex-1 rounded-lg p-1.5 text-center ${cfg.bg} dark:bg-gray-700/50 border ${cfg.border}`}>
-                  <p className="text-[9px] text-muted-foreground">{h.hour}時台</p>
-                  <p className={`text-xs font-bold ${cfg.text}`}>¥{h.productivity.toLocaleString()}</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ホバー時の詳細矢印 */}
-      <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-        <div className={`p-1 rounded-full ${config.badge}`}>
-          <ChevronRight className="h-3 w-3 text-white" />
+      {/* ホバー時の詳細オーバーレイ */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+      <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-all translate-y-1 group-hover:translate-y-0">
+        <div className={`p-1.5 rounded-full ${config.badge} shadow-md`}>
+          <ChevronRight className="h-3.5 w-3.5 text-white" />
         </div>
       </div>
     </motion.div>
@@ -931,27 +934,35 @@ function LoadingProgress() {
   );
 }
 
-function SummaryCard({ title, value, unit, icon: Icon, gradient, description, index }) {
+function SummaryCard({ title, value, unit, icon: Icon, gradient, description, index, trend }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.07 }}
-      className="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm overflow-hidden"
+      initial={{ opacity: 0, y: -12, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.35, delay: index * 0.07, ease: 'easeOut' }}
+      className="relative bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm overflow-hidden group hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
     >
-      <div className={`absolute top-0 right-0 w-20 h-20 rounded-full bg-gradient-to-br ${gradient} opacity-10 -translate-y-8 translate-x-8`} />
+      {/* 背景グラデーション */}
+      <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-[0.04] group-hover:opacity-[0.07] transition-opacity`} />
+      <div className={`absolute top-0 right-0 w-24 h-24 rounded-full bg-gradient-to-br ${gradient} opacity-[0.08] -translate-y-10 translate-x-10`} />
       <div className="relative">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs text-muted-foreground font-medium">{title}</span>
-          <div className={`p-2 rounded-xl bg-gradient-to-br ${gradient}`}>
-            <Icon className="h-4 w-4 text-white" />
+        <div className="flex items-start justify-between mb-2">
+          <span className="text-xs text-muted-foreground font-semibold tracking-wide uppercase">{title}</span>
+          <div className={`p-2 rounded-xl bg-gradient-to-br ${gradient} shadow-sm`}>
+            <Icon className="h-3.5 w-3.5 text-white" />
           </div>
         </div>
-        <div className="text-2xl font-black">
-          {typeof value === 'number' ? value.toLocaleString() : value}
-          {unit && <span className="text-sm font-normal text-muted-foreground ml-1">{unit}</span>}
+        <div className="flex items-end gap-1 mb-1">
+          <span className="text-2xl font-black tracking-tight">
+            {typeof value === 'number' ? value.toLocaleString() : value}
+          </span>
+          {unit && <span className="text-xs font-semibold text-muted-foreground mb-0.5">{unit}</span>}
         </div>
-        {description && <p className="text-xs text-muted-foreground mt-1">{description}</p>}
+        {description && (
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+            {description}
+          </p>
+        )}
       </div>
     </motion.div>
   );
@@ -1324,8 +1335,8 @@ function StaffSettingsModal({ onClose, onSave }) {
 function StoreHoursSettingsModal({ onClose, onSave }) {
   const [settings, setSettings] = useState(() => loadStoreSettings());
   const [activeStore, setActiveStore] = useState(ALL_STORE_NAMES[0]);
+  const [saved, setSaved] = useState(false);
 
-  // 曜日別設定を更新する
   const updateDaySetting = (storeName, dayIndex, key, value) => {
     setSettings(prev => {
       const storeSetting = prev[storeName] || DEFAULT_STORE_SETTINGS[storeName] || { days: makeDefaultDays(10, 18) };
@@ -1335,15 +1346,10 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
     });
   };
 
-  // 全曜日に同じ時間を適用
   const applyToAllDays = (storeName, open, close) => {
     setSettings(prev => {
       const storeSetting = prev[storeName] || DEFAULT_STORE_SETTINGS[storeName] || { days: makeDefaultDays(10, 18) };
-      const days = (storeSetting.days || makeDefaultDays(10, 18)).map(d => ({
-        ...d,
-        open,
-        close,
-      }));
+      const days = (storeSetting.days || makeDefaultDays(10, 18)).map(d => ({ ...d, open, close }));
       return { ...prev, [storeName]: { ...storeSetting, days } };
     });
   };
@@ -1351,7 +1357,8 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
   const handleSave = () => {
     saveStoreSettings(settings);
     onSave(settings);
-    onClose();
+    setSaved(true);
+    setTimeout(() => { setSaved(false); onClose(); }, 800);
   };
 
   const handleReset = () => {
@@ -1364,200 +1371,297 @@ function StoreHoursSettingsModal({ onClose, onSave }) {
   const currentDays = currentStoreSetting.days || makeDefaultDays(10, 18);
   const today = new Date().getDay();
 
+  // 店舗の今日の営業状況を取得
+  const getStoreStatus = (name) => {
+    const s = settings[name] || DEFAULT_STORE_SETTINGS[name] || {};
+    const todayDay = s.days?.[today];
+    if (todayDay?.is_closed) return 'closed';
+    return 'open';
+  };
+
+  // 曜日の色設定
+  const getDayColor = (dayIndex, isClosed, isToday) => {
+    if (isClosed) return { bg: 'bg-gray-100 dark:bg-gray-700', text: 'text-gray-400 dark:text-gray-500' };
+    if (isToday) return { bg: 'bg-red-800', text: 'text-white' };
+    if (dayIndex === 0) return { bg: 'bg-red-100 dark:bg-red-900/40', text: 'text-red-600 dark:text-red-400' };
+    if (dayIndex === 6) return { bg: 'bg-blue-100 dark:bg-blue-900/40', text: 'text-blue-600 dark:text-blue-400' };
+    return { bg: 'bg-gray-100 dark:bg-gray-700', text: 'text-gray-700 dark:text-gray-300' };
+  };
+
   return (
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        className="fixed inset-0 bg-black/70 backdrop-blur-md z-50 flex items-center justify-center p-4"
         onClick={(e) => e.target === e.currentTarget && onClose()}
       >
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          initial={{ opacity: 0, scale: 0.93, y: 30 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
+          exit={{ opacity: 0, scale: 0.93, y: 30 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 28 }}
+          className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"
+          style={{ boxShadow: '0 25px 60px rgba(0,0,0,0.35)' }}
         >
           {/* ヘッダー */}
-          <div className="flex items-center justify-between p-5 border-b dark:border-gray-700">
+          <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-red-900 to-red-700">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-gradient-to-br from-red-800 to-red-600">
+              <div className="p-2.5 rounded-2xl bg-white/20 backdrop-blur-sm">
                 <Settings className="h-5 w-5 text-white" />
               </div>
               <div>
-                <h2 className="text-lg font-black">店舗設定</h2>
-                <p className="text-xs text-muted-foreground">曜日別営業時間・定休日を設定</p>
+                <h2 className="text-lg font-black text-white tracking-wide">店舗営業時間設定</h2>
+                <p className="text-xs text-red-200">曜日別の営業時間・定休日を管理</p>
               </div>
             </div>
-            <button onClick={onClose} className="p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-white"
+            >
               <X className="h-5 w-5" />
             </button>
           </div>
 
           <div className="flex flex-1 overflow-hidden">
-            {/* 店舗リスト */}
-            <div className="w-32 border-r dark:border-gray-700 overflow-y-auto shrink-0">
+            {/* 店舗リスト（左サイドバー） */}
+            <div className="w-44 border-r dark:border-gray-700 overflow-y-auto shrink-0 bg-gray-50 dark:bg-gray-800/50">
+              <div className="p-3 border-b dark:border-gray-700">
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">店舗一覧</p>
+              </div>
               {ALL_STORE_NAMES.map(name => {
+                const status = getStoreStatus(name);
+                const isActive = activeStore === name;
                 const s = settings[name] || DEFAULT_STORE_SETTINGS[name] || {};
-                const todayDay = s.days?.[today];
-                const isTodayClosed = todayDay?.is_closed || false;
+                const todayDayCfg = s.days?.[today];
+                const openHour = todayDayCfg?.open ?? 10;
+                const closeHour = todayDayCfg?.close ?? 18;
                 return (
                   <button
                     key={name}
                     onClick={() => setActiveStore(name)}
-                    className={`w-full text-left px-3 py-2.5 text-xs font-medium transition-colors border-b dark:border-gray-700 flex items-center justify-between gap-1 ${
-                      activeStore === name
-                        ? 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-400 font-bold'
-                        : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                    className={`w-full text-left px-3 py-3 transition-all border-b dark:border-gray-700/50 ${
+                      isActive
+                        ? 'bg-white dark:bg-gray-900 border-l-4 border-l-red-800 dark:border-l-red-500'
+                        : 'hover:bg-white/70 dark:hover:bg-gray-800 border-l-4 border-l-transparent'
                     }`}
                   >
-                    <span className="truncate">{name.replace('イオン', 'ｲｵﾝ').replace('FC店', 'FC')}</span>
-                    {isTodayClosed && <span className="text-[9px] bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-1 rounded shrink-0">休</span>}
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className={`text-xs font-bold ${
+                        isActive ? 'text-red-800 dark:text-red-400' : 'text-gray-700 dark:text-gray-300'
+                      }`}>
+                        {name.replace('イオン', 'ｲｵﾝ').replace('FC店', 'FC')}
+                      </span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
+                        status === 'closed'
+                          ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
+                          : 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400'
+                      }`}>
+                        {status === 'closed' ? '定休' : '営業'}
+                      </span>
+                    </div>
+                    {status !== 'closed' && (
+                      <p className="text-[10px] text-muted-foreground">
+                        {openHour}:00〜{closeHour}:00
+                      </p>
+                    )}
                   </button>
                 );
               })}
             </div>
 
-            {/* 設定パネル */}
-            <div className="flex-1 overflow-y-auto p-4">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-base">{activeStore}</h3>
-                {/* 一括設定ボタン */}
+            {/* 設定パネル（右メイン） */}
+            <div className="flex-1 overflow-y-auto">
+              {/* 店舗名ヘッダー */}
+              <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b dark:border-gray-700 px-5 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Store className="h-4 w-4 text-red-800 dark:text-red-400" />
+                  <h3 className="font-black text-base">{activeStore}</h3>
+                  <span className="text-xs text-muted-foreground">の営業時間設定</span>
+                </div>
                 <button
                   onClick={() => {
-                    const firstDay = currentDays[0];
-                    if (window.confirm(`全曜日を ${firstDay.open}:00〜${firstDay.close}:00 に一括設定しますか？`)) {
-                      applyToAllDays(activeStore, firstDay.open, firstDay.close);
-                    }
+                    const firstDay = currentDays.find(d => !d.is_closed) || currentDays[0];
+                    applyToAllDays(activeStore, firstDay.open, firstDay.close);
                   }}
-                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 text-xs font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors border border-blue-200 dark:border-blue-800"
                 >
-                  <RefreshCw className="h-3 w-3" />日曜に一括適用
+                  <RefreshCw className="h-3 w-3" />
+                  全曜日に一括適用
                 </button>
               </div>
 
-              {/* 曜日別設定テーブル */}
-              <div className="space-y-2">
+              <div className="p-5 space-y-2">
                 {DAY_LABELS.map((label, dayIndex) => {
                   const dayConfig = currentDays[dayIndex] || { open: 10, close: 18, is_closed: false };
                   const isToday = dayIndex === today;
+                  const dayColors = getDayColor(dayIndex, dayConfig.is_closed, isToday);
+
                   return (
-                    <div
+                    <motion.div
                       key={dayIndex}
-                      className={`rounded-xl border p-3 transition-all ${
+                      layout
+                      className={`rounded-2xl border-2 transition-all ${
                         dayConfig.is_closed
-                          ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-70'
+                          ? 'bg-gray-50 dark:bg-gray-800/30 border-gray-200 dark:border-gray-700'
                           : isToday
-                          ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800'
-                          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                          ? 'bg-red-50 dark:bg-red-950/20 border-red-300 dark:border-red-700 shadow-sm'
+                          : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        {/* 曜日ラベル */}
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black shrink-0 ${
-                          dayConfig.is_closed
-                            ? 'bg-gray-200 dark:bg-gray-700 text-gray-400'
-                            : isToday
-                            ? 'bg-red-800 text-white'
-                            : dayIndex === 0 ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
-                            : dayIndex === 6 ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-                        }`}>
+                      <div className="flex items-center gap-3 p-3">
+                        {/* 曜日バッジ */}
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-base font-black shrink-0 ${dayColors.bg} ${dayColors.text}`}>
                           {label}
                         </div>
 
-                        {/* 定休日トグル */}
+                        {/* 曜日名 */}
+                        <div className="w-12 shrink-0">
+                          <p className={`text-xs font-semibold ${
+                            isToday ? 'text-red-800 dark:text-red-400' : 'text-muted-foreground'
+                          }`}>
+                            {DAY_FULL_LABELS[dayIndex].replace('曜日', '')}
+                            {isToday && <span className="ml-1 text-[9px] bg-red-800 text-white px-1 py-0.5 rounded-full">今日</span>}
+                          </p>
+                        </div>
+
+                        {/* 営業/定休トグルボタン */}
                         <button
                           onClick={() => updateDaySetting(activeStore, dayIndex, 'is_closed', !dayConfig.is_closed)}
-                          className={`px-2 py-1 rounded-lg text-xs font-semibold transition-all shrink-0 ${
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 border-2 ${
                             dayConfig.is_closed
-                              ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
-                              : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                              ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-300 dark:border-red-700 hover:bg-red-100'
+                              : 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border-green-300 dark:border-green-700 hover:bg-green-100'
                           }`}
                         >
-                          {dayConfig.is_closed ? '定休日' : '営業'}
+                          <span className={`w-2 h-2 rounded-full ${
+                            dayConfig.is_closed ? 'bg-red-500' : 'bg-green-500'
+                          }`} />
+                          {dayConfig.is_closed ? '定休日' : '営業日'}
                         </button>
 
-                        {/* 時間設定（営業日のみ表示） */}
-                        {!dayConfig.is_closed && (
+                        {/* 時間設定 */}
+                        {!dayConfig.is_closed ? (
                           <div className="flex items-center gap-2 flex-1">
-                            <select
-                              value={dayConfig.open}
-                              onChange={e => updateDaySetting(activeStore, dayIndex, 'open', parseInt(e.target.value))}
-                              className="flex-1 rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-xs"
-                            >
-                              {Array.from({ length: 24 }, (_, i) => (
-                                <option key={i} value={i}>{i}:00</option>
-                              ))}
-                            </select>
-                            <span className="text-muted-foreground text-xs shrink-0">〜</span>
-                            <select
-                              value={dayConfig.close}
-                              onChange={e => updateDaySetting(activeStore, dayIndex, 'close', parseInt(e.target.value))}
-                              className="flex-1 rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-xs"
-                            >
-                              {Array.from({ length: 24 }, (_, i) => i + 1).map(i => (
-                                <option key={i} value={i}>{i}:00</option>
-                              ))}
-                            </select>
+                            <div className="flex items-center gap-1 flex-1 bg-gray-50 dark:bg-gray-700/50 rounded-xl px-2 py-1 border border-gray-200 dark:border-gray-600">
+                              <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+                              <select
+                                value={dayConfig.open}
+                                onChange={e => updateDaySetting(activeStore, dayIndex, 'open', parseInt(e.target.value))}
+                                className="flex-1 bg-transparent text-xs font-semibold focus:outline-none cursor-pointer"
+                              >
+                                {Array.from({ length: 24 }, (_, i) => (
+                                  <option key={i} value={i}>{String(i).padStart(2,'0')}:00</option>
+                                ))}
+                              </select>
+                            </div>
+                            <span className="text-muted-foreground text-sm font-bold shrink-0">〜</span>
+                            <div className="flex items-center gap-1 flex-1 bg-gray-50 dark:bg-gray-700/50 rounded-xl px-2 py-1 border border-gray-200 dark:border-gray-600">
+                              <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+                              <select
+                                value={dayConfig.close}
+                                onChange={e => updateDaySetting(activeStore, dayIndex, 'close', parseInt(e.target.value))}
+                                className="flex-1 bg-transparent text-xs font-semibold focus:outline-none cursor-pointer"
+                              >
+                                {Array.from({ length: 24 }, (_, i) => i + 1).map(i => (
+                                  <option key={i} value={i}>{String(i).padStart(2,'0')}:00</option>
+                                ))}
+                              </select>
+                            </div>
+                            {/* 営業時間数 */}
+                            <span className="text-xs text-muted-foreground shrink-0 w-10 text-right">
+                              {dayConfig.close - dayConfig.open}h
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex-1 flex items-center gap-2">
+                            <div className="flex-1 bg-gray-100 dark:bg-gray-700/50 rounded-xl px-3 py-2 border border-dashed border-gray-300 dark:border-gray-600">
+                              <p className="text-xs text-muted-foreground text-center">定休日 — 営業なし</p>
+                            </div>
                           </div>
                         )}
-                        {dayConfig.is_closed && (
-                          <span className="text-xs text-muted-foreground flex-1">定休日（営業なし）</span>
-                        )}
-
-                        {/* 今日バッジ */}
-                        {isToday && (
-                          <span className="text-[9px] bg-red-800 text-white px-1.5 py-0.5 rounded-full shrink-0">今日</span>
-                        )}
                       </div>
-                    </div>
+                    </motion.div>
                   );
                 })}
-              </div>
 
-              {/* 設定サマリー */}
-              <div className="mt-4 bg-gray-50 dark:bg-gray-800 rounded-xl p-3">
-                <p className="text-xs font-semibold text-muted-foreground mb-2">設定サマリー</p>
-                <div className="flex flex-wrap gap-1">
-                  {currentDays.map((d, i) => (
-                    <span
-                      key={i}
-                      className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                        d.is_closed
-                          ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400'
-                          : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                      }`}
-                    >
-                      {DAY_LABELS[i]}: {d.is_closed ? '定休' : `${d.open}-${d.close}`}
+                {/* 週間サマリー */}
+                <div className="mt-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-800/50 rounded-2xl p-4 border border-gray-200 dark:border-gray-700">
+                  <p className="text-xs font-bold text-muted-foreground mb-3 flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5" />
+                    週間営業スケジュール
+                  </p>
+                  <div className="grid grid-cols-7 gap-1">
+                    {currentDays.map((d, i) => (
+                      <div
+                        key={i}
+                        className={`rounded-xl p-2 text-center ${
+                          d.is_closed
+                            ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
+                            : i === today
+                            ? 'bg-red-800 text-white border border-red-700'
+                            : 'bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600'
+                        }`}
+                      >
+                        <p className={`text-[10px] font-bold mb-1 ${
+                          d.is_closed ? 'text-red-500 dark:text-red-400' :
+                          i === today ? 'text-white' :
+                          i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-muted-foreground'
+                        }`}>{DAY_LABELS[i]}</p>
+                        {d.is_closed ? (
+                          <p className="text-[9px] text-red-500 dark:text-red-400 font-semibold">定休</p>
+                        ) : (
+                          <>
+                            <p className={`text-[9px] font-bold ${ i === today ? 'text-white' : '' }`}>{String(d.open).padStart(2,'0')}:00</p>
+                            <p className={`text-[9px] ${ i === today ? 'text-red-200' : 'text-muted-foreground' }`}>〜</p>
+                            <p className={`text-[9px] font-bold ${ i === today ? 'text-white' : '' }`}>{String(d.close).padStart(2,'0')}:00</p>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {/* 週間営業時間合計 */}
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">週間営業時間合計</span>
+                    <span className="text-sm font-black text-gray-800 dark:text-gray-200">
+                      {currentDays.filter(d => !d.is_closed).reduce((sum, d) => sum + (d.close - d.open), 0)}時間 / 週
                     </span>
-                  ))}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
           {/* フッター */}
-          <div className="flex items-center justify-between p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+          <div className="flex items-center justify-between px-5 py-3.5 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
             <button
               onClick={handleReset}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-red-600 dark:hover:text-red-400 transition-colors px-3 py-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20"
             >
+              <RefreshCw className="h-3 w-3" />
               デフォルトに戻す
             </button>
             <div className="flex gap-2">
               <button
                 onClick={onClose}
-                className="px-4 py-2 rounded-xl border dark:border-gray-600 text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                className="px-5 py-2.5 rounded-xl border-2 dark:border-gray-600 text-sm font-bold hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
                 キャンセル
               </button>
               <button
                 onClick={handleSave}
-                className="px-5 py-2 rounded-xl bg-gradient-to-r from-red-800 to-red-600 text-white text-sm font-bold hover:opacity-90 transition-opacity shadow-md"
+                className={`px-6 py-2.5 rounded-xl text-white text-sm font-black transition-all shadow-lg flex items-center gap-2 ${
+                  saved
+                    ? 'bg-green-500 scale-95'
+                    : 'bg-gradient-to-r from-red-900 to-red-700 hover:from-red-800 hover:to-red-600 hover:shadow-xl active:scale-95'
+                }`}
               >
-                保存して反映
+                {saved ? (
+                  <><CheckCircle className="h-4 w-4" />保存完了！</>
+                ) : (
+                  <><Settings className="h-4 w-4" />保存して反映</>
+                )}
               </button>
             </div>
           </div>
@@ -1647,19 +1751,23 @@ export default function ProductivityDashboard() {
     <div className="space-y-5 pb-6">
       {/* ヘッダー */}
       <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-black flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-gradient-to-br from-red-800 to-red-600">
-              <Activity className="h-5 w-5 text-white" />
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-2xl bg-gradient-to-br from-red-900 to-red-600 shadow-lg shadow-red-900/20">
+            <Activity className="h-5 w-5 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black tracking-tight">リアルタイム人時生産性</h1>
+            <div className="flex items-center gap-2 mt-0.5">
+              <p className="text-xs font-semibold text-muted-foreground">
+                {format(new Date(), 'yyyy年MM月dd日（E）', { locale: ja })}
+              </p>
+              {lastUpdated && (
+                <span className="text-[10px] bg-gray-100 dark:bg-gray-800 text-muted-foreground px-2 py-0.5 rounded-full">
+                  最終更新: {format(lastUpdated, 'HH:mm:ss')}
+                </span>
+              )}
             </div>
-            リアルタイム人時生産性
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1 ml-1">
-            {format(new Date(), 'yyyy年MM月dd日（E）', { locale: ja })}
-            {lastUpdated && (
-              <span className="ml-2 text-xs">最終更新: {format(lastUpdated, 'HH:mm:ss')}</span>
-            )}
-          </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -1721,25 +1829,28 @@ export default function ProductivityDashboard() {
           {/* 店舗設定 */}
           <button
             onClick={() => setShowStoreSettings(true)}
-            className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
-            title="店舗設定（営業時間・定休日）"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-800 dark:hover:text-red-400 transition-all text-xs font-semibold"
+            title="店舗営業時間設定"
           >
-            <Settings className="h-4 w-4" />
+            <Settings className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">店舗設定</span>
           </button>
 
           {/* スタッフ設定 */}
           <button
             onClick={() => setShowStaffSettings(true)}
-            className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-700 dark:hover:text-blue-400 transition-all text-xs font-semibold"
             title="社員接客時間帯設定"
           >
-            <Briefcase className="h-4 w-4" />
+            <Briefcase className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">スタッフ</span>
           </button>
 
           {/* ダークモード */}
           <button
             onClick={toggleDark}
-            className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+            className="p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+            title="ダークモード切替"
           >
             {dark ? <Sun className="h-4 w-4 text-amber-500" /> : <Moon className="h-4 w-4" />}
           </button>
@@ -1794,50 +1905,68 @@ export default function ProductivityDashboard() {
           className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
         >
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <h3 className="font-bold text-sm flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <Target className="h-4 w-4 text-red-800 dark:text-red-400" />
-              全店舗 目標達成状況
-            </h3>
-            <div className="flex items-center gap-3 text-xs flex-wrap">
+              <h3 className="font-black text-sm tracking-tight">全店舗 目標達成状況</h3>
+              <span className="text-[10px] bg-gray-100 dark:bg-gray-800 text-muted-foreground px-2 py-0.5 rounded-full font-semibold">
+                営業中 {sortedOpenStores.length}店舗
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs flex-wrap">
               {Object.entries(LEVEL_CONFIG).map(([key, cfg]) => (
-                <span key={key} className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: cfg.color }} />
+                <span key={key} className="flex items-center gap-1 font-semibold">
+                  <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: cfg.color }} />
                   {cfg.label}
                 </span>
               ))}
             </div>
           </div>
-          <div className="flex gap-1 rounded-xl overflow-hidden" style={{ height: '130px' }}>
+          <div className="flex gap-1 rounded-2xl overflow-hidden" style={{ height: '140px' }}>
             {sortedOpenStores.map((store, i) => {
               const level = getProductivityLevel(store.productivity);
               const cfg = LEVEL_CONFIG[level];
-              // 「イオン松原」「イオン守口」→「ｲｵﾝ松原」「ｲｵﾝ守口」に短縮、「美和堂FC店」→「美和堂FC」
               const displayName = store.store_name
                 .replace('イオン', 'ｲｵﾝ')
                 .replace('FC店', 'FC');
+              const achieveRate = Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100));
               return (
                 <motion.div
                   key={store.store_name}
-                  className="flex-1 flex items-center justify-center cursor-pointer hover:opacity-80 transition-all hover:brightness-110 pb-1"
+                  className="flex-1 flex flex-col items-center justify-between cursor-pointer hover:brightness-110 hover:scale-y-105 transition-all origin-bottom py-2 px-0.5"
                   style={{ backgroundColor: cfg.color }}
-                  initial={{ scaleY: 0 }}
+                  initial={{ scaleY: 0, originY: 1 }}
                   animate={{ scaleY: 1 }}
-                  transition={{ duration: 0.4, delay: i * 0.03, ease: 'backOut' }}
+                  transition={{ duration: 0.45, delay: i * 0.03, ease: 'backOut' }}
                   onClick={() => setSelectedStore(store)}
-                  title={`${store.store_name}: ¥${store.productivity.toLocaleString()}/h`}
+                  title={`${store.store_name}: ¥${store.productivity.toLocaleString()}/h (達成率${achieveRate}%)`}
                 >
+                  {/* 達成率 */}
                   <span
-                    className="text-white font-bold leading-none select-none"
+                    className="text-white/90 font-black leading-none select-none"
+                    style={{ fontSize: '11px', textShadow: '0 1px 2px rgba(0,0,0,0.4)' }}
+                  >
+                    {achieveRate}%
+                  </span>
+                  {/* 店舗名 */}
+                  <span
+                    className="text-white font-black leading-none select-none"
                     style={{
                       fontSize: '14px',
                       writingMode: 'vertical-rl',
                       textOrientation: 'mixed',
                       letterSpacing: '0.12em',
                       whiteSpace: 'nowrap',
-                      textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                      textShadow: '0 1px 3px rgba(0,0,0,0.35)',
                     }}
                   >
                     {displayName}
+                  </span>
+                  {/* 人時生産性小表示 */}
+                  <span
+                    className="text-white/80 font-semibold leading-none select-none"
+                    style={{ fontSize: '9px', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
+                  >
+                    ¥{(store.productivity / 1000).toFixed(1)}k
                   </span>
                 </motion.div>
               );
@@ -1857,23 +1986,24 @@ export default function ProductivityDashboard() {
             </h2>
             <div className="flex items-center gap-2 flex-wrap">
               {/* ⚡ 並び順切り替え */}
-              <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
+              <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-2xl p-1">
                 {[
-                  { id: 'default', label: 'バイザー順' },
-                  { id: 'productivity', label: '人時生産性順' },
-                  { id: 'sales', label: '売上順' },
-                  { id: 'person_hours', label: '人時数順' },
-                ].map(({ id, label }) => (
+                  { id: 'default', label: 'バイザー順', emoji: '🏪' },
+                  { id: 'productivity', label: '人時生産性', emoji: '⚡' },
+                  { id: 'sales', label: '売上順', emoji: '💴' },
+                  { id: 'person_hours', label: '人時数順', emoji: '👥' },
+                ].map(({ id, label, emoji }) => (
                   <button
                     key={id}
                     onClick={() => setStoreSort(id)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
                       storeSort === id
-                        ? 'bg-white dark:bg-gray-700 shadow-sm text-red-800 dark:text-red-400'
-                        : 'text-muted-foreground hover:text-foreground'
+                        ? 'bg-white dark:bg-gray-700 shadow-md text-red-800 dark:text-red-400 scale-105'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-white/60 dark:hover:bg-gray-700/60'
                     }`}
                   >
-                    {label}
+                    <span>{emoji}</span>
+                    <span className="hidden sm:inline">{label}</span>
                   </button>
                 ))}
               </div>
