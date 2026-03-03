@@ -2034,7 +2034,9 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       hourly,
       businessHours,
       currentHour,
-      currentMinutes
+      currentMinutes,
+      firstClockInMinutes,   // 最初の出勤時刻（分単位）→ 表示開始時間帯の決定に使用
+      lastClockOutMinutes    // 最後の退勤時刻（分単位）→ 表示終了時間帯の決定に使用
     );
 
     const todaySales = salesInfo.today_sales || 0;
@@ -2059,6 +2061,7 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       break_now: attendInfo.break_employees || 0,
       total_employees: attendInfo.total_employees,
       wk_tm: totalHours,
+      total_hours: parseFloat(attendInfo.total_hours.toFixed(1)),  // 個人労働時間の合計（退勤済み・勤務中の実労働時間）
       spd: productivity.toString(),
       update_time: salesInfo.update_time || '',
       employees: storeEmployees,
@@ -2088,43 +2091,67 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
  * @param {number} currentMinutes - 現在時刻（分単位）
  * @returns {Array} 時間帯別データ配列
  */
-function calculateHourlyProductivity(employees, hourly, businessHours, currentHour, currentMinutes) {
+function calculateHourlyProductivity(employees, hourly, businessHours, currentHour, currentMinutes, firstClockInMinutes, lastClockOutMinutes) {
   const result = [];
 
-  // 対象時間帯を決定：営業時間 + 売上がある時間帯（動的拡張）
+  // 対象時間帯を決定：売上がある時間帯（動的拡張）
   const salesHours = Object.keys(hourly).map(h => parseInt(h)).filter(h => !isNaN(h) && hourly[h] > 0);
-  const minHour = Math.min(businessHours.open, ...salesHours);
-  const maxHour = Math.max(businessHours.close - 1, ...salesHours);
 
-  // salesHoursが空の場合（salesHoursが[]）、スプレッドで Infinity/-Infinity になるため修正
+  // 表示開始時間帯：最初の出勤者の出勤時間帯 vs 売上がある最初の時間帯 の小さい方
+  // （開店時間ではなく実際に人がいる/売上がある時間帯から表示）
+  const firstClockInHour = firstClockInMinutes !== null ? Math.floor(firstClockInMinutes / 60) : null;
+  const minCandidates = [...salesHours];
+  if (firstClockInHour !== null) minCandidates.push(firstClockInHour);
+  const minHour = minCandidates.length > 0 ? Math.min(...minCandidates) : businessHours.open;
   const safeMinHour = isFinite(minHour) ? minHour : businessHours.open;
-  const rawMaxHour = isFinite(maxHour) ? maxHour : businessHours.close - 1;
+
+  // 売上がある最大時間帯
+  const maxSalesHour = salesHours.length > 0 ? Math.max(...salesHours) : (businessHours.close - 1);
+  const rawMaxHour = isFinite(maxSalesHour) ? maxSalesHour : businessHours.close - 1;
+
+  // 最後の退勤時刻の時間帯（退勤済みスタッフがいる場合）
+  // 例：lastClockOutMinutes=1080（18:00）→ lastClockOutHour=17（17:00〜18:00スロット）
+  const lastClockOutHour = lastClockOutMinutes !== null ? Math.floor((lastClockOutMinutes - 1) / 60) : null;
 
   // 表示する最大時間帯を決定：
-  // - 通常：現在時刻の時間帯まで表示（現在進行中のスロットまで）
-  // - レジ締め補完データがある場合：閉店後の補完データも表示するため、
-  //   rawMaxHour（売上がある最大時間帯）と currentHour の大きい方を採用
-  // これにより、レジ締め後に翌日データから補完された閉店後の売上も表示される
-  const safeMaxHour = Math.max(currentHour, rawMaxHour);
+  // - 出勤者がいる間は閉店時刻を超えても表示し続ける
+  // - 最後の退勤時刻の時間帯 vs 売上がある最大時間帯 vs 現在時刻 の最大値を採用
+  const maxCandidates = [currentHour, rawMaxHour];
+  if (lastClockOutHour !== null) maxCandidates.push(lastClockOutHour);
+  const safeMaxHour = Math.max(...maxCandidates);
 
   for (let hour = safeMinHour; hour <= safeMaxHour; hour++) {
     // この時間帯が営業時間内かどうか
     const isBusinessHour = hour >= businessHours.open && hour < businessHours.close;
 
-    // 営業時間外かつ売上もない時間帯はスキップ
-    // ただし現在進行中の時間帯（hour === currentHour）は必ず表示
-    if (hour !== currentHour && !isBusinessHour && (hourly[hour] === undefined || hourly[hour] === 0)) {
-      continue;
-    }
-
-    // この時間帯（hour:00 〜 hour+1:00）に在籍していた人時数を計算
+    // この時間帯に在籍していたスタッフがいるかどうか（開店前・閉店後の出勤判定用）
     const slotStartMinutes = hour * 60;
     const slotEndMinutes = (hour + 1) * 60;
+    const hasStaffInSlot = employees.some(emp => {
+      if (emp.status !== '勤務中' && emp.status !== '退勤済み' && emp.status !== '休憩中' && emp.status !== '退出中') return false;
+      if (emp.clock_in_minutes === null || emp.clock_in_minutes === undefined) return false;
+      const empStart = emp.clock_in_minutes;
+      const empEnd = (emp.status === '退勤済み' && emp.clock_out_minutes)
+        ? emp.clock_out_minutes
+        : currentMinutes;
+      return empStart < slotEndMinutes && empEnd > slotStartMinutes;
+    });
+
+    // 営業時間外かつ売上もなく出勤者もいない時間帯はスキップ
+    // ただし以下の場合は必ず表示：
+    //   - 現在進行中の時間帯（hour === currentHour）
+    //   - 出勤者がいる時間帯（開店前・閉店後も含む）
+    //   - 最後の退勤時刻の時間帯（lastClockOutHour）
+    const isLastClockOutSlot = lastClockOutHour !== null && hour === lastClockOutHour;
+    if (hour !== currentHour && !hasStaffInSlot && !isLastClockOutSlot && !isBusinessHour && (hourly[hour] === undefined || hourly[hour] === 0)) {
+      continue;
+    }
 
     // 現在時刻より未来の時間帯は、売上データがなければスキップ
     // slotEndMinutes > currentMinutes: スロットがまだ終わっていない（現在時刻がスロット内 or 未来）
     const isFutureSlot = slotEndMinutes > currentMinutes;
-    if (isFutureSlot && slotStartMinutes >= currentMinutes && (hourly[hour] === undefined || hourly[hour] === 0)) {
+    // 未来スロットでも出勤者がいる場合は表示（開店前・閉店後の出勤対応）
+    if (isFutureSlot && slotStartMinutes >= currentMinutes && !hasStaffInSlot && (hourly[hour] === undefined || hourly[hour] === 0)) {
       continue;
     }
 

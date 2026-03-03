@@ -103,7 +103,7 @@ function transformStoreData(apiData) {
     store_code: item.code || item.store_code || '',
     store_name: item.tenpo_name || item.store_name || '',
     total_sales: parseInt(item.kingaku || item.total_sales || 0),
-    total_hours: parseFloat(item.wk_tm || item.total_hours || 0),
+    total_hours: parseFloat(item.total_hours ?? item.wk_tm ?? 0),  // total_hours（個人労働時間合計）を優先、wk_tm（時間帯別人時合計）はフォールバック
     total_employees: parseInt(item.total_employees || 0),
     attended_employees: parseInt(item.wk_cnt || item.attended_employees || 0),
     working_employees: parseInt(item.working_now || item.working_employees || 0),
