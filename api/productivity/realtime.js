@@ -488,12 +488,12 @@ function rebuildAttendanceWithServiceHours(originalStores, storeEmployees) {
     const store = rebuilt[storeName];
     store.employees.push(emp);
 
-    if (emp.status === '勤務中' || emp.status === '退勤済み' || emp.status === '休憩中') {
+    if (emp.status === '勤務中' || emp.status === '退勤済み' || emp.status === '休憩中' || emp.status === '退出中') {
       store.attended_employees++;
       store.total_hours += emp.work_hours || 0;
     }
     if (emp.status === '勤務中') store.working_employees++;
-    if (emp.status === '休憩中') store.break_employees++;
+    if (emp.status === '休憩中' || emp.status === '退出中') store.break_employees++;
   });
 
   // total_hoursを小数点1桁に丸める
@@ -1548,8 +1548,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const nowTotalMinutes = jstNowDate.getUTCHours() * 60 + jstNowDate.getUTCMinutes();
 
     let netMinutes = 0;
-    if (status === '勤務中' || status === '休憩中') {
-      // 勤務中・休憩中：現在時刻 - 出勤打刻時刻 - 休憩時間（リアルタイム）
+    if (status === '勤務中' || status === '休憩中' || status === '退出中') {
+      // 勤務中・休憩中・退出中（一時外出）：現在時刻 - 出勤打刻時刻 - 休憩時間（リアルタイム）
       if (clockInMinutes !== null) {
         const elapsedMinutes = Math.max(0, nowTotalMinutes - clockInMinutes);
         netMinutes = Math.max(0, elapsedMinutes - breakMinutes);
@@ -1607,14 +1607,15 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const store = storeAttendance[assignedStore];
     store.total_employees++;
 
-    if (status === '勤務中' || status === '退勤済み' || status === '休憩中') {
+    if (status === '勤務中' || status === '退勤済み' || status === '休憩中' || status === '退出中') {
       store.attended_employees++;
       store.total_hours += netHours;
     }
     if (status === '勤務中') {
       store.working_employees++;
     }
-    if (status === '休憩中') {
+    if (status === '休憩中' || status === '退出中') {
+      // 退出中（一時外出・休憩）は休憩中と同等に扱う
       store.break_employees++;
     }
 
@@ -1680,7 +1681,7 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
 
     // 各店舗の最初の出勤時刻と最後の退勤時刻を取得
     const allEmployeesForStore = storeEmployees.filter(
-      emp => emp.status === '勤務中' || emp.status === '退勤済み' || emp.status === '休憩中'
+      emp => emp.status === '勤務中' || emp.status === '退勤済み' || emp.status === '休憩中' || emp.status === '退出中'
     );
     const clockInMinutesList = allEmployeesForStore
       .map(emp => emp.clock_in_minutes)
@@ -1703,7 +1704,7 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
     //   （退勤時刻がない場合も含む = 勤務中・休憩中のスタッフがいる）
     // - 営業後：最後の退勤後（全員退勤済み）
     const hasWorkingStaff = allEmployeesForStore.some(
-      emp => emp.status === '勤務中' || emp.status === '休憩中'
+      emp => emp.status === '勤務中' || emp.status === '休憩中' || emp.status === '退出中'
     );
     const isBeforeOpen = firstClockInMinutes === null || nowMinutes < firstClockInMinutes;
     const isAfterClose = !hasWorkingStaff && lastClockOutMinutes !== null && nowMinutes > lastClockOutMinutes;
@@ -1839,8 +1840,8 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
     let personHours = 0;
 
     employees.forEach(emp => {
-      // 勤務中・退勤済み・休憩中のスタッフを対象とする
-      if (emp.status !== '勤務中' && emp.status !== '退勤済み' && emp.status !== '休憩中') return;
+      // 勤務中・退勤済み・休憩中・退出中のスタッフを対象とする
+      if (emp.status !== '勤務中' && emp.status !== '退勤済み' && emp.status !== '休憩中' && emp.status !== '退出中') return;
       if (emp.clock_in_minutes === null || emp.clock_in_minutes === undefined) return;
 
       const empStart = emp.clock_in_minutes;
@@ -1852,6 +1853,7 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
       const empEnd = (emp.status === '退勤済み') && emp.clock_out_minutes
         ? emp.clock_out_minutes
         : effectiveCurrentMinutes;
+      // 退出中（一時外出）は休憩中と同様に現在時刻まで在籍として扱う
 
       // この時間帯との重複時間（分）を計算
       const overlapStart = Math.max(empStart, slotStartMinutes);
@@ -1873,8 +1875,8 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
       //   例：10:00〜18:00勤務、休憩60分 → 17:00〜18:00の時間帯から60分除外
       let adjustedOverlapMinutes = overlapMinutes;
 
-      if (emp.status === '休憩中' && isFutureSlot) {
-        // 休憩中ステータスかつ現在進行中のスロット：人時に含めない
+      if ((emp.status === '休憩中' || emp.status === '退出中') && isFutureSlot) {
+        // 休憩中・退出中ステータスかつ現在進行中のスロット：人時に含めない
         adjustedOverlapMinutes = 0;
       } else if (emp.break_minutes > 0) {
         // 休憩時間を「退勤時刻（または現在時刻）が含まれる時間帯」から集中除外

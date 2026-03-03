@@ -469,12 +469,14 @@ function StatusBadge({ status }) {
     '退勤済み': 'bg-gray-400 text-white',
     '未出勤': 'bg-amber-400 text-white',
     '休憩中': 'bg-blue-400 text-white',
+    '退出中': 'bg-blue-400 text-white',  // 休憩中と同じスタイル
   };
+  const displayStatus = status === '退出中' ? '休憩中(外出)' : status;
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${configs[status] || 'bg-gray-300 text-gray-700'}`}>
       {status === '勤務中' && <span className="w-1.5 h-1.5 bg-white rounded-full mr-1 animate-pulse" />}
-      {status === '休憩中' && <Coffee className="h-2.5 w-2.5 mr-1" />}
-      {status}
+      {(status === '休憩中' || status === '退出中') && <Coffee className="h-2.5 w-2.5 mr-1" />}
+      {displayStatus}
     </span>
   );
 }
@@ -490,12 +492,12 @@ function StoreDetailModal({ store, onClose }) {
   const config = LEVEL_CONFIG[level];
 
   const sortedEmployees = [...(store.employees || [])].sort((a, b) => {
-    const order = { '勤務中': 0, '休憩中': 1, '退勤済み': 2, '未出勤': 3 };
+    const order = { '勤務中': 0, '休憩中': 1, '退出中': 1, '退勤済み': 2, '未出勤': 3 };
     return (order[a.status] ?? 4) - (order[b.status] ?? 4);
   });
 
   const workingCount = sortedEmployees.filter(e => e.status === '勤務中').length;
-  const breakCount = sortedEmployees.filter(e => e.status === '休憩中').length;
+  const breakCount = sortedEmployees.filter(e => e.status === '休憩中' || e.status === '退出中').length;
   const finishedCount = sortedEmployees.filter(e => e.status === '退勤済み').length;
   const absentCount = sortedEmployees.filter(e => e.status === '未出勤').length;
 
@@ -771,7 +773,7 @@ function StoreDetailModal({ store, onClose }) {
                           transition={{ delay: i * 0.03 }}
                           className={`rounded-xl p-3 flex items-center gap-3 ${
                             emp.status === '勤務中' ? 'bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800' :
-                            emp.status === '休憩中' ? 'bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800' :
+                            (emp.status === '休憩中' || emp.status === '退出中') ? 'bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800' :
                             emp.status === '未出勤' ? 'bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800' :
                             'bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
                           }`}
@@ -779,7 +781,7 @@ function StoreDetailModal({ store, onClose }) {
                           <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${
                             emp.status === '勤務中' ? 'bg-green-500' :
                             emp.status === '退勤済み' ? 'bg-gray-400' :
-                            emp.status === '未出勤' ? 'bg-amber-400' : 'bg-blue-400'
+                            emp.status === '未出勤' ? 'bg-amber-400' : 'bg-blue-400'  // 休憩中・退出中は青
                           }`}>
                             {emp.name.charAt(0)}
                           </div>
@@ -1844,10 +1846,10 @@ export default function ProductivityDashboard() {
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
                     emp.status === '勤務中' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-                    emp.status === '休憩中' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' :
+                    (emp.status === '休憩中' || emp.status === '退出中') ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' :
                     'bg-gray-100 dark:bg-gray-700 text-muted-foreground'
                   }`}>
-                    {emp.status}
+                    {emp.status === '退出中' ? '休憩中(外出)' : emp.status}
                   </span>
                 </div>
                 <div className="space-y-2">
