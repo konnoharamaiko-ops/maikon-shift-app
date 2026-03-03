@@ -1698,19 +1698,18 @@ export default function ProductivityDashboard() {
               ))}
             </div>
           </div>
-          <div className="flex gap-1 h-16 rounded-xl overflow-hidden">
+          <div className="flex gap-1 rounded-xl overflow-hidden" style={{ height: '90px' }}>
             {sortedOpenStores.map((store, i) => {
               const level = getProductivityLevel(store.productivity);
               const cfg = LEVEL_CONFIG[level];
-              // 表示用の略称（「イオンタウン」→「イオン」、「FC店」→「FC」、「店」を除去して最大4文字）
-              const shortName = store.store_name
-                .replace('イオンタウン', 'イオン')
-                .replace('FC店', 'FC')
-                .replace('店', '');
+              // 「イオン松原」「イオン守口」→「ｲｵﾝ松原」「ｲｵﾝ守口」に短縮、「美和堂FC店」→「美和堂FC」
+              const displayName = store.store_name
+                .replace('イオン', 'ｲｵﾝ')
+                .replace('FC店', 'FC');
               return (
                 <motion.div
                   key={store.store_name}
-                  className="flex-1 flex items-end justify-center cursor-pointer hover:opacity-80 transition-all hover:scale-y-105 origin-bottom pb-1"
+                  className="flex-1 flex items-center justify-center cursor-pointer hover:opacity-80 transition-all hover:brightness-110 pb-1"
                   style={{ backgroundColor: cfg.color }}
                   initial={{ scaleY: 0 }}
                   animate={{ scaleY: 1 }}
@@ -1719,10 +1718,16 @@ export default function ProductivityDashboard() {
                   title={`${store.store_name}: ¥${store.productivity.toLocaleString()}/h`}
                 >
                   <span
-                    className="text-white font-bold hidden sm:block leading-none"
-                    style={{ fontSize: '8px', writingMode: 'vertical-rl', textOrientation: 'mixed', letterSpacing: '0.05em' }}
+                    className="text-white font-bold leading-none select-none"
+                    style={{
+                      fontSize: '9px',
+                      writingMode: 'vertical-rl',
+                      textOrientation: 'mixed',
+                      letterSpacing: '0.08em',
+                      whiteSpace: 'nowrap',
+                    }}
                   >
-                    {shortName}
+                    {displayName}
                   </span>
                 </motion.div>
               );
