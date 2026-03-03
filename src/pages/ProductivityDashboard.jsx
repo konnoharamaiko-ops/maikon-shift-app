@@ -690,39 +690,63 @@ function StoreDetailModal({ store, onClose }) {
                   </div>
 
                   {/* 時間帯別テーブル */}
-                  {store.hourly_productivity && store.hourly_productivity.length > 0 && (
-                    <div className="bg-gray-50 dark:bg-gray-800 rounded-xl overflow-hidden">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="bg-gray-100 dark:bg-gray-700">
-                            <th className="text-left p-2 font-semibold">時間帯</th>
-                            <th className="text-right p-2 font-semibold">売上</th>
-                            <th className="text-right p-2 font-semibold">人時数</th>
-                            <th className="text-right p-2 font-semibold">人時生産性</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {store.hourly_productivity.map((h, i) => {
-                            const lv = getProductivityLevel(h.productivity);
-                            const cfg = LEVEL_CONFIG[lv];
-                            return (
-                              <tr key={i} className={`border-t dark:border-gray-700 ${h.is_business_hour ? '' : 'opacity-60'}`}>
-                                <td className="p-2">
-                                  <span className="font-medium">{h.hour}:00〜{h.hour+1}:00</span>
-                                  {!h.is_business_hour && <span className="ml-1 text-[9px] text-muted-foreground">(営業外)</span>}
-                                </td>
-                                <td className="p-2 text-right">¥{h.sales.toLocaleString()}</td>
-                                <td className="p-2 text-right">{h.person_hours.toFixed(1)}h</td>
-                                <td className={`p-2 text-right font-bold ${cfg.text}`}>
-                                  ¥{h.productivity.toLocaleString()}/h
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  {store.hourly_productivity && store.hourly_productivity.length > 0 && (() => {
+                    // 従業員が実際に在籍している時間帯（person_hours > 0）の最初と最後を取得
+                    const workingSlots = store.hourly_productivity.filter(h => h.person_hours > 0);
+                    const firstWorkHour = workingSlots.length > 0 ? workingSlots[0].hour : null;
+                    const lastWorkHour = workingSlots.length > 0 ? workingSlots[workingSlots.length - 1].hour : null;
+
+                    // 営業時間の最初と最後（is_business_hour フラグから取得）
+                    const bizSlots = store.hourly_productivity.filter(h => h.is_business_hour);
+                    const firstBizHour = bizSlots.length > 0 ? bizSlots[0].hour : null;
+                    const lastBizHour = bizSlots.length > 0 ? bizSlots[bizSlots.length - 1].hour : null;
+
+                    // 表示範囲：出勤時間帯と営業時間帯の「広い方（union）」
+                    const displayMin = (firstWorkHour !== null && firstBizHour !== null)
+                      ? Math.min(firstWorkHour, firstBizHour)
+                      : (firstWorkHour ?? firstBizHour ?? store.hourly_productivity[0].hour);
+                    const displayMax = (lastWorkHour !== null && lastBizHour !== null)
+                      ? Math.max(lastWorkHour, lastBizHour)
+                      : (lastWorkHour ?? lastBizHour ?? store.hourly_productivity[store.hourly_productivity.length - 1].hour);
+
+                    const filteredHours = store.hourly_productivity.filter(
+                      h => h.hour >= displayMin && h.hour <= displayMax
+                    );
+
+                    return (
+                      <div className="bg-gray-50 dark:bg-gray-800 rounded-xl overflow-hidden">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-gray-100 dark:bg-gray-700">
+                              <th className="text-left p-2 font-semibold">時間帯</th>
+                              <th className="text-right p-2 font-semibold">売上</th>
+                              <th className="text-right p-2 font-semibold">人時数</th>
+                              <th className="text-right p-2 font-semibold">人時生産性</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredHours.map((h, i) => {
+                              const lv = getProductivityLevel(h.productivity);
+                              const cfg = LEVEL_CONFIG[lv];
+                              return (
+                                <tr key={i} className={`border-t dark:border-gray-700 ${h.is_business_hour ? '' : 'opacity-60'}`}>
+                                  <td className="p-2">
+                                    <span className="font-medium">{h.hour}:00〜{h.hour+1}:00</span>
+                                    {!h.is_business_hour && <span className="ml-1 text-[9px] text-muted-foreground">(営業外)</span>}
+                                  </td>
+                                  <td className="p-2 text-right">¥{h.sales.toLocaleString()}</td>
+                                  <td className="p-2 text-right">{h.person_hours.toFixed(1)}h</td>
+                                  <td className={`p-2 text-right font-bold ${cfg.text}`}>
+                                    ¥{h.productivity.toLocaleString()}/h
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
                 </motion.div>
               )}
 
