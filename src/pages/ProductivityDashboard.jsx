@@ -1698,14 +1698,19 @@ export default function ProductivityDashboard() {
               ))}
             </div>
           </div>
-          <div className="flex gap-1 h-10 rounded-xl overflow-hidden">
+          <div className="flex gap-1 h-16 rounded-xl overflow-hidden">
             {sortedOpenStores.map((store, i) => {
               const level = getProductivityLevel(store.productivity);
               const cfg = LEVEL_CONFIG[level];
+              // 表示用の略称（「イオンタウン」→「イオン」、「FC店」→「FC」、「店」を除去して最大4文字）
+              const shortName = store.store_name
+                .replace('イオンタウン', 'イオン')
+                .replace('FC店', 'FC')
+                .replace('店', '');
               return (
                 <motion.div
                   key={store.store_name}
-                  className="flex-1 flex items-center justify-center cursor-pointer hover:opacity-80 transition-all hover:scale-y-110 origin-bottom"
+                  className="flex-1 flex items-end justify-center cursor-pointer hover:opacity-80 transition-all hover:scale-y-105 origin-bottom pb-1"
                   style={{ backgroundColor: cfg.color }}
                   initial={{ scaleY: 0 }}
                   animate={{ scaleY: 1 }}
@@ -1713,8 +1718,11 @@ export default function ProductivityDashboard() {
                   onClick={() => setSelectedStore(store)}
                   title={`${store.store_name}: ¥${store.productivity.toLocaleString()}/h`}
                 >
-                  <span className="text-white text-[9px] font-bold truncate px-0.5 hidden sm:block">
-                    {store.store_name.replace('イオンタウン', '').replace('店', '').replace('FC', '').slice(0, 3)}
+                  <span
+                    className="text-white font-bold hidden sm:block leading-none"
+                    style={{ fontSize: '8px', writingMode: 'vertical-rl', textOrientation: 'mixed', letterSpacing: '0.05em' }}
+                  >
+                    {shortName}
                   </span>
                 </motion.div>
               );
