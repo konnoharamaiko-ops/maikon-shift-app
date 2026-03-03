@@ -1756,7 +1756,7 @@ export default function ProductivityDashboard() {
               ))}
             </div>
           </div>
-          <div className="flex gap-1 rounded-xl overflow-hidden" style={{ height: '90px' }}>
+          <div className="flex gap-1 rounded-xl overflow-hidden" style={{ height: '110px' }}>
             {sortedOpenStores.map((store, i) => {
               const level = getProductivityLevel(store.productivity);
               const cfg = LEVEL_CONFIG[level];
@@ -1778,10 +1778,10 @@ export default function ProductivityDashboard() {
                   <span
                     className="text-white font-bold leading-none select-none"
                     style={{
-                      fontSize: '9px',
+                      fontSize: '12px',
                       writingMode: 'vertical-rl',
                       textOrientation: 'mixed',
-                      letterSpacing: '0.08em',
+                      letterSpacing: '0.1em',
                       whiteSpace: 'nowrap',
                     }}
                   >
