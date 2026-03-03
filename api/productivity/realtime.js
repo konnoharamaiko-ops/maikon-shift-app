@@ -927,59 +927,24 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     radio1: '1',
   });
 
-  const postBody = makePostBody(todayStr);
-
   const hourlyUrl = `${repBaseUrl}N3D1Servlet`;
   console.log('[TV] Fetching hourly sales (POST):', hourlyUrl);
 
-  // 今日のデータを取得
-  const hourlyRes = await fetch(hourlyUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': cookies,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': repBaseUrl,
-    },
-    body: postBody.toString(),
-  });
-
-  // TempoVisorのHTMLはShift-JIS（cp932）エンコーディング
-  console.log('[TV] HTTP status:', hourlyRes.status, hourlyRes.statusText);
-  const hourlyBuffer = await hourlyRes.arrayBuffer();
-  const hourlyHtml = iconv.decode(Buffer.from(hourlyBuffer), 'cp932');
-  console.log('[TV] HTML length:', hourlyHtml.length);
-
-  // 前日のデータも取得（閉店後〜翌日最初の出勤前まで前日売上を表示するため）
+  // 昨日・翌日の日付を計算
   const jstYesterday = new Date(jstNow.getTime() - 24 * 60 * 60 * 1000);
   const yyyyy = jstYesterday.getUTCFullYear();
   const ymm = String(jstYesterday.getUTCMonth() + 1).padStart(2, '0');
   const ydd = String(jstYesterday.getUTCDate()).padStart(2, '0');
   const yesterdayStr = `${yyyyy}/${ymm}/${ydd}`;
 
-  const yesterdayRes = await fetch(hourlyUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': cookies,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': repBaseUrl,
-    },
-    body: makePostBody(yesterdayStr).toString(),
-  });
-  const yesterdayBuffer = await yesterdayRes.arrayBuffer();
-  const yesterdayHtml = iconv.decode(Buffer.from(yesterdayBuffer), 'cp932');
-  console.log('[TV] Yesterday HTML length:', yesterdayHtml.length);
-
-  // 翌日のデータも取得（レジ締め後の売上補完のため）
   const jstTomorrow = new Date(jstNow.getTime() + 24 * 60 * 60 * 1000);
   const tyyyy = jstTomorrow.getUTCFullYear();
   const tmm = String(jstTomorrow.getUTCMonth() + 1).padStart(2, '0');
   const tdd = String(jstTomorrow.getUTCDate()).padStart(2, '0');
   const tomorrowStr = `${tyyyy}/${tmm}/${tdd}`;
 
-  // 翌日データは8〜23時の範囲で取得（レジ締め後の売上が翌日の同時間帯に計上されるため）
-  const tomorrowRes = await fetch(hourlyUrl, {
+  // ===== 高速化：今日・昨日・翌日のN3D1取得とMainMenuServlet取得を並行実行 =====
+  const fetchN3D1 = (dateStr, slot1 = '8', slot2 = '23') => fetch(hourlyUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -987,13 +952,33 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Referer': repBaseUrl,
     },
-    body: makePostBody(tomorrowStr, '8', '23').toString(),
+    body: makePostBody(dateStr, slot1, slot2).toString(),
   });
-  const tomorrowBuffer = await tomorrowRes.arrayBuffer();
-  const tomorrowHtml = iconv.decode(Buffer.from(tomorrowBuffer), 'cp932');
 
-  // MainMenuServletから各店舗の更新時刻（最終レジ稼働時間）を取得
-  const updateTimes = await fetchStoreUpdateTimes(cookies);
+  const startTime = Date.now();
+  // ===== 高速化：N3D1取得・MainMenuServlet・N341取得を全て同時並行実行 =====
+  const [hourlyRes, yesterdayRes, tomorrowRes, updateTimes, todayRegijimeMap, tomorrowRegijimeMap] = await Promise.all([
+    fetchN3D1(todayStr),
+    fetchN3D1(yesterdayStr),
+    fetchN3D1(tomorrowStr, '8', '23'),
+    fetchStoreUpdateTimes(cookies),
+    fetchRegijimeStartHours(cookies, repBaseUrl, todayStr, false),
+    fetchRegijimeStartHours(cookies, repBaseUrl, tomorrowStr, true),
+  ]);
+  console.log(`[TV] 全並行取得完了: ${Date.now() - startTime}ms`);
+
+  // TempoVisorのHTMLはShift-JIS（cp932）エンコーディング
+  console.log('[TV] HTTP status:', hourlyRes.status, hourlyRes.statusText);
+  const [hourlyBuffer, yesterdayBuffer, tomorrowBuffer] = await Promise.all([
+    hourlyRes.arrayBuffer(),
+    yesterdayRes.arrayBuffer(),
+    tomorrowRes.arrayBuffer(),
+  ]);
+  const hourlyHtml = iconv.decode(Buffer.from(hourlyBuffer), 'cp932');
+  const yesterdayHtml = iconv.decode(Buffer.from(yesterdayBuffer), 'cp932');
+  const tomorrowHtml = iconv.decode(Buffer.from(tomorrowBuffer), 'cp932');
+  console.log('[TV] HTML length:', hourlyHtml.length);
+  console.log('[TV] Yesterday HTML length:', yesterdayHtml.length);
 
   const $hourly = cheerio.load(hourlyHtml);
   const tableCount = $hourly('table').length;
@@ -1161,22 +1146,8 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
 
   // ============================================================
   // N341Servletから当日・翌日のレジ締め時間帯を取得
-  // 
-  // 仕様（田辺店3/2の例）：
-  // 
-  // 「今日（3/2）の売上を表示する場合」のレジ締め時間 = 翌日(3/3)のN341の最新時刻
-  //   → 今日の売上から「翌日(3/3)のレジ締め時間帯以降」を除外する
-  //   → 除外した分は「今日のレジ締め後売上」として storeHourly に補完する
-  // 
-  // 「昨日（3/1）の売上を表示する場合」のレジ締め時間 = 今日(3/2)のN341の最新時刻
-  //   → 昨日の売上（yesterdayHourly）はすでに昨日のデータから取得済み
-  //   → 今日のTempoVisorデータに昨日レジ締め後分が計上されているので、
-  //   今日のデータから「今日(3/2)のレジ締め時間帯以降」を除外し、yesterdayHourlyに補完する
+  // （todayRegijimeMap・tomorrowRegijimeMapは上部の並行実行で既に取得済み）
   // ============================================================
-  const [todayRegijimeMap, tomorrowRegijimeMap] = await Promise.all([
-    fetchRegijimeStartHours(cookies, repBaseUrl, todayStr, false),
-    fetchRegijimeStartHours(cookies, repBaseUrl, tomorrowStr, true),
-  ]);
 
   // ============================================================
   // 「今日の売上」から「前日レジ締め後分」を除外
