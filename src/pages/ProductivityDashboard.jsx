@@ -19,9 +19,9 @@ import { Switch } from '../components/ui/switch';
 import { Label } from '../components/ui/label';
 
 // ===== 定数 =====
-const PRODUCTIVITY_TARGET = 3000;
-const PRODUCTIVITY_GOOD = 2500;
-const PRODUCTIVITY_WARNING = 2000;
+const PRODUCTIVITY_TARGET = 8000;  // 優秀（8,000円以上）
+const PRODUCTIVITY_GOOD = 5000;    // 良好（5,000円以上）
+const PRODUCTIVITY_WARNING = 2000; // 注意（2,000円以上）
 
 // 舞昆ブランドカラー
 const BRAND = {
