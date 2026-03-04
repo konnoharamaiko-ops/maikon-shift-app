@@ -1348,15 +1348,15 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
   // 「前日のレジ締め後分」を今日から除外する
   //
   // 判定ロジック：
-  //   翌日N3D1に売上がある時間帯の「最小時間帯」をレジ締め開始時間と判定
-  //   今日N3D1で「レジ締め開始時間以降」に売上がある全時間帯 = 前日のレジ締め後分（除外）
-  //   翌日N3D1に売上がある全時間帯 = 今日のレジ締め後分（今日に加算）
+  //   翌日N3D1に売上がある時間帯 = 今日のレジ締め後分（今日に加算）
+  //   今日N3D1で「翌日N3D1と同じ時間帯」に売上がある場合 = 前日のレジ締め後分（除外）
+  //   ※「翌日の最小時間帯以降を全て除外」ではなく「翌日と同じ時間帯のみ除外」
   // ============================================================
   for (const storeName of Object.keys(TEMPOVISOR_STORE_CODES)) {
     const tomorrowHourly = tomorrowHourlyAll[storeName] || {};
     const todayHourly = storeHourly[storeName] || {};
     
-    // 翌日N3D1に売上がある時間帯の「最小時間帯」を特定（= レジ締め開始時間）
+    // 翌日N3D1に売上がある時間帯を特定（= 今日のレジ締め後分）
     const tomorrowSalesHours = Object.entries(tomorrowHourly)
       .filter(([, sales]) => sales > 0)
       .map(([h]) => parseInt(h))
@@ -1367,17 +1367,13 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       continue;
     }
     
-    // レジ締め開始時間 = 翌日N3D1の最小売上時間帯
-    const regijimeStartHour = tomorrowSalesHours[0];
-    console.log(`[REGIJIME] ${storeName}: 翌日N3D1売上時間帯=${JSON.stringify(tomorrowSalesHours)}, レジ締め開始時間=${regijimeStartHour}時`);
+    console.log(`[REGIJIME] ${storeName}: 翌日N3D1売上時間帯=${JSON.stringify(tomorrowSalesHours)}`);
     
-    // 今日N3D1で「レジ締め開始時間以降」に売上がある全時間帯を前日レジ締め後分と判定
-    const prevDayRegijimeHours = Object.entries(todayHourly)
-      .filter(([h, sales]) => parseInt(h) >= regijimeStartHour && sales > 0)
-      .map(([h]) => parseInt(h))
-      .sort((a, b) => a - b);
+    // 今日N3D1で「翌日N3D1と同じ時間帯」に売上がある場合のみ前日レジ締め後分と判定（除外）
+    const prevDayRegijimeHours = tomorrowSalesHours
+      .filter(h => (todayHourly[h] || 0) > 0);
     
-    console.log(`[REGIJIME] ${storeName}: 前日レジ締め後分時間帯=${JSON.stringify(prevDayRegijimeHours)}`);
+    console.log(`[REGIJIME] ${storeName}: 前日レジ締め後分時間帯（翌日と同じ時間帯のみ）=${JSON.stringify(prevDayRegijimeHours)}`);
     
     // ① 今日N3D1のレジ締め開始時間以降の売上を全て除外（前日レジ締め後分）
     let totalExcluded = 0;
