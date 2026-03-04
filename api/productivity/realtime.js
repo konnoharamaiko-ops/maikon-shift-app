@@ -1836,13 +1836,22 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const netHours = parseFloat((netMinutes / 60).toFixed(2));
 
     // 振り分け先の店舗を決定
-    // 優先順位: 打刻場所（出入詳細ページのGPS打刻エリア）> 所属部署コード
-    // 打刻場所 = 実際に打刻した場所（ヘルプ対応や所属外店舗での勤務に対応）
-    let assignedStore = stampStoreName || deptStoreName;
+    // 優先順位: 出勤打刻場所 > 退勤打刻場所 > 所属部署コード
+    // 退勤後も出勤時の打刻場所を維持する（所属店舗に戻らないようにする）
+    const stampDetail = staffId ? stampDetailMap[staffId] : null;
+    const clockInStoreName = stampDetail?.clockInCode ? STORE_DEPT_MAP[stampDetail.clockInCode] : null;
+    const clockOutStoreName2 = stampDetail?.clockOutCode ? STORE_DEPT_MAP[stampDetail.clockOutCode] : null;
+    // 退勤済みの場合: 出勤打刻場所 > 退勤打刻場所 > stampStoreName > 所属店舗
+    // 勤務中・休憩中の場合: 出勤打刻場所（stampStoreName）> 所属店舗
+    let assignedStore;
+    if (status === '退勤済み') {
+      assignedStore = clockInStoreName || clockOutStoreName2 || stampStoreName || deptStoreName;
+    } else {
+      assignedStore = stampStoreName || deptStoreName;
+    }
 
     // ===== 休憩中の店舗間移動検出 =====
     // 休憩開始打刻場所 ≠ 休憩終了打刻場所 の場合は店舗間移動とみなす
-    const stampDetail = staffId ? stampDetailMap[staffId] : null;
     const empBreakStartCode = stampDetail?.breakStartCode || null;
     const empBreakEndCode = stampDetail?.breakEndCode || null;
     const empBreakStartStore = empBreakStartCode ? STORE_DEPT_MAP[empBreakStartCode] : null;
