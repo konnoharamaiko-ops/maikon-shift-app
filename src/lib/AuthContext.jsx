@@ -200,6 +200,41 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
+  // ジョブカンコードでログイン
+  const loginWithJobcanCode = async (jobcanCode, password) => {
+    setAuthError(null);
+    try {
+      // バックエンドAPIでジョブカンコード→メールアドレス変換＋認証
+      const apiRes = await fetch('/api/auth/jobcan-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobcan_code: jobcanCode, password }),
+      });
+      const apiData = await apiRes.json();
+      if (!apiRes.ok) {
+        throw new Error(apiData.error || 'ログインに失敗しました。');
+      }
+      // 取得したトークンでSupabaseセッションを設定
+      const { data, error } = await supabase.auth.setSession({
+        access_token: apiData.access_token,
+        refresh_token: apiData.refresh_token,
+      });
+      if (error) throw error;
+      setIsLoadingAuth(true);
+      const result = await loadAndSetProfile(data.user);
+      if (result && !result.success) {
+        const errorMessage = result.errorMessage || 'ログインに失敗しました。';
+        if (result.needsSignOut) supabase.auth.signOut().catch(() => {});
+        setIsLoadingAuth(false);
+        throw new Error(errorMessage);
+      }
+      return data;
+    } catch (error) {
+      setIsLoadingAuth(false);
+      throw error;
+    }
+  };
+
   // Login function - handles everything directly
   const login = async (email, password) => {
     // NOTE: Do NOT setIsLoadingAuth(true) here.
@@ -265,6 +300,7 @@ export const AuthProvider = ({ children }) => {
       isInviteFlow,
       logout,
       login,
+      loginWithJobcanCode,
       refreshProfile: async () => {
         if (!user?.email) return null;
         try {
