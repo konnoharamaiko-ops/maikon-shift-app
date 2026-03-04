@@ -114,11 +114,18 @@ export default async function handler(req, res) {
         sampleRows.push({
           row_index: j,
           cell_count: cells.length,
-          cells: cells.map((c, k) => ({
-            index: k,
-            text: $detail(c).text().trim().replace(/\s+/g, ' ').substring(0, 100),
-            class: $detail(c).attr('class') || '',
-          })),
+          cells: cells.map((c, k) => {
+            const selectedOpt = $detail(c).find('select option[selected]');
+            const selectedOptAttr = $detail(c).find('select option').filter((i, el) => $detail(el).attr('selected') !== undefined);
+            return {
+              index: k,
+              text: $detail(c).text().trim().replace(/\s+/g, ' ').substring(0, 100),
+              class: $detail(c).attr('class') || '',
+              selected_option_text: selectedOpt.length > 0 ? selectedOpt.text().trim() : null,
+              selected_option_attr_text: selectedOptAttr.length > 0 ? selectedOptAttr.text().trim() : null,
+              select_html: $detail(c).find('select').length > 0 ? $detail(c).find('select').html()?.substring(0, 300) : null,
+            };
+          }),
         });
       }
       tables.push({
