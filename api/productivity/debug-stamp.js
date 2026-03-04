@@ -128,8 +128,19 @@ export default async function handler(req, res) {
       });
     });
 
-    // ページ全体のテキストも取得
-    const pageText = $detail('body').text().replace(/\s+/g, ' ').substring(0, 2000);
+    // ページ全体のテキストも取得（後半部分を含む）
+    const pageText = $detail('body').text().replace(/\s+/g, ' ');
+    // 打刻区分を含む部分を探す
+    const stampIdx = detailHtml.indexOf('打刻区分');
+    const stampHtmlSection = stampIdx >= 0 ? detailHtml.substring(Math.max(0, stampIdx - 200), stampIdx + 3000) : 'NOT FOUND';
+    // tableタグを全て探す（xmlModeも試す）
+    const $detailXml = cheerio.load(detailHtml, { xmlMode: true });
+    const xmlTableCount = $detailXml('table').length;
+    const xmlTables = [];
+    $detailXml('table').each((i, table) => {
+      const headerText = $detailXml(table).find('tr').first().text().trim().replace(/\s+/g, ' ');
+      xmlTables.push({ index: i, header: headerText.substring(0, 200), rows: $detailXml(table).find('tr').length });
+    });
 
     return res.status(200).json({
       today: todayStr,
@@ -139,10 +150,13 @@ export default async function handler(req, res) {
       html_length: detailHtml.length,
       status_code: detailRes.status,
       table_count: tables.length,
+      xml_table_count: xmlTableCount,
+      xml_tables: xmlTables,
       tables: tables,
-      page_text_preview: pageText,
-      // HTMLの最初の1000文字
-      html_preview: detailHtml.substring(0, 1000),
+      stamp_section_html: stampHtmlSection.substring(0, 2000),
+      page_text_middle: pageText.substring(1000, 3000),
+      // HTMLの中間部分
+      html_middle: detailHtml.substring(15000, 17000),
     });
 
   } catch (err) {
