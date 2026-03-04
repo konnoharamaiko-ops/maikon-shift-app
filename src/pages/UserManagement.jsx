@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, supabaseAdmin } from '@/api/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, UserPlus, Mail, Trash2, Users, Building2, Edit2, Key, History, User, AlertTriangle, Calendar, ClipboardList, FileSpreadsheet, Loader2, Database, Search } from 'lucide-react';
+import { Shield, UserPlus, Mail, Trash2, Users, Building2, Edit2, Key, History, User, AlertTriangle, Calendar, ClipboardList, FileSpreadsheet, Loader2, Database, Search, ShoppingCart, Factory } from 'lucide-react';
 import ExportButton from '@/components/export/ExportButton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -673,6 +673,21 @@ export default function UserManagement() {
               ))}
               {userStores.length > 2 && (
                 <span className="text-[9px] sm:text-[10px] text-slate-400">+{userStores.length - 2}</span>
+              )}
+              {user?.belongs_online && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full flex items-center gap-0.5">
+                  <ShoppingCart className="w-2 h-2 sm:w-2.5 sm:h-2.5" />通販
+                </span>
+              )}
+              {(user?.belongs_hokusetsu_bagging || user?.belongs_hokusetsu_cooking) && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
+                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />北摂
+                </span>
+              )}
+              {(user?.belongs_kagaya_bagging || user?.belongs_kagaya_cooking) && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
+                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />加賀屋
+                </span>
               )}
             </div>
           </div>
