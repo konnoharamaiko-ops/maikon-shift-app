@@ -1600,39 +1600,79 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       // 取得できなかった場合は旧方式（change_group_id/change_type）にフォールバック
       let clockInCode = null, breakStartCode = null, breakEndCode = null, clockOutCode = null;
       let hasAutoClockOut = false; // 自動退出打刻が存在するか
-
+      let realClockInTime = null;   // 実際の出勤打刻時刻
+      let realClockOutTime = null;  // 実際の退勤打刻時刻
       if (stampRows.length > 0) {
         let hasRealClockOut = false;  // 実際の退勤打刻があるか
         let hasOnlyAutoClockOut = false;  // 自動退出打刻のみか
-        let realClockInTime = null;   // 実際の出勤打刻時刻
-        let realClockOutTime = null;  // 実際の退勤打刻時刻
-        stampRows.forEach(({ stampType, stampTime, placeCode, isAutoClockOut }) => {
+
+        // 行の總数を取得（最初の行=出勤、最後の行=退勤の判定に使用）
+        const totalRows = stampRows.length;
+
+        stampRows.forEach(({ stampType, stampTime, stampMethod: sm, placeCode, isAutoClockOut }, rowIdx) => {
           if (!stampType) return;
-          if (stampType.includes('出勤') || stampType === '1') {
-            if (placeCode) clockInCode = placeCode;
-            if (stampTime) realClockInTime = stampTime;  // 出勤打刻時刻を保存
-          } else if (stampType.includes('休憩開始') || stampType === '3') {
-            if (placeCode) breakStartCode = placeCode;
-          } else if (stampType.includes('休憩終了') || stampType === '4') {
-            if (placeCode) breakEndCode = placeCode;
-          } else if (stampType.includes('退勤') || stampType.includes('退室') || stampType === '2') {
-            if (isAutoClockOut) {
-              // 自動退出打刻：実際の退勤打刻がない場合のみ退勤打刻として扱わない
-              hasOnlyAutoClockOut = true;
-              console.log(`[JC] empId=${empId}: 自動退出打刻を検出 (時刻:${stampTime})`);
-            } else {
-              // 実際の退勤打刻（Web打刻・未承認含む）：有効
-              hasRealClockOut = true;
-              if (placeCode) clockOutCode = placeCode;
-              if (stampTime) realClockOutTime = stampTime;  // 実際の退勤打刻時刻を保存（未承認でも使用）
-              console.log(`[JC] empId=${empId}: 実際の退勤打刻を検出 (時刻:${stampTime}, 方法:${stampMethod})`);
-            }
-          } else if (stampMethod && !isAutoClockOut && (stampType === '-退室' || stampType.includes('-退'))) {
-            // -退室など「-」付きの退室行で自動退出でない場合は実際の退勤打刻として扱う
+
+          // ===== 打刻区分の判定ロジック =====
+          // 自動退出は先に判定
+          if (isAutoClockOut) {
+            hasOnlyAutoClockOut = true;
+            console.log(`[JC] empId=${empId}: 自動退出打刻を検出 (時刻:${stampTime})`);
+            return;
+          }
+
+          // stampTypeが「- 退勤」形式（「-」で始まる退勤行）
+          if (stampType.startsWith('- ') || stampType === '-退勤' || stampType === '-退室') {
+            // 自動退出以外の「-退勤」行は実際の退勤打刻として扱う
             hasRealClockOut = true;
             if (placeCode) clockOutCode = placeCode;
             if (stampTime) realClockOutTime = stampTime;
-            console.log(`[JC] empId=${empId}: -退室打刻（実際）を検出 (時刻:${stampTime}, 方法:${stampMethod})`);
+            console.log(`[JC] empId=${empId}: -退勤打刻（実際）を検出 (時刻:${stampTime}, 方法:${sm})`);
+            return;
+          }
+
+          // stampTypeが全optionテキスト（「(自動判別)」を含む）の場合は行位置で判定
+          if (stampType.includes('(自動判別)')) {
+            if (rowIdx === 0) {
+              // 最初の行は出勤として扱う
+              if (placeCode) clockInCode = placeCode;
+              if (stampTime) realClockInTime = stampTime;
+              console.log(`[JC] empId=${empId}: 出勤打刻を検出(行位置判定) (時刻:${stampTime}, 方法:${sm})`);
+            } else {
+              // 最後の行（または最後近く）は退勤として扱う
+              hasRealClockOut = true;
+              if (placeCode) clockOutCode = placeCode;
+              if (stampTime) realClockOutTime = stampTime;
+              console.log(`[JC] empId=${empId}: 退勤打刻を検出(行位置判定) (時刻:${stampTime}, 方法:${sm})`);
+            }
+            return;
+          }
+
+          // stampTypeが明確な場合はテキストで判定
+          if (stampType === '出勤' || stampType === '1') {
+            if (placeCode) clockInCode = placeCode;
+            if (stampTime) realClockInTime = stampTime;
+            console.log(`[JC] empId=${empId}: 出勤打刻を検出 (時刻:${stampTime}, 方法:${sm})`);
+          } else if (stampType === '休憩開始' || stampType === '3') {
+            if (placeCode) breakStartCode = placeCode;
+          } else if (stampType === '休憩終了' || stampType === '4') {
+            if (placeCode) breakEndCode = placeCode;
+          } else if (stampType === '退勤' || stampType === '退室' || stampType === '2') {
+            hasRealClockOut = true;
+            if (placeCode) clockOutCode = placeCode;
+            if (stampTime) realClockOutTime = stampTime;
+            console.log(`[JC] empId=${empId}: 退勤打刻を検出 (時刻:${stampTime}, 方法:${sm})`);
+          } else {
+            // 上記に該当しない場合は行位置で判定（フォールバック）
+            if (rowIdx === 0) {
+              if (placeCode) clockInCode = placeCode;
+              if (stampTime) realClockInTime = stampTime;
+              console.log(`[JC] empId=${empId}: 出勤打刻を検出(フォールバック) (時刻:${stampTime}, 方法:${sm}, type:${stampType})`);
+            } else {
+              hasRealClockOut = true;
+              if (placeCode) clockOutCode = placeCode;
+              if (stampTime) realClockOutTime = stampTime;
+              console.log(`[JC] empId=${empId}: 退勤打刻を検出(フォールバック) (時刻:${stampTime}, 方法:${sm}, type:${stampType})`);
+            }
           }
         });
         // 実際の退勤打刻がなく、自動退出のみの場合はフラグを立てる
