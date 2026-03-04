@@ -1549,8 +1549,10 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
   const allStampResults = await Promise.allSettled(
     staffIdList.map(async (empId) => {
-      const todayDateStr = `${jstToday.getUTCFullYear()}-${String(jstToday.getUTCMonth() + 1).padStart(2, '0')}-${String(jstToday.getUTCDate()).padStart(2, '0')}`;
-      const aditUrl = `https://ssl.jobcan.jp/client/adit-manage/detail/?employee_id=${empId}&target_date=${todayDateStr}`;
+      const todayYear = jstToday.getUTCFullYear();
+      const todayMonth = jstToday.getUTCMonth() + 1;
+      const todayDay = jstToday.getUTCDate();
+      const aditUrl = `https://ssl.jobcan.jp/client/adit?employee_id=${empId}&year=${todayYear}&month=${todayMonth}&day=${todayDay}`;
       const aditRes = await fetchWithTimeout(aditUrl, {
         headers: {
           'Cookie': allCookies,
