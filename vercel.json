@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/productivity/save-history",
+      "schedule": "0 13 * * *"
+    }
+  ],
   "installCommand": "rm -rf node_modules && npm install",
   "buildCommand": "rm -rf dist node_modules/.vite && npx vite build",
   "outputDirectory": "dist",
