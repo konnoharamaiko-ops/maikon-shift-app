@@ -215,12 +215,20 @@ async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, 
     salesData.yesterdayHourly || {}
   );
 
+  // JSTの現在時刻を計算（フロントエンドでの時間帯フィルタリング用）
+  const _now = new Date();
+  const _jstNow = new Date(_now.getTime() + 9 * 60 * 60 * 1000);
+  const currentJstHour = _jstNow.getUTCHours();
+  const currentJstMinutes = _jstNow.getUTCHours() * 60 + _jstNow.getUTCMinutes();
+
   const responseData = {
     success: true,
     data: storeData,
     employees: storeEmployees,
     employee_productivity: employeeProductivity,
     timestamp: new Date().toISOString(),
+    current_jst_hour: currentJstHour,
+    current_jst_minutes: currentJstMinutes,
     cached: false,
     sources: {
       tempovisor: salesResult.status === 'fulfilled' ? 'live' : `error: ${salesResult.reason?.message}`,

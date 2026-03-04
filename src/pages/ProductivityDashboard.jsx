@@ -231,6 +231,8 @@ async function fetchRealtimeData(storeSettings) {
     stores: transformStoreData(result.data || []),
     sources: result.sources || {},
     timestamp: result.timestamp,
+    currentJstHour: result.current_jst_hour ?? new Date().getHours(),
+    currentJstMinutes: result.current_jst_minutes ?? (new Date().getHours() * 60 + new Date().getMinutes()),
     employeeProductivity: result.employee_productivity || [],
     cached: result.cached || false,
     cacheAgeSeconds: result.cache_age_seconds || 0,
@@ -347,7 +349,7 @@ function HourlyProductivityChart({ hourlyData, storeName }) {
 /**
  * 店舗カード
  */
-function StoreCard({ store, onClick, index }) {
+function StoreCard({ store, onClick, index, currentJstHour }) {
   if (store.is_closed) {
     return (
       <motion.div
@@ -382,7 +384,15 @@ function StoreCard({ store, onClick, index }) {
   const level = hasData ? getProductivityLevel(store.productivity) : 'danger';
   const config = LEVEL_CONFIG[level];
   const Icon = config.icon;
-  const recentHourly = store.hourly_productivity?.slice(-2) || [];
+  // 現在時刻以前の時間帯のみを対象にして直近の2件を取得
+  // currentJstHourが未定義の場合はフィルタリングなし（安全フォールバック）
+  const recentHourly = (() => {
+    const all = store.hourly_productivity || [];
+    if (currentJstHour === undefined || currentJstHour === null) return all.slice(-2);
+    // 現在時刻の時間帯以前（hour <= currentJstHour）のみを対象
+    const past = all.filter(h => h.hour <= currentJstHour);
+    return past.slice(-2);
+  })();
   const activeCount = store.working_employees || 0;
   const achieveRate = hasData ? Math.min(100, Math.round((store.productivity / PRODUCTIVITY_TARGET) * 100)) : 0;
 
@@ -1763,6 +1773,10 @@ export default function ProductivityDashboard() {
   const stores = queryData?.stores || [];
   const sources = queryData?.sources || {};
   const employeeProductivity = queryData?.employeeProductivity || [];
+  // APIから取得したJST現在時刻（直近の人時生産性フィルタリング用）
+  const currentJstHour = queryData?.currentJstHour ?? new Date().getHours();
+  const currentJstMinutes = queryData?.currentJstMinutes ?? (new Date().getHours() * 60 + new Date().getMinutes());
+  // 最終更新時刻：dataUpdatedAtはUTCなのでJST(+9h)に変換して表示
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
   const isLive = sources.tempovisor === 'live' || sources.jobcan === 'live';
   const isCachedData = queryData?.cached || false;  // キャッシュから返ったデータか
@@ -1811,7 +1825,7 @@ export default function ProductivityDashboard() {
               </p>
               {lastUpdated && (
                 <span className="text-[10px] bg-gray-100 dark:bg-gray-800 text-muted-foreground px-2 py-0.5 rounded-full">
-                  最終更新: {format(lastUpdated, 'HH:mm:ss')}
+                  最終更新: {format(new Date(lastUpdated.getTime() + 9 * 60 * 60 * 1000), 'HH:mm:ss')}
                 </span>
               )}
             </div>
@@ -2114,6 +2128,7 @@ export default function ProductivityDashboard() {
                     store={store}
                     onClick={setSelectedStore}
                     index={i}
+                    currentJstHour={currentJstHour}
                   />
                 ))}
               </div>
@@ -2136,6 +2151,7 @@ export default function ProductivityDashboard() {
                         store={store}
                         onClick={() => {}}
                         index={i}
+                        currentJstHour={currentJstHour}
                       />
                     ))}
                   </div>
