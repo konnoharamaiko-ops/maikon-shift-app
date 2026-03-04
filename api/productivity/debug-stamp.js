@@ -84,8 +84,9 @@ export default async function handler(req, res) {
 
     // 出入詳細ページを取得（田浦利季さん empId=672）
     const empId = req.query.emp_id || '672';
-    const targetDate = req.query.date || todayStr;  // dateパラメータで日付を指定可能
-    const stampDetailUrl = `https://ssl.jobcan.jp/client/adit-manage/detail/?employee_id=${empId}&target_date=${targetDate}`;
+    const targetDate = req.query.date || todayStr;  // dateパラメータで日付を指定可能（YYYY-MM-DD形式）
+    const [tYear, tMonth, tDay] = targetDate.split('-');
+    const stampDetailUrl = `https://ssl.jobcan.jp/client/adit?employee_id=${empId}&year=${tYear}&month=${parseInt(tMonth)}&day=${parseInt(tDay)}`;
     
     console.log(`[DEBUG] Fetching stamp detail: ${stampDetailUrl}`);
     
