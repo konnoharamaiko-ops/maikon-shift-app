@@ -9,7 +9,8 @@ import {
   AlertTriangle, CheckCircle, Zap, Building2, ChevronDown, ChevronUp,
   Sun, Moon, LayoutGrid, LineChart as LineChartIcon, Timer, Coffee,
   Settings, Calendar, MapPin, ArrowUpRight, ArrowDownRight, Minus,
-  Store, BanknoteIcon, Briefcase, ArrowRight
+  Store, BanknoteIcon, Briefcase, ArrowRight, ShoppingCart, Factory,
+  Package, Truck, FlaskConical, Layers
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -1737,6 +1738,7 @@ export default function ProductivityDashboard() {
   const [showClosedStores, setShowClosedStores] = useState(false);
   const [showStoreSettings, setShowStoreSettings] = useState(false);
   const [showStaffSettings, setShowStaffSettings] = useState(false);
+  const [activeCategory, setActiveCategory] = useState('store'); // 'store' | 'online' | 'manufacturing'
   const [storeSettings, setStoreSettings] = useState(() => loadStoreSettings());
   const [storeSort, setStoreSort] = useState('default'); // 'default' | 'productivity' | 'sales' | 'person_hours'
 
@@ -1959,8 +1961,35 @@ export default function ProductivityDashboard() {
         <SummaryCard title="本日出勤延べ" value={summary.totalWorkers} unit="人" icon={Users} gradient="from-indigo-500 to-purple-600" description="退勤済み含む" index={4} />
       </div>
 
+      {/* カテゴリタブ（店舗・通販・製造） */}
+      <div className="flex gap-2 p-1 bg-gray-100 dark:bg-gray-800 rounded-2xl">
+        {[
+          { id: 'store', label: '店舗', icon: Building2, count: stores.length, color: 'text-red-800 dark:text-red-400', activeBg: 'bg-white dark:bg-gray-700', activeText: 'text-red-800 dark:text-red-400', desc: `${stores.filter(s => !s.is_closed).length}店舗営業中` },
+          { id: 'online', label: '通販', icon: ShoppingCart, count: null, color: 'text-blue-700 dark:text-blue-400', activeBg: 'bg-white dark:bg-gray-700', activeText: 'text-blue-700 dark:text-blue-400', desc: '受注処理・受電' },
+          { id: 'manufacturing', label: '製造（工房）', icon: Factory, count: null, color: 'text-amber-700 dark:text-amber-400', activeBg: 'bg-white dark:bg-gray-700', activeText: 'text-amber-700 dark:text-amber-400', desc: '北摂・加賀屋工場' },
+        ].map(({ id, label, icon: Icon, count, color, activeBg, activeText, desc }) => (
+          <button
+            key={id}
+            onClick={() => setActiveCategory(id)}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all ${
+              activeCategory === id
+                ? `${activeBg} shadow-md ${activeText} scale-[1.02]`
+                : 'text-muted-foreground hover:text-foreground hover:bg-white/60 dark:hover:bg-gray-700/60'
+            }`}
+          >
+            <Icon className="h-4 w-4" />
+            <span>{label}</span>
+            {count !== null && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                activeCategory === id ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' : 'bg-gray-200 dark:bg-gray-600 text-muted-foreground'
+              }`}>{count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* 目標達成状況バー */}
-      {openStores.length > 0 && (
+      {activeCategory === 'store' && openStores.length > 0 && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -2050,8 +2079,156 @@ export default function ProductivityDashboard() {
         </motion.div>
       )}
 
-      {/* 店舗別表示 */}
-      {viewMode === 'cards' ? (
+      {/* カテゴリ別コンテンツ */}
+      {activeCategory === 'online' && (
+        <motion.div
+          key="online"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-4"
+        >
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2.5 rounded-2xl bg-gradient-to-br from-blue-700 to-blue-500 shadow-lg">
+              <ShoppingCart className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black tracking-tight">通販 リアルタイム状況</h2>
+              <p className="text-xs text-muted-foreground">受注処理・受電</p>
+            </div>
+          </div>
+          {/* サマリーカード（手入力） */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: '本日受注件数', value: '-', unit: '件', icon: Package, color: 'from-blue-500 to-indigo-600' },
+              { label: '本日売上', value: '-', unit: '円', icon: DollarSign, color: 'from-indigo-500 to-purple-600' },
+              { label: '現在稼働中', value: '-', unit: '人', icon: Users, color: 'from-emerald-500 to-teal-600' },
+              { label: '人時生産性', value: '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
+            ].map(({ label, value, unit, icon: Icon, color }) => (
+              <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`p-1.5 rounded-lg bg-gradient-to-br ${color}`}>
+                    <Icon className="h-3.5 w-3.5 text-white" />
+                  </div>
+                  <span className="text-xs text-muted-foreground font-medium">{label}</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-muted-foreground">{value}</span>
+                  <span className="text-xs text-muted-foreground">{unit}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* 通販部門カード */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-blue-200 dark:border-blue-800 p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <ShoppingCart className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <h3 className="font-bold text-sm">通販部門</h3>
+              <span className="text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full font-semibold">受注処理・受電</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
+                <p className="text-xs text-muted-foreground mb-1">稼働スタッフ</p>
+                <p className="text-xl font-black text-blue-700 dark:text-blue-400">-<span className="text-sm font-semibold ml-1">人</span></p>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
+                <p className="text-xs text-muted-foreground mb-1">勤務時間合計</p>
+                <p className="text-xl font-black text-blue-700 dark:text-blue-400">-<span className="text-sm font-semibold ml-1">h</span></p>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-center py-6 text-muted-foreground">
+              <div className="text-center">
+                <Package className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                <p className="text-xs">売上データは手動入力に対応予定</p>
+                <p className="text-[10px] mt-1 opacity-60">ジョブカン連携スタッフ情報は自動取得</p>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {activeCategory === 'manufacturing' && (
+        <motion.div
+          key="manufacturing"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-4"
+        >
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2.5 rounded-2xl bg-gradient-to-br from-amber-700 to-amber-500 shadow-lg">
+              <Factory className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black tracking-tight">製造（工房）リアルタイム状況</h2>
+              <p className="text-xs text-muted-foreground">北摂工場・加賀屋工場</p>
+            </div>
+          </div>
+          {/* サマリーカード */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: '本日製造量', value: '-', unit: 'kg', icon: FlaskConical, color: 'from-amber-500 to-orange-500' },
+              { label: '本日売上', value: '-', unit: '円', icon: DollarSign, color: 'from-orange-500 to-red-500' },
+              { label: '現在稼働中', value: '-', unit: '人', icon: Users, color: 'from-emerald-500 to-teal-600' },
+              { label: '人時生産性', value: '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
+            ].map(({ label, value, unit, icon: Icon, color }) => (
+              <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`p-1.5 rounded-lg bg-gradient-to-br ${color}`}>
+                    <Icon className="h-3.5 w-3.5 text-white" />
+                  </div>
+                  <span className="text-xs text-muted-foreground font-medium">{label}</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-muted-foreground">{value}</span>
+                  <span className="text-xs text-muted-foreground">{unit}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* 工場カード */}
+          <div className="grid gap-4 md:grid-cols-2">
+            {[
+              { name: '北摂工場', color: 'amber', sections: ['袋詰め', '炊き場'] },
+              { name: '加賀屋工場', color: 'orange', sections: ['袋詰め', '炊き場'] },
+            ].map(({ name, color, sections }) => (
+              <div key={name} className={`bg-white dark:bg-gray-800 rounded-2xl border border-${color}-200 dark:border-${color}-800 p-5 shadow-sm`}>
+                <div className="flex items-center gap-2 mb-4">
+                  <Factory className={`h-4 w-4 text-${color}-600 dark:text-${color}-400`} />
+                  <h3 className="font-bold text-sm">{name}</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {sections.map(section => (
+                    <div key={section} className={`bg-${color}-50 dark:bg-${color}-900/20 rounded-xl p-3`}>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Layers className={`h-3.5 w-3.5 text-${color}-600 dark:text-${color}-400`} />
+                        <p className={`text-xs font-bold text-${color}-700 dark:text-${color}-300`}>{section}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-muted-foreground">稼働</span>
+                          <span className="font-semibold">- 人</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-muted-foreground">勤務時間</span>
+                          <span className="font-semibold">- h</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-center py-4 text-muted-foreground">
+                  <div className="text-center">
+                    <FlaskConical className="h-6 w-6 mx-auto mb-1 opacity-30" />
+                    <p className="text-[10px]">製造データは手動入力に対応予定</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
+      {/* 店舗別表示（店舗タブのみ表示） */}
+      {activeCategory === 'store' && viewMode === 'cards' ? (
         <div>
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h2 className="font-bold flex items-center gap-2 text-lg">
@@ -2160,15 +2337,15 @@ export default function ProductivityDashboard() {
             </>
           )}
         </div>
-      ) : (
+      ) : activeCategory === 'store' ? (
         <div className="space-y-4">
           <AllStoresHourlyChart stores={stores} />
           <StoreBarChart stores={stores} />
         </div>
-      )}
+      ) : null}
 
-      {/* 社員個人生産性セクション */}
-      {employeeProductivity.length > 0 && (
+      {/* 社員個人生産性セクション（店舗タブのみ） */}
+      {activeCategory === 'store' && employeeProductivity.length > 0 && (
         <div className="mt-6">
           <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
             <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-700 to-blue-500">

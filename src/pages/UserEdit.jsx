@@ -68,6 +68,11 @@ export default function UserEdit() {
         daily_hours_min: targetUser.daily_hours_min || '',
         daily_hours_max: targetUser.daily_hours_max || '',
         admin_memo: targetUser.admin_memo || '',
+        belongs_online: targetUser.belongs_online || false,
+        belongs_hokusetsu_bagging: targetUser.belongs_hokusetsu_bagging || false,
+        belongs_hokusetsu_cooking: targetUser.belongs_hokusetsu_cooking || false,
+        belongs_kagaya_bagging: targetUser.belongs_kagaya_bagging || false,
+        belongs_kagaya_cooking: targetUser.belongs_kagaya_cooking || false,
       });
     }
   }, [targetUser]);
@@ -98,6 +103,11 @@ export default function UserEdit() {
       full_name: editedUser.full_name,
       user_role: editedUser.user_role,
       store_ids: editedUser.store_ids,
+      belongs_online: editedUser.belongs_online || false,
+      belongs_hokusetsu_bagging: editedUser.belongs_hokusetsu_bagging || false,
+      belongs_hokusetsu_cooking: editedUser.belongs_hokusetsu_cooking || false,
+      belongs_kagaya_bagging: editedUser.belongs_kagaya_bagging || false,
+      belongs_kagaya_cooking: editedUser.belongs_kagaya_cooking || false,
       weekly_days_normal: editedUser.weekly_days_normal ? parseInt(editedUser.weekly_days_normal) : null,
       weekly_days_slow: editedUser.weekly_days_slow ? parseInt(editedUser.weekly_days_slow) : null,
       daily_hours_min: editedUser.daily_hours_min ? parseFloat(editedUser.daily_hours_min) : null,
@@ -447,27 +457,90 @@ export default function UserEdit() {
                   </div>
 
                   <div>
-                    <Label className="text-sm font-medium text-slate-700 mb-2 block">所属店舗 *</Label>
-                    <div className="space-y-2 border border-slate-200 rounded-lg p-3 max-h-40 overflow-y-auto">
-                      {stores.map((store) => (
-                        <label key={store.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-2 rounded">
-                          <input
-                            type="checkbox"
-                            checked={editedUser?.store_ids?.includes(store.id) || false}
-                            onChange={(e) => {
-                              const currentStoreIds = editedUser?.store_ids || [];
-                              if (e.target.checked) {
-                                setEditedUser({ ...editedUser, store_ids: [...currentStoreIds, store.id] });
-                              } else {
-                                setEditedUser({ ...editedUser, store_ids: currentStoreIds.filter(id => id !== store.id) });
-                              }
-                            }}
-                            className="w-4 h-4"
-                          />
-                          <span className="text-sm">{store.store_name}</span>
-                        </label>
+                    <Label className="text-sm font-medium text-slate-700 mb-2 block">所属先設定 *</Label>
+                    {/* 所属先タブ */}
+                    <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-3">
+                      {[
+                        { id: 'store', label: '店舗' },
+                        { id: 'online', label: '通販' },
+                        { id: 'manufacturing', label: '製造' },
+                      ].map(({ id, label }) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setEditedUser({ ...editedUser, _affiliationTab: id })}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                            (editedUser?._affiliationTab || 'store') === id
+                              ? 'bg-white shadow text-red-800'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          {label}
+                        </button>
                       ))}
                     </div>
+                    {/* 店舗タブ */}
+                    {(editedUser?._affiliationTab || 'store') === 'store' && (
+                      <div className="space-y-2 border border-slate-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+                        {stores.map((store) => (
+                          <label key={store.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-2 rounded">
+                            <input
+                              type="checkbox"
+                              checked={editedUser?.store_ids?.includes(store.id) || false}
+                              onChange={(e) => {
+                                const currentStoreIds = editedUser?.store_ids || [];
+                                if (e.target.checked) {
+                                  setEditedUser({ ...editedUser, store_ids: [...currentStoreIds, store.id] });
+                                } else {
+                                  setEditedUser({ ...editedUser, store_ids: currentStoreIds.filter(id => id !== store.id) });
+                                }
+                              }}
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm">{store.store_name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {/* 通販タブ */}
+                    {editedUser?._affiliationTab === 'online' && (
+                      <div className="border border-blue-200 rounded-lg p-3">
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-blue-50 p-2 rounded">
+                          <input
+                            type="checkbox"
+                            checked={editedUser?.belongs_online || false}
+                            onChange={(e) => setEditedUser({ ...editedUser, belongs_online: e.target.checked })}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm font-medium">通販部門（受注処理・受電）</span>
+                        </label>
+                        <p className="text-[10px] text-slate-400 mt-2 ml-2">通販部門に所属する場合はチェックしてください</p>
+                      </div>
+                    )}
+                    {/* 製造タブ */}
+                    {editedUser?._affiliationTab === 'manufacturing' && (
+                      <div className="border border-amber-200 rounded-lg p-3 space-y-3">
+                        {[
+                          { factory: '北摂工場', key: 'hokusetsu', sections: [{ label: '袋詰め', key: 'bagging' }, { label: '炊き場', key: 'cooking' }] },
+                          { factory: '加賀屋工場', key: 'kagaya', sections: [{ label: '袋詰め', key: 'bagging' }, { label: '炊き場', key: 'cooking' }] },
+                        ].map(({ factory, key, sections }) => (
+                          <div key={key}>
+                            <p className="text-xs font-bold text-amber-700 mb-1">{factory}</p>
+                            {sections.map(section => (
+                              <label key={section.key} className="flex items-center gap-2 cursor-pointer hover:bg-amber-50 p-2 rounded">
+                                <input
+                                  type="checkbox"
+                                  checked={editedUser?.[`belongs_${key}_${section.key}`] || false}
+                                  onChange={(e) => setEditedUser({ ...editedUser, [`belongs_${key}_${section.key}`]: e.target.checked })}
+                                  className="w-4 h-4"
+                                />
+                                <span className="text-sm">{section.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
