@@ -2238,8 +2238,11 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
   const minHour = minCandidates.length > 0 ? Math.min(...minCandidates) : businessHours.open;
   const safeMinHour = isFinite(minHour) ? minHour : businessHours.open;
 
-  // 売上がある最大時間帯
-  const maxSalesHour = salesHours.length > 0 ? Math.max(...salesHours) : (businessHours.close - 1);
+  // 売上がある最大時間帯（現在時刻以前のデータのみ対象 = 未来の売上データを除外）
+  // 前日のレジ締め後データが翌日の時間帯に混入するケースを防ぐため、
+  // currentHour を上限として売上時間帯を絞り込む
+  const salesHoursCapped = salesHours.filter(h => h <= currentHour);
+  const maxSalesHour = salesHoursCapped.length > 0 ? Math.max(...salesHoursCapped) : (businessHours.close - 1);
   const rawMaxHour = isFinite(maxSalesHour) ? maxSalesHour : businessHours.close - 1;
 
   // 最後の退勤時刻の時間帯（退勤済みスタッフがいる場合）
@@ -2248,7 +2251,7 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
 
   // 表示する最大時間帯を決定：
   // - 出勤者がいる間は閉店時刻を超えても表示し続ける
-  // - 最後の退勤時刻の時間帯 vs 売上がある最大時間帯 vs 現在時刻 の最大値を採用
+  // - 最後の退勤時刻の時間帯 vs 売上がある最大時間帯（現在時刻以前） vs 現在時刻 の最大値を採用
   const maxCandidates = [currentHour, rawMaxHour];
   if (lastClockOutHour !== null) maxCandidates.push(lastClockOutHour);
   const safeMaxHour = Math.max(...maxCandidates);
@@ -2264,9 +2267,18 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
       if (emp.status !== '勤務中' && emp.status !== '退勤済み' && emp.status !== '休憩中' && emp.status !== '退出中') return false;
       if (emp.clock_in_minutes === null || emp.clock_in_minutes === undefined) return false;
       const empStart = emp.clock_in_minutes;
-      const empEnd = (emp.status === '退勤済み' && emp.clock_out_minutes)
-        ? emp.clock_out_minutes
-        : currentMinutes;
+      let empEnd;
+      if (emp.status === '退勤済み') {
+        if (emp.clock_out_minutes !== null && emp.clock_out_minutes !== undefined) {
+          empEnd = emp.clock_out_minutes;
+        } else if (emp.work_hours > 0) {
+          empEnd = emp.clock_in_minutes + Math.round(emp.work_hours * 60) + (emp.break_minutes || 0);
+        } else {
+          empEnd = currentMinutes;
+        }
+      } else {
+        empEnd = currentMinutes;
+      }
       return empStart < slotEndMinutes && empEnd > slotStartMinutes;
     });
 
@@ -2298,12 +2310,25 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
       const empStart = emp.clock_in_minutes;
 
       // 終了時刻の決定
-      // - 退勤済み：退勤打刻時刻
+      // - 退勤済み：退勤打刻時刻（ない場合はwork_hoursから退勤時刻を逆算）
       // - 勤務中・休憩中：現在時刻（未来スロットの場合はスロット終了時刻）
       const effectiveCurrentMinutes = isFutureSlot ? slotEndMinutes : currentMinutes;
-      const empEnd = (emp.status === '退勤済み') && emp.clock_out_minutes
-        ? emp.clock_out_minutes
-        : effectiveCurrentMinutes;
+      let empEnd;
+      if (emp.status === '退勤済み') {
+        if (emp.clock_out_minutes !== null && emp.clock_out_minutes !== undefined) {
+          empEnd = emp.clock_out_minutes;
+        } else if (emp.clock_in_minutes !== null && emp.work_hours > 0) {
+          // clock_out_minutesがない場合はwork_hoursから退勤時刻を逆算
+          // work_hours = (clock_out - clock_in - break_minutes) / 60
+          // → clock_out = clock_in + work_hours * 60 + break_minutes
+          empEnd = emp.clock_in_minutes + Math.round(emp.work_hours * 60) + (emp.break_minutes || 0);
+        } else {
+          // work_hoursもない場合は現在時刻を使用（フォールバック）
+          empEnd = effectiveCurrentMinutes;
+        }
+      } else {
+        empEnd = effectiveCurrentMinutes;
+      }
       // 退出中（一時外出）は休憩中と同様に現在時刻まで在籍として扱う
 
       // この時間帯との重複時間（分）を計算
@@ -2344,7 +2369,8 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
       personHours += adjustedOverlapMinutes / 60;
     });
 
-    const hourlySales = hourly[hour] !== undefined ? hourly[hour] : 0;
+    // 現在時刻より未来の時間帯の売上は0として扱う（前日データの混入を防ぐ）
+    const hourlySales = (hour <= currentHour && hourly[hour] !== undefined) ? hourly[hour] : 0;
 
     // 閉店後の時間帯（補完データがある場合）は、閉店直前の時間帯の人時生産性をそのまま使用する
     // 閉店後はスタッフが退勤済みのため人時が0になるが、
