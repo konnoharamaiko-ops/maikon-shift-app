@@ -141,6 +141,9 @@ export default async function handler(req, res) {
     // 打刻区分を含む部分を探す
     const stampIdx = detailHtml.indexOf('打刻区分');
     const stampHtmlSection = stampIdx >= 0 ? detailHtml.substring(Math.max(0, stampIdx - 200), stampIdx + 3000) : 'NOT FOUND';
+    // change_adit_item[3]のHTMLを取得
+    const aditItem3Idx = detailHtml.indexOf('change_adit_item[3]');
+    const aditItem3Html = aditItem3Idx >= 0 ? detailHtml.substring(Math.max(0, aditItem3Idx - 50), aditItem3Idx + 600) : 'NOT FOUND';
     // tableタグを全て探す（xmlModeも試す）
     const $detailXml = cheerio.load(detailHtml, { xmlMode: true });
     const xmlTableCount = $detailXml('table').length;
@@ -162,6 +165,7 @@ export default async function handler(req, res) {
       xml_tables: xmlTables,
       tables: tables,
       stamp_section_html: stampHtmlSection.substring(0, 2000),
+      adit_item3_html: aditItem3Html.substring(0, 800),
       page_text_middle: pageText.substring(1000, 3000),
       // HTMLの中間部分
       html_middle: detailHtml.substring(15000, 17000),
