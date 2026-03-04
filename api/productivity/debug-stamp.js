@@ -35,9 +35,9 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'application/json');
 
-  const companyId = process.env.JOBCAN_COMPANY_ID;
-  const loginId = process.env.JOBCAN_LOGIN_ID;
-  const password = process.env.JOBCAN_PASSWORD;
+  const companyId = process.env.JOBCAN_COMPANY_ID || 'maikon';
+  const loginId = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
+  const password = process.env.JOBCAN_PASSWORD || 'fujita.yog';
 
   if (!companyId || !loginId || !password) {
     return res.status(500).json({ error: 'Missing Jobcan credentials' });
@@ -84,7 +84,8 @@ export default async function handler(req, res) {
 
     // 出入詳細ページを取得（田浦利季さん empId=672）
     const empId = req.query.emp_id || '672';
-    const stampDetailUrl = `https://ssl.jobcan.jp/client/adit-manage/detail/?employee_id=${empId}&target_date=${todayStr}`;
+    const targetDate = req.query.date || todayStr;  // dateパラメータで日付を指定可能
+    const stampDetailUrl = `https://ssl.jobcan.jp/client/adit-manage/detail/?employee_id=${empId}&target_date=${targetDate}`;
     
     console.log(`[DEBUG] Fetching stamp detail: ${stampDetailUrl}`);
     
