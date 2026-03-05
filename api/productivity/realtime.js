@@ -1172,7 +1172,7 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         const salesText = $hourly(cells[colIndex]).text().trim()
           .replace(/[\\¥,]/g, '')  // バックスラッシュ・円記号・カンマを除去
           .replace(/[^\d-]/g, ''); // 数字とマイナス以外を除去
-        const sales = parseInt(salesText) || 0;
+        const sales = Math.max(0, parseInt(salesText) || 0); // マイナス値は0に変換（前日レジ締め後データの混入防止）
         hourly[hour] = sales;
       });
 
@@ -1241,7 +1241,7 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         const salesText = $yesterday(cells[colIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
           .replace(/[^\d-]/g, '');
-        hourly[hour] = parseInt(salesText) || 0;
+        hourly[hour] = Math.max(0, parseInt(salesText) || 0); // マイナス値は0に変換
       });
 
       let ySales = 0;
@@ -1337,7 +1337,7 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         const salesText = $tomorrow(cells[colIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
           .replace(/[^\d-]/g, '');
-        const sales = parseInt(salesText) || 0;
+        const sales = Math.max(0, parseInt(salesText) || 0); // マイナス値は0に変換
         if (sales > 0) tomorrowHourlyAll[storeName][tomorrowHour] = sales;
       });
     }
@@ -2381,7 +2381,8 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
 
     // 時間帯別売上：hourlyデータをそのまま使用（レジ締め済みの時間帯も含む）
     // 前日データの除外はgetSalesDataForStore関数内のregijimeロジックで処理済み
-    const hourlySales = hourly[hour] !== undefined ? hourly[hour] : 0;
+    // マイナス値は必ず0に変換（翻日データ混入防止）
+    const hourlySales = Math.max(0, hourly[hour] !== undefined ? hourly[hour] : 0);
 
     // 閉店後の時間帯（補完データがある場合）は、閉店直前の時間帯の人時生産性をそのまま使用する
     // 閉店後はスタッフが退勤済みのため人時が0になるが、

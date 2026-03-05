@@ -39,18 +39,23 @@ export default function UserEdit() {
     enabled: !!userEmail,
   });
 
-  const { data: stores = [] } = useQuery({
-    queryKey: ['stores'],
-    queryFn: async () => {
-      const allStores = await fetchAll('Store');
-      // 通販（ONLINE）・製造（MFG-*）のレコードを除外し、通常の店舗のみ返す
-      const regularStores = allStores.filter(s => {
-        const code = (s.store_code || '').toUpperCase();
-        return code !== 'ONLINE' && !code.startsWith('MFG-');
-      });
-      return sortStoresByOrder(regularStores);
-    },
-  });
+  // ジョブカンの13店舗を定数で定義（Storeテーブルに登録されていなくても常に表示）
+  const JOBCAN_STORE_LIST = [
+    { id: 'store-10110', store_code: '10110', store_name: '田辺店' },
+    { id: 'store-10400', store_code: '10400', store_name: '大正店' },
+    { id: 'store-10500', store_code: '10500', store_name: '天下茶屋店' },
+    { id: 'store-10600', store_code: '10600', store_name: '天王寺店' },
+    { id: 'store-10800', store_code: '10800', store_name: 'アベノ店' },
+    { id: 'store-10900', store_code: '10900', store_name: '心斎橋店' },
+    { id: 'store-11010', store_code: '11010', store_name: 'かがや店' },
+    { id: 'store-11200', store_code: '11200', store_name: 'エキマル' },
+    { id: 'store-12000', store_code: '12000', store_name: '北摂店' },
+    { id: 'store-12200', store_code: '12200', store_name: '堤東店' },
+    { id: 'store-12300', store_code: '12300', store_name: 'イオン松原店' },
+    { id: 'store-12400', store_code: '12400', store_name: 'イオン守口店' },
+    { id: 'store-20000', store_code: '20000', store_name: '美和堂FC店' },
+  ];
+  const stores = JOBCAN_STORE_LIST;
 
   useEffect(() => {
     if (targetUser) {
