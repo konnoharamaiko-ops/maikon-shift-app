@@ -1763,12 +1763,28 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
               if (placeCode) clockInCode = placeCode;
               if (stampTime) realClockInTime = stampTime;
               console.log(`[JC] empId=${empId}: 出勤打刻を検出(行位置判定) (時刻:${stampTime}, 方法:${sm})`);
-            } else {
-              // 最後の行（または最後近く）は退勤として扱う
+            } else if (totalRows >= 4 && rowIdx === 1) {
+              // 4行以上の場合: 2行目は休憩開始として扱う
+              if (placeCode) breakStartCode = placeCode;
+              if (stampTime) realBreakStartTime = stampTime;
+              console.log(`[JC] empId=${empId}: 休憩開始打刻を検出(行位置判定) (時刻:${stampTime}, 方法:${sm})`);
+            } else if (totalRows >= 4 && rowIdx === totalRows - 2) {
+              // 4行以上の場合: 最後から2行目は休憩終了として扱う
+              if (placeCode) breakEndCode = placeCode;
+              if (stampTime) realBreakEndTime = stampTime;
+              console.log(`[JC] empId=${empId}: 休憩終了打刻を検出(行位置判定) (時刻:${stampTime}, 方法:${sm})`);
+            } else if (rowIdx === totalRows - 1) {
+              // 最後の行は退勤として扱う
               hasRealClockOut = true;
               if (placeCode) clockOutCode = placeCode;
               if (stampTime) realClockOutTime = stampTime;
               console.log(`[JC] empId=${empId}: 退勤打刻を検出(行位置判定) (時刻:${stampTime}, 方法:${sm})`);
+            } else {
+              // その他の行は退勤として扱う（フォールバック）
+              hasRealClockOut = true;
+              if (placeCode) clockOutCode = placeCode;
+              if (stampTime) realClockOutTime = stampTime;
+              console.log(`[JC] empId=${empId}: 退勤打刻を検出(行位置判定フォールバック) (時刻:${stampTime}, 方法:${sm})`);
             }
             return;
           }
@@ -2649,11 +2665,12 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
     // マイナス値は必ず0に変換（翻日データ混入防止）
     const hourlySales = Math.max(0, hourly[hour] !== undefined ? hourly[hour] : 0);
 
-    // 閉店後（営業外）の時間帯は人時を必ず0にする
-    // （閉店後に残業しているスタッフの時間は店舗の人時に含めない）
+    // 閉店後・開店前（営業外）の時間帯は人時を必ず0にする
+    // （営業時間外に出勤しているスタッフの時間は店舗の人時に含めない）
     // 売上がある場合は閉店直前の人時生産性を参考値として表示
     const isAfterClose = hour >= businessHours.close;
-    let finalPersonHours = isAfterClose ? 0 : personHours; // 閉店後は人時を必ず0に
+    const isBeforeOpen = hour < businessHours.open;
+    let finalPersonHours = (isAfterClose || isBeforeOpen) ? 0 : personHours; // 営業時間外は人時を必ず0に
     let hourlyProductivityValue;
 
     if (isAfterClose && hourlySales > 0) {
