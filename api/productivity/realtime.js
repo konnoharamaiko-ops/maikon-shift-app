@@ -260,50 +260,8 @@ async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, 
     }
   });
 
-  // attendance.storesも所属設定に従って再構築
-  if (Object.keys(appUserAffiliationMap).length > 0) {
-    const origStores = attendance.stores;
-    const newStores = {};
-    // 元の店舗データをコピー（所属設定対象外の店舗はそのまま）
-    Object.entries(origStores).forEach(([storeName, storeData]) => {
-      const filteredEmps = storeData.employees.filter(e => {
-        const aff = appUserAffiliationMap[e.name];
-        return !aff; // 所属設定があるスタッフは除外
-      });
-      if (filteredEmps.length > 0) {
-        const totalHours = filteredEmps.reduce((sum, e) => sum + (e.work_hours || 0), 0);
-        newStores[storeName] = {
-          ...storeData,
-          employees: filteredEmps,
-          total_employees: filteredEmps.length,
-          attended_employees: filteredEmps.filter(e => e.status !== '未出勤').length,
-          working_employees: filteredEmps.filter(e => e.status === '勤務中').length,
-          break_employees: filteredEmps.filter(e => e.status === '休憩中' || e.status === '退出中').length,
-          total_hours: parseFloat(totalHours.toFixed(1)),
-        };
-      } else if (newStores[storeName] === undefined) {
-        // 導入時に空の店舗データを保持（売上データ結合のため）
-        newStores[storeName] = { ...storeData, employees: [], total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0 };
-      }
-    });
-    // 所属設定対象スタッフを正しい所属先に追加
-    Object.entries(appUserAffiliationMap).forEach(([staffName, affiliation]) => {
-      const emp = allEmployees.find(e => e.name === staffName);
-      if (!emp) return;
-      const targetStore = affiliation.storeName;
-      if (!newStores[targetStore]) {
-        newStores[targetStore] = { store_name: targetStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
-      }
-      const updatedEmp = { ...emp, store_name: targetStore, app_affiliation: affiliation.category, app_affiliation_store: targetStore };
-      newStores[targetStore].employees.push(updatedEmp);
-      newStores[targetStore].total_employees++;
-      if (emp.status !== '未出勤') newStores[targetStore].attended_employees++;
-      if (emp.status === '勤務中') newStores[targetStore].working_employees++;
-      if (emp.status === '休憩中' || emp.status === '退出中') newStores[targetStore].break_employees++;
-      newStores[targetStore].total_hours = parseFloat((newStores[targetStore].total_hours + (emp.work_hours || 0)).toFixed(1));
-    });
-    attendance.stores = newStores;
-  }
+  // rebuildAttendanceWithServiceHoursはstoreEmployeesのstore_name（上書き済み）を使って正しく再集計する
+  // attendance.storesの後処理は不要（rebuildが全て担う）
   const adjustedAttendance = rebuildAttendanceWithServiceHours(attendance.stores, storeEmployees);
 
   const storeData = mergeStoreData(
