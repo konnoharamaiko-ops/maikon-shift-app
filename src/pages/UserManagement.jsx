@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, supabaseAdmin } from '@/api/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, UserPlus, Mail, Trash2, Users, Building2, Edit2, Key, History, User, AlertTriangle, Calendar, ClipboardList, FileSpreadsheet, Loader2, Database, Search, ShoppingCart, Factory } from 'lucide-react';
+import { Shield, UserPlus, Mail, Trash2, Users, Building2, Edit2, Key, History, User, AlertTriangle, Calendar, ClipboardList, FileSpreadsheet, Loader2, Database, Search, ShoppingCart, Factory, Briefcase } from 'lucide-react';
 import ExportButton from '@/components/export/ExportButton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -144,6 +144,7 @@ export default function UserManagement() {
     if (selectedStoreFilter === 'manufacturing') return u.belongs_hokusetsu_bagging === true || u.belongs_hokusetsu_cooking === true || u.belongs_kagaya_bagging === true || u.belongs_kagaya_cooking === true;
     if (selectedStoreFilter === 'manufacturing_hokusetsu') return u.belongs_hokusetsu_bagging === true || u.belongs_hokusetsu_cooking === true;
     if (selectedStoreFilter === 'manufacturing_kagaya') return u.belongs_kagaya_bagging === true || u.belongs_kagaya_cooking === true;
+    if (selectedStoreFilter === 'planning') return u.belongs_planning === true;
     return u.store_ids?.includes(selectedStoreFilter);
   });
 
@@ -693,6 +694,11 @@ export default function UserManagement() {
                   <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />加賀屋
                 </span>
               )}
+              {user?.belongs_planning && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-purple-100 text-purple-600 rounded-full flex items-center gap-0.5">
+                  <Briefcase className="w-2 h-2 sm:w-2.5 sm:h-2.5" />企画部
+                </span>
+              )}
             </div>
           </div>
         </Link>
@@ -1091,6 +1097,7 @@ export default function UserManagement() {
                   <SelectItem value="manufacturing"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />製造（全工場）</span></SelectItem>
                   <SelectItem value="manufacturing_hokusetsu"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />北摂工場</span></SelectItem>
                   <SelectItem value="manufacturing_kagaya"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />加賀屋工場</span></SelectItem>
+                  <SelectItem value="planning"><span className="flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5 text-purple-500" />企画部</span></SelectItem>
                   {sortStoresByOrder(stores).map(store => (
                     <SelectItem key={store.id} value={store.id}>
                       {store.store_name}

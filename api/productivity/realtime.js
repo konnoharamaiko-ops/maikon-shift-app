@@ -227,22 +227,83 @@ export default async function handler(req, res) {
  * handlerから分離し、バックグラウンド再検証でも尌用できるようにする
  */
 async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings) {
-  const [salesResult, attendanceResult, supabaseSettingsResult, staffMasterResult] = await Promise.allSettled([
+  const [salesResult, attendanceResult, supabaseSettingsResult, staffMasterResult, appUsersResult] = await Promise.allSettled([
     fetchTempoVisorAllData(tempovisorUser, tempovisorPass),
     fetchJobcanAttendance(jobcanCompany, jobcanUser, jobcanPass),
     fetchStoreSettings(),
     fetchStaffMaster(),
+    fetchAppUsers(),
   ]);
 
   const salesData = salesResult.status === 'fulfilled' ? salesResult.value : { stores: [], hourly: {}, yesterdayStores: [], yesterdayHourly: {} };
   const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : { stores: {}, employees: [] };
   const supabaseSettings = supabaseSettingsResult.status === 'fulfilled' ? supabaseSettingsResult.value : {};
   const staffMaster = staffMasterResult.status === 'fulfilled' ? staffMasterResult.value : [];
+  const appUsers = appUsersResult.status === 'fulfilled' ? appUsersResult.value : [];
+  const appUserAffiliationMap = buildAppUserAffiliationMap(appUsers);
+  console.log(`[AppUsers] Affiliation map: ${JSON.stringify(appUserAffiliationMap)}`);
 
   const storeSettings = buildStoreSettings(clientStoreSettings, supabaseSettings);
 
   const allEmployees = attendance.employees || [];
   const { storeEmployees, employeeProductivity } = applyEmployeeServiceHours(allEmployees, staffMaster);
+
+  // アプリ内所属設定に基づいてstoreEmployeesのstore_nameを上書き
+  // belongs_planning/online/manufacturingが登録されている場合は打刻場所に関わらずその所属に振り分け
+  storeEmployees.forEach(emp => {
+    const affiliation = appUserAffiliationMap[emp.name] || null;
+    if (affiliation) {
+      emp.app_affiliation = affiliation.category;
+      emp.app_affiliation_store = affiliation.storeName;
+      // store_nameを所属先に上書き
+      emp.store_name = affiliation.storeName;
+    }
+  });
+
+  // attendance.storesも所属設定に従って再構築
+  if (Object.keys(appUserAffiliationMap).length > 0) {
+    const origStores = attendance.stores;
+    const newStores = {};
+    // 元の店舗データをコピー（所属設定対象外の店舗はそのまま）
+    Object.entries(origStores).forEach(([storeName, storeData]) => {
+      const filteredEmps = storeData.employees.filter(e => {
+        const aff = appUserAffiliationMap[e.name];
+        return !aff; // 所属設定があるスタッフは除外
+      });
+      if (filteredEmps.length > 0) {
+        const totalHours = filteredEmps.reduce((sum, e) => sum + (e.work_hours || 0), 0);
+        newStores[storeName] = {
+          ...storeData,
+          employees: filteredEmps,
+          total_employees: filteredEmps.length,
+          attended_employees: filteredEmps.filter(e => e.status !== '未出勤').length,
+          working_employees: filteredEmps.filter(e => e.status === '勤務中').length,
+          break_employees: filteredEmps.filter(e => e.status === '休憩中' || e.status === '退出中').length,
+          total_hours: parseFloat(totalHours.toFixed(1)),
+        };
+      } else if (newStores[storeName] === undefined) {
+        // 導入時に空の店舗データを保持（売上データ結合のため）
+        newStores[storeName] = { ...storeData, employees: [], total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0 };
+      }
+    });
+    // 所属設定対象スタッフを正しい所属先に追加
+    Object.entries(appUserAffiliationMap).forEach(([staffName, affiliation]) => {
+      const emp = allEmployees.find(e => e.name === staffName);
+      if (!emp) return;
+      const targetStore = affiliation.storeName;
+      if (!newStores[targetStore]) {
+        newStores[targetStore] = { store_name: targetStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
+      }
+      const updatedEmp = { ...emp, store_name: targetStore, app_affiliation: affiliation.category, app_affiliation_store: targetStore };
+      newStores[targetStore].employees.push(updatedEmp);
+      newStores[targetStore].total_employees++;
+      if (emp.status !== '未出勤') newStores[targetStore].attended_employees++;
+      if (emp.status === '勤務中') newStores[targetStore].working_employees++;
+      if (emp.status === '休憩中' || emp.status === '退出中') newStores[targetStore].break_employees++;
+      newStores[targetStore].total_hours = parseFloat((newStores[targetStore].total_hours + (emp.work_hours || 0)).toFixed(1));
+    });
+    attendance.stores = newStores;
+  }
   const adjustedAttendance = rebuildAttendanceWithServiceHours(attendance.stores, storeEmployees);
 
   const storeData = mergeStoreData(
@@ -387,6 +448,68 @@ async function fetchStoreSettings() {
     console.warn('[StoreSettings] Error fetching store settings:', err.message);
     return {};
   }
+}
+
+/**
+ * SupabaseのUserテーブルからアプリ内所属設定を取得
+ * belongs_online, belongs_planning, belongs_hokusetsu_*, belongs_kagaya_* フィールドを使用
+ */
+async function fetchAppUsers() {
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    console.warn('[AppUsers] Supabase credentials not found');
+    return [];
+  }
+
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/User?select=full_name,belongs_online,belongs_planning,belongs_hokusetsu_bagging,belongs_hokusetsu_cooking,belongs_kagaya_bagging,belongs_kagaya_cooking`,
+      {
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      console.warn('[AppUsers] Supabase fetch failed:', response.status);
+      return [];
+    }
+
+    const users = await response.json();
+    console.log(`[AppUsers] Fetched ${users.length} user records`);
+    return users;
+  } catch (err) {
+    console.warn('[AppUsers] Error fetching app users:', err.message);
+    return [];
+  }
+}
+
+/**
+ * アプリ内所属設定からスタッフ名→所属カテゴリのマップを構築
+ * カテゴリ: 'online'(通販) | 'planning'(企画部) | 'manufacturing_hokusetsu'(北摂工場) | 'manufacturing_kagaya'(加賀屋工場)
+ */
+function buildAppUserAffiliationMap(appUsers) {
+  const map = {}; // staffName -> { category: string, storeName: string }
+  appUsers.forEach(u => {
+    if (!u.full_name) return;
+    const name = u.full_name.trim();
+    if (u.belongs_planning) {
+      map[name] = { category: 'planning', storeName: '企画部' };
+    } else if (u.belongs_online) {
+      map[name] = { category: 'online', storeName: '通販部' };
+    } else if (u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking) {
+      map[name] = { category: 'manufacturing', storeName: '北摂工場' };
+    } else if (u.belongs_kagaya_bagging || u.belongs_kagaya_cooking) {
+      map[name] = { category: 'manufacturing', storeName: '加賀屋工場' };
+    }
+    // 店舗所属（store_ids）の場合はマップに追加しない（打刻場所優先のため）
+  });
+  return map;
 }
 
 /**
@@ -1880,16 +2003,16 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
     // 振り分け先の店舗を決定
     // 優先順位: 出勤打刻場所 > 退勤打刻場所 > 所属部署コード
-    // 退勤後も出勤時の打刻場所を維持する（所属店舗に戻らないようにする）
+    // アプリ内所属設定（belongs_planning/online/manufacturing）による上書きは fetchAndCacheData 内の後処理で対応
     const stampDetail = staffId ? stampDetailMap[staffId] : null;
     const clockInStoreName = stampDetail?.clockInCode ? STORE_DEPT_MAP[stampDetail.clockInCode] : null;
     const clockOutStoreName2 = stampDetail?.clockOutCode ? STORE_DEPT_MAP[stampDetail.clockOutCode] : null;
-    // 退勤済みの場合: 出勤打刻場所 > 退勤打刻場所 > stampStoreName > 所属店舗
-    // 勤務中・休憩中の場合: 出勤打刻場所（stampStoreName）> 所属店舗
     let assignedStore;
     if (status === '退勤済み') {
+      // 退勤済みの場合: 出勤打刻場所 > 退勤打刻場所 > stampStoreName > 所属店舗
       assignedStore = clockInStoreName || clockOutStoreName2 || stampStoreName || deptStoreName;
     } else {
+      // 勤務中・休憩中の場合: 出勤打刻場所（stampStoreName）> 所属店舗
       assignedStore = stampStoreName || deptStoreName;
     }
 
@@ -1911,10 +2034,16 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const hasCrossStoreBreak = empBreakStartStore && empBreakEndStore && empBreakStartStore !== empBreakEndStore;
 
     // 往復移動の判定条件:
-    // 休憩終了場所 = 出勤打刻場所（元の店舗に戻るパターン）
+    // 休憩終了場所 = 出勤打刻場所 OR 退勤打刻場所（元の店舗に戻るパターン）
     const empClockInStore = stampDetail?.clockInCode ? STORE_DEPT_MAP[stampDetail.clockInCode] : null;
-    const isRoundTripTransfer = hasCrossStoreBreak && empBreakEndStore && empClockInStore &&
-      empBreakEndStore === empClockInStore;
+    const empClockOutStore2 = stampDetail?.clockOutCode ? STORE_DEPT_MAP[stampDetail.clockOutCode] : null;
+    // 往復移動の判定:
+    // - 休憩終了場所 = 出勤打刻場所 (田辺→企画部→田辺 のケース)
+    // - 休憩終了場所 = 退勤打刻場所 (出勤コードが取れない場合のフォールバック)
+    // - 休憩終了場所 = 休憩開始場所の所属店舗 (assignedStoreと同じ)
+    const returnStore = empClockInStore || empClockOutStore2 || assignedStore;
+    const isRoundTripTransfer = hasCrossStoreBreak && empBreakEndStore && returnStore &&
+      empBreakEndStore === returnStore;
 
     if (hasCrossStoreBreak) {
       if (status === '退出中' || status === '休憩中') {

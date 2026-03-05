@@ -79,6 +79,7 @@ export default function UserEdit() {
         daily_hours_max: targetUser.daily_hours_max || '',
         admin_memo: targetUser.admin_memo || '',
         belongs_online: targetUser.belongs_online || false,
+        belongs_planning: targetUser.belongs_planning || false,
         belongs_hokusetsu_bagging: targetUser.belongs_hokusetsu_bagging || false,
         belongs_hokusetsu_cooking: targetUser.belongs_hokusetsu_cooking || false,
         belongs_kagaya_bagging: targetUser.belongs_kagaya_bagging || false,
@@ -114,6 +115,7 @@ export default function UserEdit() {
       user_role: editedUser.user_role,
       store_ids: editedUser.store_ids,
       belongs_online: editedUser.belongs_online || false,
+      belongs_planning: editedUser.belongs_planning || false,
       belongs_hokusetsu_bagging: editedUser.belongs_hokusetsu_bagging || false,
       belongs_hokusetsu_cooking: editedUser.belongs_hokusetsu_cooking || false,
       belongs_kagaya_bagging: editedUser.belongs_kagaya_bagging || false,
@@ -474,6 +476,7 @@ export default function UserEdit() {
                         { id: 'store', label: '店舗' },
                         { id: 'online', label: '通販' },
                         { id: 'manufacturing', label: '製造' },
+                        { id: 'planning', label: '企画部' },
                       ].map(({ id, label }) => (
                         <button
                           key={id}
@@ -525,6 +528,21 @@ export default function UserEdit() {
                           <span className="text-sm font-medium">通販部門（受注処理・受電）</span>
                         </label>
                         <p className="text-[10px] text-slate-400 mt-2 ml-2">通販部門に所属する場合はチェックしてください</p>
+                      </div>
+                    )}
+                    {/* 企画部タブ */}
+                    {editedUser?._affiliationTab === 'planning' && (
+                      <div className="border border-purple-200 rounded-lg p-3">
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-purple-50 p-2 rounded">
+                          <input
+                            type="checkbox"
+                            checked={editedUser?.belongs_planning || false}
+                            onChange={(e) => setEditedUser({ ...editedUser, belongs_planning: e.target.checked })}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm font-medium">企画部（加賀屋企画部）</span>
+                        </label>
+                        <p className="text-[10px] text-slate-400 mt-2 ml-2">企画部に所属する場合はチェックしてください</p>
                       </div>
                     )}
                     {/* 製造タブ */}
