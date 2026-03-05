@@ -2418,7 +2418,12 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
     const closeMinutes = closeHour * 60;
     // 閉店後判定：「全員退勤済」かつ「最後の退勤時刻を過ぎている」かつ「閉店時刻を過ぎている」場合のみグレーアウト
     // 閉店時刻前は絶対にグレーアウトしない（API取得不安定による誤判定を防止）
-    const isAfterClose = !hasWorkingStaff && lastClockOutMinutes !== null && nowMinutes > lastClockOutMinutes && nowMinutes >= closeMinutes;
+    // 深夜0時を跨いだ場合（nowMinutesが開店時刻未満）も閉店後と判定する
+    const isPastMidnight = nowMinutes < (businessHours.open || 9) * 60; // 深夜0時を過ぎた（開店時刻前の深夜帯）
+    const isAfterClose = !hasWorkingStaff && lastClockOutMinutes !== null && (
+      (nowMinutes > lastClockOutMinutes && nowMinutes >= closeMinutes) || // 門店後の当日深夜
+      isPastMidnight // 深夜0時を過ぎた翔日早朝
+    );
     const isDuringBusiness = !isBeforeOpen && !isAfterClose;
 
     // 売上データの選択：
@@ -2458,7 +2463,8 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       currentHour,
       currentMinutes,
       firstClockInMinutes,   // 最初の出勤時刻（分単位）→ 表示開始時間帯の決定に使用
-      lastClockOutMinutes    // 最後の退勤時刻（分単位）→ 表示終了時間帯の決定に使用
+      lastClockOutMinutes,   // 最後の退勤時刻（分単位）→ 表示終了時間帯の決定に使用
+      isAfterClose           // 閉店後（深夜含む）フラグ：全スロットの人時を0にする
     );
 
     const todaySales = salesInfo.today_sales || 0;
@@ -2515,7 +2521,7 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
  * @param {number} currentMinutes - 現在時刻（分単位）
  * @returns {Array} 時間帯別データ配列
  */
-function calculateHourlyProductivity(employees, hourly, businessHours, currentHour, currentMinutes, firstClockInMinutes, lastClockOutMinutes) {
+function calculateHourlyProductivity(employees, hourly, businessHours, currentHour, currentMinutes, firstClockInMinutes, lastClockOutMinutes, storeIsAfterClose = false) {
   const result = [];
 
   // 対象時間帯を決定：売上がある時間帯（動的拡張）
@@ -2670,7 +2676,8 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
     // 売上がある場合は閉店直前の人時生産性を参考値として表示
     const isAfterClose = hour >= businessHours.close;
     const isBeforeOpen = hour < businessHours.open;
-    let finalPersonHours = (isAfterClose || isBeforeOpen) ? 0 : personHours; // 営業時間外は人時を必ず0に
+    // storeIsAfterClose：深夜0時跨ぎの閉店後判定（全スロットの人時を0にする）
+    let finalPersonHours = (isAfterClose || isBeforeOpen || storeIsAfterClose) ? 0 : personHours; // 営業時間外・閉店後は人時を必ず0に
     let hourlyProductivityValue;
 
     if (isAfterClose && hourlySales > 0) {
