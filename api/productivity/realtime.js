@@ -7,26 +7,52 @@
 import * as cheerio from 'cheerio';
 import iconv from 'iconv-lite';
 
-// 部署コードと店舗名のマッピング（ジョブカン部署コード → 店舗名）
+// 部署コードと店舗名のマッピング（ジョブカン部署コード → 店舗名/部署名）
+// ジョブカン管理画面のグループ設定CSVから取得した全部署コード
 const STORE_DEPT_MAP = {
+  // ===== 店舗グループ（店1018）=====
   '10110': '田辺店',
+  '10200': '南田辺店',       // 閉店済み
+  '10300': '船場店',         // 閉店済み
   '10400': '大正店',
   '10500': '天下茶屋店',
   '10600': '天王寺店',
+  '10700': '千林店',         // 閉店済み
   '10800': 'アベノ店',
   '10900': '心斎橋店',
   '11010': 'かがや店',
-  '11200': 'エキマル',
   '12000': '北摂店',
   '12200': '堺東店',
   '12300': 'イオン松原店',
   '12400': 'イオン守口店',
   '20000': '美和堂FC店',
+  // ===== 通販・企画・特販グループ（通企総0919）=====
+  '11021': '企画部',
+  '11022': '通販部',
+  '11025': '特販部',
+  // ===== 工房・工場グループ（工房0918）=====
+  '11012': 'かがや工場',
+  '10210': '南田辺工房',     // 閉店済み
+  '11700': '都島工場',
+  '11900': '鶴橋工房',
+  '12010': '北摂工場',
+  // ===== 駅催事出張グループ =====
+  '11200': 'エキマル',
+  '11100': '高槻店',         // 閉店済み
+  '11400': '茨木店',         // 閉店済み
+  '11800': '天満',
+  '12100': 'エキマル新大阪',
+  // ===== QCグループ =====
+  '11001': '業績アップ(QC200)',
+  '11002': '業績アップ(QC800)',
+  '90000': '有給休暇',
+  '11000': 'QC',
 };
 
 // 打刻場所名 → システム店舗名のマッピング
 // ジョブカンの打刻場所名とシステム上の店舗名が異なる場合に使用
 const LOCATION_TO_STORE_MAP = {
+  // ===== 店舗 =====
   'かがや店':           'かがや店',
   'アベノ店':           'アベノ店',
   '美和堂福島':         '美和堂FC店',
@@ -39,10 +65,23 @@ const LOCATION_TO_STORE_MAP = {
   '天下茶屋店':         '天下茶屋店',
   '堺東店':             '堺東店',
   '大正店':             '大正店',
+  // ===== 駅催事・エキマル =====
   'エキマル':           'エキマル',
   'エキマルシェ':       'エキマル',
-  '駅丸':               'エキマル',   // 駅催事出張->駅丸 の場合
-  '駅催事出張':         'エキマル',   // 駅催事出張のみの場合
+  '駅丸':               'エキマル',
+  '駅催事出張':         'エキマル',
+  'エキマル新大阪':     'エキマル新大阪',
+  '天満':               '天満',
+  // ===== 通販・企画・特販 =====
+  '企画部':             '企画部',
+  '通販部':             '通販部',
+  '特販部':             '特販部',
+  // ===== 工房・工場 =====
+  'かがや工場':         'かがや工場',
+  '北摂工場':           '北摂工場',
+  '鶴橋工房':           '鶴橋工房',
+  '都島工場':           '都島工場',
+  '南田辺工房':         '南田辺工房',
 };
 
 // TempoVisorの店舗名 → TempoVisor店舗コードのマッピング
@@ -1606,6 +1645,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       let hasAutoClockOut = false; // 自動退出打刻が存在するか
       let realClockInTime = null;   // 実際の出勤打刻時刻
       let realClockOutTime = null;  // 実際の退勤打刻時刻
+      let realBreakStartTime = null; // 休憩開始打刻時刻
+      let realBreakEndTime = null;   // 休憩終了打刻時刻
       if (stampRows.length > 0) {
         let hasRealClockOut = false;  // 実際の退勤打刻があるか
         let hasOnlyAutoClockOut = false;  // 自動退出打刻のみか
@@ -1658,8 +1699,10 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
             console.log(`[JC] empId=${empId}: 出勤打刻を検出 (時刻:${stampTime}, 方法:${sm})`);
           } else if (stampType === '休憩開始' || stampType === '3') {
             if (placeCode) breakStartCode = placeCode;
+            if (stampTime) realBreakStartTime = stampTime;
           } else if (stampType === '休憩終了' || stampType === '4') {
             if (placeCode) breakEndCode = placeCode;
+            if (stampTime) realBreakEndTime = stampTime;
           } else if (stampType === '退勤' || stampType === '退室' || stampType === '2') {
             hasRealClockOut = true;
             if (placeCode) clockOutCode = placeCode;
@@ -1727,14 +1770,14 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
         }
       }
 
-      return { empId, stampCode: clockInCode, clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut, realClockInTime: realClockInTime || null, realClockOutTime: realClockOutTime || null };
+      return { empId, stampCode: clockInCode, clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut, realClockInTime: realClockInTime || null, realClockOutTime: realClockOutTime || null, realBreakStartTime: realBreakStartTime || null, realBreakEndTime: realBreakEndTime || null };
     })
   );
   for (const result of allStampResults) {
     if (result.status === 'fulfilled') {
       const { empId, stampCode, clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut } = result.value;
       if (stampCode) stampPlaceMap[empId] = stampCode;
-      stampDetailMap[empId] = { clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut: !!hasAutoClockOut, realClockInTime: result.value.realClockInTime || null, realClockOutTime: result.value.realClockOutTime || null };
+      stampDetailMap[empId] = { clockInCode, breakStartCode, breakEndCode, clockOutCode, hasAutoClockOut: !!hasAutoClockOut, realClockInTime: result.value.realClockInTime || null, realClockOutTime: result.value.realClockOutTime || null, realBreakStartTime: result.value.realBreakStartTime || null, realBreakEndTime: result.value.realBreakEndTime || null };
     }
   }
   console.log(`[JC] 打刻場所マッピング取得: ${Object.keys(stampPlaceMap).length}件`);
@@ -1856,6 +1899,10 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     const empBreakEndCode = stampDetail?.breakEndCode || null;
     const empBreakStartStore = empBreakStartCode ? STORE_DEPT_MAP[empBreakStartCode] : null;
     const empBreakEndStore = empBreakEndCode ? STORE_DEPT_MAP[empBreakEndCode] : null;
+    const empBreakStartTime = stampDetail?.realBreakStartTime || null;
+    const empBreakEndTime = stampDetail?.realBreakEndTime || null;
+    const empBreakStartMinutes = empBreakStartTime ? parseTimeToMinutes(empBreakStartTime) : null;
+    const empBreakEndMinutes = empBreakEndTime ? parseTimeToMinutes(empBreakEndTime) : null;
 
     // 店舗間移動の判定条件:
     // 1. 休憩開始打刻場所が存在する
@@ -1863,15 +1910,20 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     // 3. 休憩開始場所 ≠ 休憩終了場所
     const hasCrossStoreBreak = empBreakStartStore && empBreakEndStore && empBreakStartStore !== empBreakEndStore;
 
+    // 往復移動の判定条件:
+    // 休憩終了場所 = 出勤打刻場所（元の店舗に戻るパターン）
+    const empClockInStore = stampDetail?.clockInCode ? STORE_DEPT_MAP[stampDetail.clockInCode] : null;
+    const isRoundTripTransfer = hasCrossStoreBreak && empBreakEndStore && empClockInStore &&
+      empBreakEndStore === empClockInStore;
+
     if (hasCrossStoreBreak) {
-      // 店舗間移動あり
       if (status === '退出中' || status === '休憩中') {
         // 現在休憩中（まだ移動先に到着していない）
         // 元店舗（休憩開始場所）での退勤済みとして扱う
-        const breakStartTime = clockOut; // 退出中の場合、clockOutが休憩開始時刻
-        const breakStartMinutes = parseTimeToMinutes(breakStartTime);
-        const workMinutesBeforeBreak = (breakStartMinutes !== null && clockInMinutes !== null)
-          ? Math.max(0, breakStartMinutes - clockInMinutes)
+        const breakStartTime = empBreakStartTime || clockOut;
+        const breakStartMinutes2 = empBreakStartMinutes || parseTimeToMinutes(breakStartTime);
+        const workMinutesBeforeBreak = (breakStartMinutes2 !== null && clockInMinutes !== null)
+          ? Math.max(0, breakStartMinutes2 - clockInMinutes)
           : netMinutes;
 
         const empOrigin = {
@@ -1880,13 +1932,13 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           dept_store_name: deptStoreName,
           store_name: empBreakStartStore,
           clock_location: clockLocation,
-          status: '退勤済み',  // 元店舗では退勤済み扱い
+          status: '退勤済み',
           clock_in: clockIn || null,
-          clock_out: breakStartTime || null,  // 休憩開始時刻を退勤時刻として表示
+          clock_out: breakStartTime || null,
           break_start: null,
           had_break: false,
           clock_in_minutes: clockInMinutes,
-          clock_out_minutes: breakStartMinutes,
+          clock_out_minutes: breakStartMinutes2,
           work_hours: parseFloat((workMinutesBeforeBreak / 60).toFixed(2)),
           break_minutes: 0,
           work_time_text: '',
@@ -1896,7 +1948,6 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           transfer_from: empBreakStartStore,
         };
 
-        // 元店舗に集計
         if (!storeAttendance[empBreakStartStore]) {
           storeAttendance[empBreakStartStore] = { store_name: empBreakStartStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
         }
@@ -1910,12 +1961,139 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
         console.log(`[JC] 店舗間移動(休憩中): ${staffName} ${empBreakStartStore}→${empBreakEndStore}(移動中)`);
         continue;
 
-      } else {
-        // 休憩終了後（移動先店舗で勤務中または退勤済み）
-        // 元店舗レコードと移動先店舗レコードの2件を生成
+      } else if (isRoundTripTransfer) {
+        // ===== 往復移動（A店→B部署→A店）=====
+        // 休憩開始時刻と休憩終了時刻を使って正確に3分割
+        //
+        // 分割方针:
+        //   元店舗前半: 出勤→休憩開始
+        //   中間部署: 休憩開始→休憩終了
+        //   元店舗後半: 休憩終了→退勤
 
-        // 元店舗の勤務時間: 全体勤務時間から移動先勤務時間を引いた分
-        // 簡略化: 休憩時間分を元店舗に割り当て、残りを移動先に割り当て
+        const bsMin = empBreakStartMinutes; // 休憩開始分
+        const beMin = empBreakEndMinutes;   // 休憩終了分
+
+        // 元店舗前半時間
+        const originPreMinutes = (bsMin !== null && clockInMinutes !== null)
+          ? Math.max(0, bsMin - clockInMinutes)
+          : Math.round(netHours * 60 * 0.5);
+        // 中間部署時間
+        const midMinutes = (bsMin !== null && beMin !== null)
+          ? Math.max(0, beMin - bsMin)
+          : breakMinutes;
+        // 元店舗後半時間
+        const originPostMinutes = (beMin !== null && clockOutMinutes !== null)
+          ? Math.max(0, clockOutMinutes - beMin)
+          : Math.max(0, Math.round(netHours * 60) - originPreMinutes - midMinutes);
+
+        const originPreHours = parseFloat((originPreMinutes / 60).toFixed(2));
+        const midHours = parseFloat((midMinutes / 60).toFixed(2));
+        const originPostHours = parseFloat((originPostMinutes / 60).toFixed(2));
+
+        // 元店舗前半レコード
+        const empOriginPre = {
+          name: staffName,
+          dept_code: deptCode,
+          dept_store_name: deptStoreName,
+          store_name: empBreakStartStore,
+          clock_location: clockLocation,
+          status: '退勤済み',
+          clock_in: clockIn || null,
+          clock_out: empBreakStartTime || null,
+          break_start: null,
+          had_break: false,
+          clock_in_minutes: clockInMinutes,
+          clock_out_minutes: bsMin,
+          work_hours: originPreHours,
+          break_minutes: 0,
+          work_time_text: '',
+          break_time_text: '',
+          cross_store_transfer: true,
+          transfer_to: empBreakEndStore,
+          transfer_from: empBreakStartStore,
+          round_trip_segment: 'pre',
+        };
+
+        // 中間部署レコード
+        const empMid = {
+          name: staffName,
+          dept_code: deptCode,
+          dept_store_name: deptStoreName,
+          store_name: empBreakEndStore,  // 休憩場所（中間部署）
+          clock_location: clockLocation,
+          status: '退勤済み',
+          clock_in: empBreakStartTime || null,
+          clock_out: empBreakEndTime || null,
+          break_start: null,
+          had_break: false,
+          clock_in_minutes: bsMin,
+          clock_out_minutes: beMin,
+          work_hours: midHours,
+          break_minutes: 0,
+          work_time_text: '',
+          break_time_text: '',
+          cross_store_transfer: true,
+          transfer_to: empBreakStartStore,
+          transfer_from: empBreakEndStore,
+          round_trip_segment: 'mid',
+          is_transfer_arrival: true,
+        };
+
+        // 元店舗後半レコード
+        const empOriginPost = {
+          name: staffName,
+          dept_code: deptCode,
+          dept_store_name: deptStoreName,
+          store_name: empBreakStartStore,
+          clock_location: clockLocation,
+          status: status,
+          clock_in: empBreakEndTime || null,
+          clock_out: (status === '退勤済み') ? (clockOut || null) : null,
+          break_start: null,
+          had_break: false,
+          clock_in_minutes: beMin,
+          clock_out_minutes: clockOutMinutes,
+          work_hours: originPostHours,
+          break_minutes: 0,
+          work_time_text: '',
+          break_time_text: '',
+          cross_store_transfer: true,
+          transfer_to: empBreakEndStore,
+          transfer_from: empBreakStartStore,
+          round_trip_segment: 'post',
+          is_transfer_arrival: true,
+        };
+
+        // 元店舗に集計（前半 + 後半を合算）
+        if (!storeAttendance[empBreakStartStore]) {
+          storeAttendance[empBreakStartStore] = { store_name: empBreakStartStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
+        }
+        const originStoreRT = storeAttendance[empBreakStartStore];
+        originStoreRT.total_employees++;
+        originStoreRT.attended_employees++;
+        originStoreRT.total_hours += originPreHours + originPostHours;
+        if (status === '勤務中') originStoreRT.working_employees++;
+        originStoreRT.employees.push(empOriginPre);
+        originStoreRT.employees.push(empOriginPost);
+
+        // 中間部署に集計
+        if (!storeAttendance[empBreakEndStore]) {
+          storeAttendance[empBreakEndStore] = { store_name: empBreakEndStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
+        }
+        const midStoreData = storeAttendance[empBreakEndStore];
+        midStoreData.total_employees++;
+        midStoreData.attended_employees++;
+        midStoreData.total_hours += midHours;
+        midStoreData.employees.push(empMid);
+
+        employees.push(empOriginPre);
+        employees.push(empMid);
+        employees.push(empOriginPost);
+        console.log(`[JC] 往復移動(完了): ${staffName} ${empBreakStartStore}→${empBreakEndStore}→${empBreakStartStore} (前半:${originPreHours}h 中間:${midHours}h 後半:${originPostHours}h)`);
+        continue;
+
+      } else {
+        // 片道移動（A店→B店）
         const originHours = parseFloat((breakMinutes / 60).toFixed(2));
         const destHours = parseFloat(Math.max(0, netHours - originHours).toFixed(2));
 
@@ -1928,11 +2106,11 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           clock_location: clockLocation,
           status: '退勤済み',
           clock_in: clockIn || null,
-          clock_out: null,  // 休憩開始時刻（不明のためnull）
+          clock_out: empBreakStartTime || null,
           break_start: null,
           had_break: false,
           clock_in_minutes: clockInMinutes,
-          clock_out_minutes: null,
+          clock_out_minutes: empBreakStartMinutes,
           work_hours: originHours,
           break_minutes: 0,
           work_time_text: '',
@@ -1950,11 +2128,11 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           store_name: empBreakEndStore,
           clock_location: clockLocation,
           status: status,
-          clock_in: null,  // 休憩終了時刻（不明のためnull）
+          clock_in: empBreakEndTime || null,
           clock_out: (status === '退勤済み') ? (clockOut || null) : null,
           break_start: null,
           had_break: false,
-          clock_in_minutes: null,
+          clock_in_minutes: empBreakEndMinutes,
           clock_out_minutes: clockOutMinutes,
           work_hours: destHours,
           break_minutes: 0,
@@ -1963,7 +2141,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           cross_store_transfer: true,
           transfer_to: empBreakEndStore,
           transfer_from: empBreakStartStore,
-          is_transfer_arrival: true,  // 移動先店舗への到着フラグ
+          is_transfer_arrival: true,
         };
 
         // 元店舗に集計
