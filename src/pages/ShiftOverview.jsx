@@ -3,7 +3,7 @@ import { supabase } from '@/api/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, eachWeekOfInterval, parseISO, addMonths, subMonths, getDay, isSameDay, isSameMonth, isWithinInterval } from 'date-fns';
 import { ja } from 'date-fns/locale';
-import { Eye, ChevronLeft, ChevronRight, Users, Edit3, UserCheck, UserMinus, UserPlus, Printer, GripVertical, X, Clock, LayoutGrid, Rows3, Calendar as CalendarIcon, Palmtree, ClipboardList, TrendingUp, BarChart3, CheckCircle2, AlertCircle, User as UserIcon, ChevronDown, Sun, Moon, Briefcase, Shield, Check } from 'lucide-react';
+import { Eye, ChevronLeft, ChevronRight, Users, Edit3, UserCheck, UserMinus, UserPlus, Printer, GripVertical, X, Clock, LayoutGrid, Rows3, Calendar as CalendarIcon, Palmtree, ClipboardList, TrendingUp, BarChart3, CheckCircle2, AlertCircle, User as UserIcon, ChevronDown, Sun, Moon, Briefcase, Shield, Check, ShoppingCart, Factory } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -351,6 +351,7 @@ export default function ShiftOverview() {
   });
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('store'); // 'store' | 'online' | 'manufacturing'
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingDate, setEditingDate] = useState(null);
   const [editingShift, setEditingShift] = useState(null);
@@ -420,13 +421,16 @@ export default function ShiftOverview() {
   const { data: allUsers = [] } = useQuery({ queryKey: ['allUsers'], queryFn: () => fetchAll('User') });
 
   const storeUsers = useMemo(() => {
+    const sortByOrder = (a, b) => (a.metadata?.sort_order ?? 999) - (b.metadata?.sort_order ?? 999);
+    if (selectedCategory === 'online') {
+      return allUsers.filter(u => u.belongs_online === true).sort(sortByOrder);
+    }
+    if (selectedCategory === 'manufacturing') {
+      return allUsers.filter(u => u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking || u.belongs_kagaya_bagging || u.belongs_kagaya_cooking).sort(sortByOrder);
+    }
     if (!selectedStoreId) return [];
-    return allUsers.filter(u => u.store_ids?.includes(selectedStoreId)).sort((a, b) => {
-      const orderA = a.metadata?.sort_order ?? 999;
-      const orderB = b.metadata?.sort_order ?? 999;
-      return orderA - orderB;
-    });
-  }, [allUsers, selectedStoreId]);
+    return allUsers.filter(u => u.store_ids?.includes(selectedStoreId)).sort(sortByOrder);
+  }, [allUsers, selectedStoreId, selectedCategory]);
 
   const [visibleAdminIds, setVisibleAdminIds] = useState(() => {
     try {
@@ -515,17 +519,25 @@ export default function ShiftOverview() {
   const fetchEnd = format(endOfWeek(endOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart }), 'yyyy-MM-dd');
 
   const { data: allPaidLeaveRequests = [] } = useQuery({
-    queryKey: ['allPaidLeaveRequests', selectedStoreId, fetchStart, fetchEnd],
+    queryKey: ['allPaidLeaveRequests', selectedStoreId, selectedCategory, fetchStart, fetchEnd],
     queryFn: async () => {
-      if (!selectedStoreId) return [];
-      const storeUserEmails = allUsers.filter(u => u.store_ids?.includes(selectedStoreId)).map(u => u.email);
+      let targetUserEmails = [];
+      if (selectedCategory === 'online') {
+        targetUserEmails = allUsers.filter(u => u.belongs_online === true).map(u => u.email);
+      } else if (selectedCategory === 'manufacturing') {
+        targetUserEmails = allUsers.filter(u => u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking || u.belongs_kagaya_bagging || u.belongs_kagaya_cooking).map(u => u.email);
+      } else {
+        if (!selectedStoreId) return [];
+        targetUserEmails = allUsers.filter(u => u.store_ids?.includes(selectedStoreId)).map(u => u.email);
+      }
+      if (targetUserEmails.length === 0) return [];
       const { data, error } = await supabase.from('PaidLeaveRequest').select('*')
-        .in('user_email', storeUserEmails.length > 0 ? storeUserEmails : ['__none__'])
+        .in('user_email', targetUserEmails)
         .gte('date', fetchStart).lte('date', fetchEnd);
       if (error) throw error;
       return (data || []).filter(r => r.status === 'approved' || r.status === 'pending');
     },
-    enabled: !!selectedStoreId && isAdminOrManager && allUsers.length > 0,
+    enabled: (selectedCategory !== 'store' || !!selectedStoreId) && isAdminOrManager && allUsers.length > 0,
   });
 
   const getPaidLeaveForUserDate = (userEmail, dateStr) => {
@@ -533,22 +545,46 @@ export default function ShiftOverview() {
   };
 
   const { data: allShiftRequests = [], isLoading: requestsLoading } = useQuery({
-    queryKey: ['storeShiftRequests', selectedStoreId, fetchStart, fetchEnd],
+    queryKey: ['storeShiftRequests', selectedStoreId, selectedCategory, fetchStart, fetchEnd],
     queryFn: async () => {
-      if (!selectedStoreId) return [];
-      const { data, error } = await supabase.from('ShiftRequest').select('*')
-        .eq('store_id', selectedStoreId).gte('date', fetchStart).lte('date', fetchEnd);
-      if (error) throw error;
-      
-      const stUsers = allUsers.filter(u => u.store_ids?.includes(selectedStoreId));
+      let dbData = [];
+      let stUsers = [];
+      if (selectedCategory === 'online') {
+        stUsers = allUsers.filter(u => u.belongs_online === true);
+        const emails = stUsers.map(u => u.email);
+        if (emails.length > 0) {
+          const { data, error } = await supabase.from('ShiftRequest').select('*')
+            .in('created_by', emails).gte('date', fetchStart).lte('date', fetchEnd);
+          if (error) throw error;
+          dbData = data || [];
+        }
+      } else if (selectedCategory === 'manufacturing') {
+        stUsers = allUsers.filter(u => u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking || u.belongs_kagaya_bagging || u.belongs_kagaya_cooking);
+        const emails = stUsers.map(u => u.email);
+        if (emails.length > 0) {
+          const { data, error } = await supabase.from('ShiftRequest').select('*')
+            .in('created_by', emails).gte('date', fetchStart).lte('date', fetchEnd);
+          if (error) throw error;
+          dbData = data || [];
+        }
+      } else {
+        if (!selectedStoreId) return [];
+        const { data, error } = await supabase.from('ShiftRequest').select('*')
+          .eq('store_id', selectedStoreId).gte('date', fetchStart).lte('date', fetchEnd);
+        if (error) throw error;
+        dbData = data || [];
+        stUsers = allUsers.filter(u => u.store_ids?.includes(selectedStoreId));
+      }
+      // 以下は店舗カテゴリのみデフォルトシフト生成（通販・製造はスキップ）
+      if (selectedCategory !== 'store') return dbData;
+      const stUsersForDefault = allUsers.filter(u => u.store_ids?.includes(selectedStoreId));
       const fetchStartDate = startOfWeek(startOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart });
       const fetchEndDate = endOfWeek(endOfMonth(selectedMonth), { weekStartsOn: effectiveWeekStart });
       const days = eachDayOfInterval({ start: fetchStartDate, end: fetchEndDate });
       const dayMap = { 0: 'sunday', 1: 'monday', 2: 'tuesday', 3: 'wednesday', 4: 'thursday', 5: 'friday', 6: 'saturday' };
-      const dbData = data || [];
       const defaultShifts = [];
       
-      stUsers.forEach(u => {
+      stUsersForDefault.forEach(u => {
         const defaultSettings = u.default_shift_settings;
         if (!defaultSettings) return;
         days.forEach(day => {
@@ -591,7 +627,7 @@ export default function ShiftOverview() {
       });
       return [...dbData, ...defaultShifts];
     },
-    enabled: !!selectedStoreId,
+    enabled: selectedCategory !== 'store' || !!selectedStoreId,
   });
 
   const getMyShift = (dateStr) => allShiftRequests.find(r => r.date === dateStr && r.created_by === user?.email);
@@ -1378,7 +1414,8 @@ export default function ShiftOverview() {
 
   // ============ SUMMARY STATS ============
   const summaryStats = useMemo(() => {
-    if (!selectedStoreId || !allShiftRequests.length) return { totalSubmissions: 0, totalUsers: 0, submittedUsers: 0, workDays: 0, totalHours: 0 };
+    if (selectedCategory === 'store' && !selectedStoreId) return { totalSubmissions: 0, totalUsers: 0, submittedUsers: 0, workDays: 0, totalHours: 0 };
+    if (!allShiftRequests.length) return { totalSubmissions: 0, totalUsers: storeUsers.length, submittedUsers: 0, workDays: 0, totalHours: 0 };
     // 管理者表示/非表示設定を反映: 非表示の管理者のシフトを除外
     const hiddenAdminEmails = new Set(
       adminUsersList
@@ -1398,7 +1435,7 @@ export default function ShiftOverview() {
     });
     const workDaySet = new Set(workRequests.map(r => r.date));
     return { totalSubmissions: filteredRequests.length, totalUsers: filteredUsers.length, submittedUsers: uniqueUsers.size, workDays: workDaySet.size, totalHours: totalH.toFixed(0) };
-  }, [allShiftRequests, selectedStoreId, storeUsers, visibleAdminIds, adminUsersList]);
+  }, [allShiftRequests, selectedStoreId, selectedCategory, storeUsers, visibleAdminIds, adminUsersList]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-cyan-50/30 p-2 sm:p-6">
@@ -1415,8 +1452,33 @@ export default function ShiftOverview() {
              <p className="text-[10px] sm:text-sm text-slate-500">所属店舗のシフト希望を確認・編集</p>
            </div>
          </div>
-        <div className="flex items-center gap-2">
-          {userStores.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* カテゴリタブ */}
+          {isAdminOrManager && (
+            <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-0.5">
+              {[
+                { id: 'store', label: '店舗', icon: null },
+                { id: 'online', label: '通販', icon: ShoppingCart },
+                { id: 'manufacturing', label: '製造', icon: Factory },
+              ].map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => setSelectedCategory(id)}
+                  className={cn(
+                    'flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all',
+                    selectedCategory === id
+                      ? 'bg-white shadow-sm text-cyan-700'
+                      : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  {Icon && <Icon className="w-3 h-3" />}
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* 店舗セレクタ（店舗カテゴリのみ表示） */}
+          {selectedCategory === 'store' && userStores.length > 0 && (
             <Select value={selectedStoreId} onValueChange={setSelectedStoreId}>
               <SelectTrigger className="w-40 bg-white border-slate-200 shadow-sm"><SelectValue placeholder="店舗を選択" /></SelectTrigger>
               <SelectContent>
@@ -1424,11 +1486,22 @@ export default function ShiftOverview() {
               </SelectContent>
             </Select>
           )}
+          {/* 通販・製造カテゴリのラベル */}
+          {selectedCategory === 'online' && (
+            <span className="flex items-center gap-1.5 text-xs font-semibold bg-blue-100 text-blue-700 px-3 py-1.5 rounded-xl">
+              <ShoppingCart className="w-3.5 h-3.5" />受注処理・受電
+            </span>
+          )}
+          {selectedCategory === 'manufacturing' && (
+            <span className="flex items-center gap-1.5 text-xs font-semibold bg-amber-100 text-amber-700 px-3 py-1.5 rounded-xl">
+              <Factory className="w-3.5 h-3.5" />北摂・加賀屋工場
+            </span>
+          )}
         </div>
       </div>
 
       {/* Summary Stats Cards */}
-      {selectedStoreId && !requestsLoading && (
+      {(selectedStoreId || selectedCategory !== 'store') && !requestsLoading && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
           <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-100 shadow-sm">
             <div className="flex items-center gap-2 mb-1">

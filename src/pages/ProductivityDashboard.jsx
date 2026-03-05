@@ -2,7 +2,9 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/api/supabaseClient';
+import { toast } from 'sonner';
 import {
   RefreshCw, Activity, Wifi, WifiOff, TrendingUp, TrendingDown,
   Users, Clock, DollarSign, ChevronRight, X, BarChart3, Target,
@@ -10,7 +12,7 @@ import {
   Sun, Moon, LayoutGrid, LineChart as LineChartIcon, Timer, Coffee,
   Settings, Calendar, MapPin, ArrowUpRight, ArrowDownRight, Minus,
   Store, BanknoteIcon, Briefcase, ArrowRight, ShoppingCart, Factory,
-  Package, Truck, FlaskConical, Layers
+  Package, Truck, FlaskConical, Layers, Save, Edit3, Plus
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -1741,6 +1743,140 @@ export default function ProductivityDashboard() {
   const [activeCategory, setActiveCategory] = useState('store'); // 'store' | 'online' | 'manufacturing'
   const [storeSettings, setStoreSettings] = useState(() => loadStoreSettings());
   const [storeSort, setStoreSort] = useState('default'); // 'default' | 'productivity' | 'sales' | 'person_hours'
+  const queryClient = useQueryClient();
+
+  // 通販・製造の手入力データ管理
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const [onlineInputDate, setOnlineInputDate] = useState(todayStr);
+  const [onlineForm, setOnlineForm] = useState({ order_count: '', total_sales: '', total_hours: '', memo: '' });
+  const [onlineEditMode, setOnlineEditMode] = useState(false);
+
+  const [mfgInputDate, setMfgInputDate] = useState(todayStr);
+  const [mfgForms, setMfgForms] = useState({
+    hokusetsu_bagging: { production_kg: '', total_sales: '', total_hours: '', memo: '' },
+    hokusetsu_cooking: { production_kg: '', total_sales: '', total_hours: '', memo: '' },
+    kagaya_bagging: { production_kg: '', total_sales: '', total_hours: '', memo: '' },
+    kagaya_cooking: { production_kg: '', total_sales: '', total_hours: '', memo: '' },
+  });
+  const [mfgEditMode, setMfgEditMode] = useState(false);
+
+  // 通販データ取得
+  const { data: onlineData } = useQuery({
+    queryKey: ['onlineSalesData', onlineInputDate],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('OnlineSalesData').select('*').eq('work_date', onlineInputDate).maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  // 製造データ取得
+  const { data: mfgDataList = [] } = useQuery({
+    queryKey: ['manufacturingData', mfgInputDate],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('ManufacturingData').select('*').eq('work_date', mfgInputDate);
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  // 通販データをフォームに反映
+  useEffect(() => {
+    if (onlineData) {
+      setOnlineForm({
+        order_count: onlineData.order_count?.toString() || '',
+        total_sales: onlineData.total_sales?.toString() || '',
+        total_hours: onlineData.total_hours?.toString() || '',
+        memo: onlineData.memo || '',
+      });
+    } else {
+      setOnlineForm({ order_count: '', total_sales: '', total_hours: '', memo: '' });
+    }
+  }, [onlineData, onlineInputDate]);
+
+  // 製造データをフォームに反映
+  useEffect(() => {
+    const newForms = {
+      hokusetsu_bagging: { production_kg: '', total_sales: '', total_hours: '', memo: '' },
+      hokusetsu_cooking: { production_kg: '', total_sales: '', total_hours: '', memo: '' },
+      kagaya_bagging: { production_kg: '', total_sales: '', total_hours: '', memo: '' },
+      kagaya_cooking: { production_kg: '', total_sales: '', total_hours: '', memo: '' },
+    };
+    mfgDataList.forEach(d => {
+      const key = `${d.factory_name === '北摂工場' ? 'hokusetsu' : 'kagaya'}_${d.section_name === '袋詰め' ? 'bagging' : 'cooking'}`;
+      if (newForms[key]) {
+        newForms[key] = { production_kg: d.production_kg?.toString() || '', total_sales: d.total_sales?.toString() || '', total_hours: d.total_hours?.toString() || '', memo: d.memo || '' };
+      }
+    });
+    setMfgForms(newForms);
+  }, [mfgDataList, mfgInputDate]);
+
+  // 通販保存
+  const saveOnlineMutation = useMutation({
+    mutationFn: async (formData) => {
+      const payload = {
+        work_date: onlineInputDate,
+        order_count: parseInt(formData.order_count) || 0,
+        total_sales: parseFloat(formData.total_sales) || 0,
+        total_hours: parseFloat(formData.total_hours) || 0,
+        memo: formData.memo || '',
+      };
+      payload.productivity = payload.total_hours > 0 ? Math.round(payload.total_sales / payload.total_hours) : 0;
+      if (onlineData?.id) {
+        const { error } = await supabase.from('OnlineSalesData').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', onlineData.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('OnlineSalesData').insert(payload);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['onlineSalesData', onlineInputDate] });
+      toast.success('通販データを保存しました');
+      setOnlineEditMode(false);
+    },
+    onError: (e) => toast.error('保存に失敗しました: ' + e.message),
+  });
+
+  // 製造保存
+  const saveMfgMutation = useMutation({
+    mutationFn: async (forms) => {
+      const entries = [
+        { factory_name: '北摂工場', section_name: '袋詰め', key: 'hokusetsu_bagging' },
+        { factory_name: '北摂工場', section_name: '炊き場', key: 'hokusetsu_cooking' },
+        { factory_name: '加賀屋工場', section_name: '袋詰め', key: 'kagaya_bagging' },
+        { factory_name: '加賀屋工場', section_name: '炊き場', key: 'kagaya_cooking' },
+      ];
+      for (const { factory_name, section_name, key } of entries) {
+        const f = forms[key];
+        if (!f.production_kg && !f.total_sales && !f.total_hours) continue;
+        const payload = {
+          work_date: mfgInputDate,
+          factory_name,
+          section_name,
+          production_kg: parseFloat(f.production_kg) || 0,
+          total_sales: parseFloat(f.total_sales) || 0,
+          total_hours: parseFloat(f.total_hours) || 0,
+          memo: f.memo || '',
+        };
+        payload.productivity = payload.total_hours > 0 ? Math.round(payload.total_sales / payload.total_hours) : 0;
+        const existing = mfgDataList.find(d => d.factory_name === factory_name && d.section_name === section_name);
+        if (existing) {
+          const { error } = await supabase.from('ManufacturingData').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', existing.id);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('ManufacturingData').insert(payload);
+          if (error) throw error;
+        }
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['manufacturingData', mfgInputDate] });
+      toast.success('製造データを保存しました');
+      setMfgEditMode(false);
+    },
+    onError: (e) => toast.error('保存に失敗しました: ' + e.message),
+  });
 
   const {
     data: queryData,
@@ -1788,7 +1924,7 @@ export default function ProductivityDashboard() {
   const openStores = stores.filter(s => !s.is_closed);
   const closedStores = stores.filter(s => s.is_closed);
   // 閉店済み表示用日付
-  const today = new Date();
+  const todayDate = new Date();
 
   // バイザー順（ALL_STORE_NAMESの定義順）
   const STORE_DEFAULT_ORDER = ALL_STORE_NAMES;
@@ -2087,22 +2223,36 @@ export default function ProductivityDashboard() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2.5 rounded-2xl bg-gradient-to-br from-blue-700 to-blue-500 shadow-lg">
-              <ShoppingCart className="h-5 w-5 text-white" />
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-gradient-to-br from-blue-700 to-blue-500 shadow-lg">
+                <ShoppingCart className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl font-black tracking-tight">通販 リアルタイム状況</h2>
+                <p className="text-xs text-muted-foreground">受注処理・受電</p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-xl font-black tracking-tight">通販 リアルタイム状況</h2>
-              <p className="text-xs text-muted-foreground">受注処理・受電</p>
+            <div className="flex items-center gap-2">
+              <input type="date" value={onlineInputDate} onChange={e => setOnlineInputDate(e.target.value)}
+                className="text-xs border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-800 text-slate-700 dark:text-slate-300" />
+              <button onClick={() => setOnlineEditMode(!onlineEditMode)}
+                className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                  onlineEditMode ? 'bg-blue-600 text-white' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200'
+                }`}>
+                <Edit3 className="h-3 w-3" />
+                {onlineEditMode ? '入力中' : '手入力'}
+              </button>
             </div>
           </div>
-          {/* サマリーカード（手入力） */}
+
+          {/* サマリーカード */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { label: '本日受注件数', value: '-', unit: '件', icon: Package, color: 'from-blue-500 to-indigo-600' },
-              { label: '本日売上', value: '-', unit: '円', icon: DollarSign, color: 'from-indigo-500 to-purple-600' },
-              { label: '現在稼働中', value: '-', unit: '人', icon: Users, color: 'from-emerald-500 to-teal-600' },
-              { label: '人時生産性', value: '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
+              { label: '本日受注件数', value: onlineData?.order_count ?? '-', unit: '件', icon: Package, color: 'from-blue-500 to-indigo-600' },
+              { label: '本日売上', value: onlineData?.total_sales ? onlineData.total_sales.toLocaleString() : '-', unit: '円', icon: DollarSign, color: 'from-indigo-500 to-purple-600' },
+              { label: '勤務時間合計', value: onlineData?.total_hours ?? '-', unit: 'h', icon: Clock, color: 'from-emerald-500 to-teal-600' },
+              { label: '人時生産性', value: onlineData?.productivity ? onlineData.productivity.toLocaleString() : '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
             ].map(({ label, value, unit, icon: Icon, color }) => (
               <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
                 <div className="flex items-center gap-2 mb-2">
@@ -2112,37 +2262,72 @@ export default function ProductivityDashboard() {
                   <span className="text-xs text-muted-foreground font-medium">{label}</span>
                 </div>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-black text-muted-foreground">{value}</span>
+                  <span className={`text-2xl font-black ${value === '-' ? 'text-muted-foreground' : 'text-slate-800 dark:text-slate-100'}`}>{value}</span>
                   <span className="text-xs text-muted-foreground">{unit}</span>
                 </div>
               </div>
             ))}
           </div>
-          {/* 通販部門カード */}
-          <div className="bg-white dark:bg-gray-800 rounded-2xl border border-blue-200 dark:border-blue-800 p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-              <ShoppingCart className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              <h3 className="font-bold text-sm">通販部門</h3>
-              <span className="text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full font-semibold">受注処理・受電</span>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
-                <p className="text-xs text-muted-foreground mb-1">稼働スタッフ</p>
-                <p className="text-xl font-black text-blue-700 dark:text-blue-400">-<span className="text-sm font-semibold ml-1">人</span></p>
+
+          {/* 手入力フォーム */}
+          {onlineEditMode && (
+            <div className="bg-white dark:bg-gray-800 rounded-2xl border-2 border-blue-300 dark:border-blue-700 p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-4">
+                <Edit3 className="h-4 w-4 text-blue-600" />
+                <h3 className="font-bold text-sm">通販データ入力 ({onlineInputDate})</h3>
               </div>
-              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3">
-                <p className="text-xs text-muted-foreground mb-1">勤務時間合計</p>
-                <p className="text-xl font-black text-blue-700 dark:text-blue-400">-<span className="text-sm font-semibold ml-1">h</span></p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">受注件数</label>
+                  <input type="number" value={onlineForm.order_count}
+                    onChange={e => setOnlineForm(f => ({ ...f, order_count: e.target.value }))}
+                    placeholder="0" className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-slate-800 dark:text-slate-100" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">売上（円）</label>
+                  <input type="number" value={onlineForm.total_sales}
+                    onChange={e => setOnlineForm(f => ({ ...f, total_sales: e.target.value }))}
+                    placeholder="0" className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-slate-800 dark:text-slate-100" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">勤務時間（h）</label>
+                  <input type="number" step="0.5" value={onlineForm.total_hours}
+                    onChange={e => setOnlineForm(f => ({ ...f, total_hours: e.target.value }))}
+                    placeholder="0.0" className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-slate-800 dark:text-slate-100" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">メモ</label>
+                  <input type="text" value={onlineForm.memo}
+                    onChange={e => setOnlineForm(f => ({ ...f, memo: e.target.value }))}
+                    placeholder="備考" className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 bg-white dark:bg-gray-900 text-slate-800 dark:text-slate-100" />
+                </div>
+              </div>
+              {onlineForm.total_hours && onlineForm.total_sales && (
+                <div className="mb-3 text-xs text-blue-600 dark:text-blue-400 font-semibold">
+                  人時生産性: {Math.round(parseFloat(onlineForm.total_sales) / parseFloat(onlineForm.total_hours)).toLocaleString()}円/h
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button onClick={() => saveOnlineMutation.mutate(onlineForm)}
+                  disabled={saveOnlineMutation.isPending}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-all disabled:opacity-50">
+                  <Save className="h-3.5 w-3.5" />
+                  {saveOnlineMutation.isPending ? '保存中...' : '保存'}
+                </button>
+                <button onClick={() => setOnlineEditMode(false)}
+                  className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-slate-700 dark:text-slate-300 text-sm font-semibold rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 transition-all">
+                  キャンセル
+                </button>
               </div>
             </div>
-            <div className="mt-3 flex items-center justify-center py-6 text-muted-foreground">
-              <div className="text-center">
-                <Package className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                <p className="text-xs">売上データは手動入力に対応予定</p>
-                <p className="text-[10px] mt-1 opacity-60">ジョブカン連携スタッフ情報は自動取得</p>
-              </div>
+          )}
+
+          {/* 通販メモ */}
+          {onlineData?.memo && !onlineEditMode && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 text-xs text-blue-700 dark:text-blue-300">
+              <span className="font-semibold">メモ:</span> {onlineData.memo}
             </div>
-          </div>
+          )}
         </motion.div>
       )}
 
@@ -2153,77 +2338,148 @@ export default function ProductivityDashboard() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2.5 rounded-2xl bg-gradient-to-br from-amber-700 to-amber-500 shadow-lg">
-              <Factory className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <h2 className="text-xl font-black tracking-tight">製造（工房）リアルタイム状況</h2>
-              <p className="text-xs text-muted-foreground">北摂工場・加賀屋工場</p>
-            </div>
-          </div>
-          {/* サマリーカード */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { label: '本日製造量', value: '-', unit: 'kg', icon: FlaskConical, color: 'from-amber-500 to-orange-500' },
-              { label: '本日売上', value: '-', unit: '円', icon: DollarSign, color: 'from-orange-500 to-red-500' },
-              { label: '現在稼働中', value: '-', unit: '人', icon: Users, color: 'from-emerald-500 to-teal-600' },
-              { label: '人時生産性', value: '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
-            ].map(({ label, value, unit, icon: Icon, color }) => (
-              <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`p-1.5 rounded-lg bg-gradient-to-br ${color}`}>
-                    <Icon className="h-3.5 w-3.5 text-white" />
-                  </div>
-                  <span className="text-xs text-muted-foreground font-medium">{label}</span>
-                </div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-black text-muted-foreground">{value}</span>
-                  <span className="text-xs text-muted-foreground">{unit}</span>
-                </div>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-gradient-to-br from-amber-700 to-amber-500 shadow-lg">
+                <Factory className="h-5 w-5 text-white" />
               </div>
-            ))}
+              <div>
+                <h2 className="text-xl font-black tracking-tight">製造（工房）リアルタイム状況</h2>
+                <p className="text-xs text-muted-foreground">北摂工場・加賀屋工場</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="date" value={mfgInputDate} onChange={e => setMfgInputDate(e.target.value)}
+                className="text-xs border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-800 text-slate-700 dark:text-slate-300" />
+              <button onClick={() => setMfgEditMode(!mfgEditMode)}
+                className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                  mfgEditMode ? 'bg-amber-600 text-white' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200'
+                }`}>
+                <Edit3 className="h-3 w-3" />
+                {mfgEditMode ? '入力中' : '手入力'}
+              </button>
+            </div>
           </div>
-          {/* 工場カード */}
+
+          {/* サマリーカード */}
+          {(() => {
+            const totalKg = mfgDataList.reduce((s, d) => s + (d.production_kg || 0), 0);
+            const totalSales = mfgDataList.reduce((s, d) => s + (d.total_sales || 0), 0);
+            const totalHours = mfgDataList.reduce((s, d) => s + (d.total_hours || 0), 0);
+            const productivity = totalHours > 0 ? Math.round(totalSales / totalHours) : 0;
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: '本日製造量', value: totalKg > 0 ? totalKg.toFixed(1) : '-', unit: 'kg', icon: FlaskConical, color: 'from-amber-500 to-orange-500' },
+                  { label: '本日売上', value: totalSales > 0 ? totalSales.toLocaleString() : '-', unit: '円', icon: DollarSign, color: 'from-orange-500 to-red-500' },
+                  { label: '勤務時間合計', value: totalHours > 0 ? totalHours.toFixed(1) : '-', unit: 'h', icon: Clock, color: 'from-emerald-500 to-teal-600' },
+                  { label: '人時生産性', value: productivity > 0 ? productivity.toLocaleString() : '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
+                ].map(({ label, value, unit, icon: Icon, color }) => (
+                  <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className={`p-1.5 rounded-lg bg-gradient-to-br ${color}`}>
+                        <Icon className="h-3.5 w-3.5 text-white" />
+                      </div>
+                      <span className="text-xs text-muted-foreground font-medium">{label}</span>
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                      <span className={`text-2xl font-black ${value === '-' ? 'text-muted-foreground' : 'text-slate-800 dark:text-slate-100'}`}>{value}</span>
+                      <span className="text-xs text-muted-foreground">{unit}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* 工場別カード */}
           <div className="grid gap-4 md:grid-cols-2">
             {[
-              { name: '北摂工場', color: 'amber', sections: ['袋詰め', '炊き場'] },
-              { name: '加賀屋工場', color: 'orange', sections: ['袋詰め', '炊き場'] },
-            ].map(({ name, color, sections }) => (
-              <div key={name} className={`bg-white dark:bg-gray-800 rounded-2xl border border-${color}-200 dark:border-${color}-800 p-5 shadow-sm`}>
-                <div className="flex items-center gap-2 mb-4">
-                  <Factory className={`h-4 w-4 text-${color}-600 dark:text-${color}-400`} />
-                  <h3 className="font-bold text-sm">{name}</h3>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {sections.map(section => (
-                    <div key={section} className={`bg-${color}-50 dark:bg-${color}-900/20 rounded-xl p-3`}>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <Layers className={`h-3.5 w-3.5 text-${color}-600 dark:text-${color}-400`} />
-                        <p className={`text-xs font-bold text-${color}-700 dark:text-${color}-300`}>{section}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-muted-foreground">稼働</span>
-                          <span className="font-semibold">- 人</span>
-                        </div>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-muted-foreground">勤務時間</span>
-                          <span className="font-semibold">- h</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 flex items-center justify-center py-4 text-muted-foreground">
-                  <div className="text-center">
-                    <FlaskConical className="h-6 w-6 mx-auto mb-1 opacity-30" />
-                    <p className="text-[10px]">製造データは手動入力に対応予定</p>
+              { name: '北摂工場', color: 'amber', baggingKey: 'hokusetsu_bagging', cookingKey: 'hokusetsu_cooking' },
+              { name: '加賀屋工場', color: 'orange', baggingKey: 'kagaya_bagging', cookingKey: 'kagaya_cooking' },
+            ].map(({ name, color, baggingKey, cookingKey }) => {
+              const baggingData = mfgDataList.find(d => d.factory_name === name && d.section_name === '袋詰め');
+              const cookingData = mfgDataList.find(d => d.factory_name === name && d.section_name === '炊き場');
+              return (
+                <div key={name} className={`bg-white dark:bg-gray-800 rounded-2xl border border-${color}-200 dark:border-${color}-800 p-5 shadow-sm`}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Factory className={`h-4 w-4 text-${color}-600 dark:text-${color}-400`} />
+                    <h3 className="font-bold text-sm">{name}</h3>
                   </div>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    {[{ label: '袋詰め', data: baggingData, key: baggingKey }, { label: '炊き場', data: cookingData, key: cookingKey }].map(({ label, data, key }) => (
+                      <div key={label} className={`bg-${color}-50 dark:bg-${color}-900/20 rounded-xl p-3`}>
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <Layers className={`h-3.5 w-3.5 text-${color}-600 dark:text-${color}-400`} />
+                          <p className={`text-xs font-bold text-${color}-700 dark:text-${color}-300`}>{label}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">製造量</span>
+                            <span className="font-semibold">{data?.production_kg ?? '-'} kg</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">勤務時間</span>
+                            <span className="font-semibold">{data?.total_hours ?? '-'} h</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">人時生産性</span>
+                            <span className="font-semibold">{data?.productivity ? data.productivity.toLocaleString() : '-'} 円/h</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* 工場別手入力フォーム */}
+                  {mfgEditMode && (
+                    <div className="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-3">
+                      {[{ label: '袋詰め', key: baggingKey }, { label: '炊き場', key: cookingKey }].map(({ label, key }) => (
+                        <div key={key}>
+                          <p className={`text-xs font-bold text-${color}-700 dark:text-${color}-300 mb-2`}>{label} 入力</p>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">製造量(kg)</label>
+                              <input type="number" step="0.1" value={mfgForms[key]?.production_kg || ''}
+                                onChange={e => setMfgForms(f => ({ ...f, [key]: { ...f[key], production_kg: e.target.value } }))}
+                                placeholder="0.0" className="w-full text-xs border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-900 text-slate-800 dark:text-slate-100" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">売上(円)</label>
+                              <input type="number" value={mfgForms[key]?.total_sales || ''}
+                                onChange={e => setMfgForms(f => ({ ...f, [key]: { ...f[key], total_sales: e.target.value } }))}
+                                placeholder="0" className="w-full text-xs border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-900 text-slate-800 dark:text-slate-100" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">勤務時間(h)</label>
+                              <input type="number" step="0.5" value={mfgForms[key]?.total_hours || ''}
+                                onChange={e => setMfgForms(f => ({ ...f, [key]: { ...f[key], total_hours: e.target.value } }))}
+                                placeholder="0.0" className="w-full text-xs border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-900 text-slate-800 dark:text-slate-100" />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+
+          {/* 製造保存ボタン */}
+          {mfgEditMode && (
+            <div className="flex gap-2">
+              <button onClick={() => saveMfgMutation.mutate(mfgForms)}
+                disabled={saveMfgMutation.isPending}
+                className="flex items-center gap-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold rounded-xl transition-all disabled:opacity-50">
+                <Save className="h-3.5 w-3.5" />
+                {saveMfgMutation.isPending ? '保存中...' : '製造データを保存'}
+              </button>
+              <button onClick={() => setMfgEditMode(false)}
+                className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-slate-700 dark:text-slate-300 text-sm font-semibold rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 transition-all">
+                キャンセル
+              </button>
+            </div>
+          )}
         </motion.div>
       )}
 

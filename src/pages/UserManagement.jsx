@@ -135,11 +135,15 @@ export default function UserManagement() {
     queryFn: () => fetchAll('PendingInvitation'),
   });
 
-  // Filter users by selected store
+  // Filter users by selected store / category
   const filteredUsers = users.filter(u => {
     const isRegularUser = u.user_role !== 'admin' && u.role !== 'admin';
     if (!isRegularUser) return false;
     if (selectedStoreFilter === 'all') return true;
+    if (selectedStoreFilter === 'online') return u.belongs_online === true;
+    if (selectedStoreFilter === 'manufacturing') return u.belongs_hokusetsu_bagging === true || u.belongs_hokusetsu_cooking === true || u.belongs_kagaya_bagging === true || u.belongs_kagaya_cooking === true;
+    if (selectedStoreFilter === 'manufacturing_hokusetsu') return u.belongs_hokusetsu_bagging === true || u.belongs_hokusetsu_cooking === true;
+    if (selectedStoreFilter === 'manufacturing_kagaya') return u.belongs_kagaya_bagging === true || u.belongs_kagaya_cooking === true;
     return u.store_ids?.includes(selectedStoreFilter);
   });
 
@@ -1078,11 +1082,15 @@ export default function UserManagement() {
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-slate-500 flex-shrink-0" />
               <Select value={selectedStoreFilter} onValueChange={setSelectedStoreFilter}>
-                <SelectTrigger className="w-full sm:w-48 h-9">
+                <SelectTrigger className="w-full sm:w-56 h-9">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">すべての店舗</SelectItem>
+                  <SelectItem value="all">すべて</SelectItem>
+                  <SelectItem value="online"><span className="flex items-center gap-1.5"><ShoppingCart className="w-3.5 h-3.5 text-blue-500" />通販部門</span></SelectItem>
+                  <SelectItem value="manufacturing"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />製造（全工場）</span></SelectItem>
+                  <SelectItem value="manufacturing_hokusetsu"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />北摂工場</span></SelectItem>
+                  <SelectItem value="manufacturing_kagaya"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />加賀屋工場</span></SelectItem>
                   {sortStoresByOrder(stores).map(store => (
                     <SelectItem key={store.id} value={store.id}>
                       {store.store_name}
