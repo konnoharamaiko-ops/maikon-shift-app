@@ -2379,8 +2379,9 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
       personHours += adjustedOverlapMinutes / 60;
     });
 
-    // 現在時刻より未来の時間帯の売上は0として扱う（前日データの混入を防ぐ）
-    const hourlySales = (hour <= currentHour && hourly[hour] !== undefined) ? hourly[hour] : 0;
+    // 時間帯別売上：hourlyデータをそのまま使用（レジ締め済みの時間帯も含む）
+    // 前日データの除外はgetSalesDataForStore関数内のregijimeロジックで処理済み
+    const hourlySales = hourly[hour] !== undefined ? hourly[hour] : 0;
 
     // 閉店後の時間帯（補完データがある場合）は、閉店直前の時間帯の人時生産性をそのまま使用する
     // 閉店後はスタッフが退勤済みのため人時が0になるが、

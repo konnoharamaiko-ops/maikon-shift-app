@@ -43,7 +43,12 @@ export default function UserEdit() {
     queryKey: ['stores'],
     queryFn: async () => {
       const allStores = await fetchAll('Store');
-      return sortStoresByOrder(allStores);
+      // 通販（ONLINE）・製造（MFG-*）のレコードを除外し、通常の店舗のみ返す
+      const regularStores = allStores.filter(s => {
+        const code = (s.store_code || '').toUpperCase();
+        return code !== 'ONLINE' && !code.startsWith('MFG-');
+      });
+      return sortStoresByOrder(regularStores);
     },
   });
 
