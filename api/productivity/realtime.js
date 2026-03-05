@@ -1302,7 +1302,7 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         const totalText = $hourly(cells[totalColIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
           .replace(/[^\d-]/g, '');
-        todaySales = parseInt(totalText) || 0;
+        todaySales = Math.max(0, parseInt(totalText) || 0); // マイナス値は0に変換
       } else {
         // 合計列がない場合は時間別売上の合計を計算
         todaySales = Object.values(hourly).reduce((sum, v) => sum + v, 0);
@@ -1369,7 +1369,7 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
         const totalText = $yesterday(cells[totalColIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
           .replace(/[^\d-]/g, '');
-        ySales = parseInt(totalText) || 0;
+        ySales = Math.max(0, parseInt(totalText) || 0); // マイナス値は0に変換
       } else {
         ySales = Object.values(hourly).reduce((sum, v) => sum + v, 0);
       }
@@ -2082,7 +2082,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           name: staffName,
           dept_code: deptCode,
           dept_store_name: deptStoreName,
-          store_name: empBreakStartStore,
+          store_name: empBreakEndStore,  // 元店舗（休憩終了打刻場所 = 元の店舗）
           clock_location: clockLocation,
           status: '退勤済み',
           clock_in: clockIn || null,
@@ -2096,8 +2096,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           work_time_text: '',
           break_time_text: '',
           cross_store_transfer: true,
-          transfer_to: empBreakEndStore,
-          transfer_from: empBreakStartStore,
+          transfer_to: empBreakStartStore,  // 移動先（休憩開始打刻場所 = 中間部署）
+          transfer_from: empBreakEndStore,
           round_trip_segment: 'pre',
         };
 
@@ -2106,7 +2106,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           name: staffName,
           dept_code: deptCode,
           dept_store_name: deptStoreName,
-          store_name: empBreakEndStore,  // 休憩場所（中間部署）
+          store_name: empBreakStartStore,  // 中間部署（休憩開始打刻場所 = 企画部等）
           clock_location: clockLocation,
           status: '退勤済み',
           clock_in: empBreakStartTime || null,
@@ -2120,8 +2120,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           work_time_text: '',
           break_time_text: '',
           cross_store_transfer: true,
-          transfer_to: empBreakStartStore,
-          transfer_from: empBreakEndStore,
+          transfer_to: empBreakEndStore,
+          transfer_from: empBreakStartStore,
           round_trip_segment: 'mid',
           is_transfer_arrival: true,
         };
@@ -2131,7 +2131,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           name: staffName,
           dept_code: deptCode,
           dept_store_name: deptStoreName,
-          store_name: empBreakStartStore,
+          store_name: empBreakEndStore,  // 元店舗（休憩終了打刻場所 = 元の店舗）
           clock_location: clockLocation,
           status: status,
           clock_in: empBreakEndTime || null,
@@ -2151,11 +2151,11 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           is_transfer_arrival: true,
         };
 
-        // 元店舗に集計（前半 + 後半を合算）
-        if (!storeAttendance[empBreakStartStore]) {
-          storeAttendance[empBreakStartStore] = { store_name: empBreakStartStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
+        // 元店舗に集計（前半 + 後半を合算）← empBreakEndStore（休憩終了打刻場所 = 元の店舗）
+        if (!storeAttendance[empBreakEndStore]) {
+          storeAttendance[empBreakEndStore] = { store_name: empBreakEndStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
         }
-        const originStoreRT = storeAttendance[empBreakStartStore];
+        const originStoreRT = storeAttendance[empBreakEndStore];
         originStoreRT.total_employees++;
         originStoreRT.attended_employees++;
         originStoreRT.total_hours += originPreHours + originPostHours;
@@ -2163,11 +2163,11 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
         originStoreRT.employees.push(empOriginPre);
         originStoreRT.employees.push(empOriginPost);
 
-        // 中間部署に集計
-        if (!storeAttendance[empBreakEndStore]) {
-          storeAttendance[empBreakEndStore] = { store_name: empBreakEndStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
+        // 中間部署に集計 ← empBreakStartStore（休憩開始打刻場所 = 企画部等）
+        if (!storeAttendance[empBreakStartStore]) {
+          storeAttendance[empBreakStartStore] = { store_name: empBreakStartStore, total_employees: 0, attended_employees: 0, working_employees: 0, break_employees: 0, total_hours: 0, employees: [] };
         }
-        const midStoreData = storeAttendance[empBreakEndStore];
+        const midStoreData = storeAttendance[empBreakStartStore];
         midStoreData.total_employees++;
         midStoreData.attended_employees++;
         midStoreData.total_hours += midHours;
@@ -2176,7 +2176,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
         employees.push(empOriginPre);
         employees.push(empMid);
         employees.push(empOriginPost);
-        console.log(`[JC] 往復移動(完了): ${staffName} ${empBreakStartStore}→${empBreakEndStore}→${empBreakStartStore} (前半:${originPreHours}h 中間:${midHours}h 後半:${originPostHours}h)`);
+        console.log(`[JC] 往復移動(完了): ${staffName} ${empBreakEndStore}→${empBreakStartStore}→${empBreakEndStore} (前半:${originPreHours}h 中間:${midHours}h 後半:${originPostHours}h)`);
         continue;
 
       } else {
@@ -2649,15 +2649,15 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
     // マイナス値は必ず0に変換（翻日データ混入防止）
     const hourlySales = Math.max(0, hourly[hour] !== undefined ? hourly[hour] : 0);
 
-    // 閉店後の時間帯（補完データがある場合）は、閉店直前の時間帯の人時生産性をそのまま使用する
-    // 閉店後はスタッフが退勤済みのため人時が0になるが、
-    // 売上効率の参考値として閉店直前の人時生産性（円/人時）を引き継ぐ
+    // 閉店後（営業外）の時間帯は人時を必ず0にする
+    // （閉店後に残業しているスタッフの時間は店舗の人時に含めない）
+    // 売上がある場合は閉店直前の人時生産性を参考値として表示
     const isAfterClose = hour >= businessHours.close;
-    let finalPersonHours = personHours;
+    let finalPersonHours = isAfterClose ? 0 : personHours; // 閉店後は人時を必ず0に
     let hourlyProductivityValue;
 
     if (isAfterClose && hourlySales > 0) {
-      // 閉店直前の時間帯（businessHours.close - 1）の人時生産性を取得
+      // 閉店直前の時間帯の人時生産性を取得して参考値として表示
       const lastBusinessSlot = result.findLast(r => r.is_business_hour);
       if (lastBusinessSlot && lastBusinessSlot.person_hours > 0) {
         // 閉店直前の人時生産性（円/人時）を使って、補完売上から逆算した人時を算出
