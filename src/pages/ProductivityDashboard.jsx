@@ -2172,7 +2172,7 @@ export default function ProductivityDashboard() {
                   transition={{ duration: 0.45, delay: i * 0.03, ease: 'backOut' }}
                   onClick={() => setSelectedStore(store)}
                   title={storeIsAfterClose
-                    ? `${store.store_name}: 閉店済み（${today.getMonth()+1}/${today.getDate()}の結果）`
+                    ? `${store.store_name}: 閉店済み（${todayDate.getMonth()+1}/${todayDate.getDate()}の結果）`
                     : hasData
                       ? `${store.store_name}: ¥${store.productivity.toLocaleString()}/h (達成率${achieveRate}%)`
                       : `${store.store_name}: データ取得中`

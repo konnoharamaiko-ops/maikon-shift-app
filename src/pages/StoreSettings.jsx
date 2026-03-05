@@ -667,21 +667,42 @@ export default function StoreSettings() {
 
   const { user } = useAuth();
 
-  const { data: stores = [], isLoading } = useQuery({
-    queryKey: ['stores'],
+  // ジョブカンの部署コードと店舗名のマッピング（realtime.jsと同じ定義）
+  const JOBCAN_STORE_LIST = [
+    { id: 'store-10110', store_code: '10110', store_name: '田辺店' },
+    { id: 'store-10400', store_code: '10400', store_name: '大正店' },
+    { id: 'store-10500', store_code: '10500', store_name: '天下茶屋店' },
+    { id: 'store-10600', store_code: '10600', store_name: '天王寺店' },
+    { id: 'store-10800', store_code: '10800', store_name: 'アベノ店' },
+    { id: 'store-10900', store_code: '10900', store_name: '心斎橋店' },
+    { id: 'store-11010', store_code: '11010', store_name: 'かがや店' },
+    { id: 'store-11200', store_code: '11200', store_name: 'エキマル' },
+    { id: 'store-12000', store_code: '12000', store_name: '北摂店' },
+    { id: 'store-12200', store_code: '12200', store_name: '堺東店' },
+    { id: 'store-12300', store_code: '12300', store_name: 'イオン松原店' },
+    { id: 'store-12400', store_code: '12400', store_name: 'イオン守口店' },
+    { id: 'store-20000', store_code: '20000', store_name: '美和堂FC店' },
+  ];
+
+  // Supabase Storeテーブルから詳細設定（営業時間等）を取得
+  const { data: storeDetailMap = {}, isLoading } = useQuery({
+    queryKey: ['storeDetails'],
     queryFn: async () => {
-      const { data: allStores = [] } = await supabase.from('Store').select('*');
-      // 通販・製造のstore_codeを除外して純粋な店舗のみ返す
-      const storeOnly = allStores.filter(s =>
-        !s.store_code?.startsWith('MFG-') && s.store_code !== 'ONLINE'
-      );
-      const sorted = sortStoresByOrder(storeOnly);
-      if (!user || user?.user_role === 'admin' || user?.role === 'admin') {
-        return sorted;
-      }
-      return sorted.filter(store => user?.store_ids?.includes(store.id));
+      const { data = [] } = await supabase.from('Store').select('*');
+      const map = {};
+      data.forEach(s => { map[s.store_name] = s; });
+      return map;
     },
   });
+
+  // ジョブカンの13店舗リストとSupabase詳細設定をマージ
+  const stores = JOBCAN_STORE_LIST.map(s => ({
+    ...s,
+    ...(storeDetailMap[s.store_name] || {}),
+    id: storeDetailMap[s.store_name]?.id || s.id,
+    store_name: s.store_name,
+    store_code: s.store_code,
+  }));
 
   const { data: allUsers = [] } = useQuery({
     queryKey: ['allUsers'],
