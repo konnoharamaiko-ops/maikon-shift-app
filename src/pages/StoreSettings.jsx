@@ -671,7 +671,11 @@ export default function StoreSettings() {
     queryKey: ['stores'],
     queryFn: async () => {
       const { data: allStores = [] } = await supabase.from('Store').select('*');
-      const sorted = sortStoresByOrder(allStores);
+      // 通販・製造のstore_codeを除外して純粋な店舗のみ返す
+      const storeOnly = allStores.filter(s =>
+        !s.store_code?.startsWith('MFG-') && s.store_code !== 'ONLINE'
+      );
+      const sorted = sortStoresByOrder(storeOnly);
       if (!user || user?.user_role === 'admin' || user?.role === 'admin') {
         return sorted;
       }
@@ -1189,158 +1193,183 @@ export default function StoreSettings() {
         </> /* end store tab */}
 
         {/* ===== 通販タブ ===== */}
-        {mainTab === 'online' && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
-              <ShoppingCart className="w-6 h-6 text-blue-600 flex-shrink-0" />
-              <div>
-                <h2 className="font-bold text-slate-800">通販部門のスタッフ</h2>
-                <p className="text-sm text-slate-500">通販部門（受注処理・受電）に所属するスタッフ一覧</p>
+        {mainTab === 'online' && (() => {
+          const onlineUsers = allUsers
+            .filter(u => u.belongs_online === true && u.user_role !== 'admin' && u.role !== 'admin')
+            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+          return (
+            <div className="space-y-5">
+              {/* サマリーバナー */}
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 p-5 text-white shadow-xl">
+                <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent" />
+                <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-white/10" />
+                <div className="relative flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shadow-lg">
+                      <ShoppingCart className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-blue-100 text-xs font-semibold uppercase tracking-wider">通販部門</p>
+                      <h2 className="text-xl font-black">通販 所属スタッフ</h2>
+                      <p className="text-blue-200 text-xs mt-0.5">受注処理・受電</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-4xl font-black">{onlineUsers.length}</p>
+                    <p className="text-blue-200 text-xs">所属スタッフ</p>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <span className="font-semibold text-slate-700 flex items-center gap-2">
-                  <Users className="w-4 h-4 text-blue-500" />
-                  通販所属スタッフ
-                </span>
-                <span className="text-sm text-slate-400">
-                  {allUsers.filter(u => u.belongs_online === true && u.user_role !== 'admin' && u.role !== 'admin').length}名
-                </span>
+              {/* 注意書き */}
+              <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <span className="text-amber-600 text-sm">⚠️</span>
+                <p className="text-sm text-amber-800">
+                  <span className="font-semibold">所属先の変更</span>は「スタッフ管理」→各スタッフの「編集」から行ってください。
+                </p>
               </div>
-              {allUsers.filter(u => u.belongs_online === true && u.user_role !== 'admin' && u.role !== 'admin').length === 0 ? (
-                <div className="p-8 text-center">
-                  <ShoppingCart className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                  <p className="text-slate-400 text-sm">通販所属のスタッフがいません</p>
+              {/* スタッフカードグリッド */}
+              {onlineUsers.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-12 text-center">
+                  <ShoppingCart className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+                  <p className="text-slate-400 font-semibold">通販所属のスタッフがいません</p>
                   <p className="text-slate-400 text-xs mt-1">スタッフ編集ページから「通販所属」を設定してください</p>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-100">
-                  {allUsers
-                    .filter(u => u.belongs_online === true && u.user_role !== 'admin' && u.role !== 'admin')
-                    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
-                    .map(u => (
-                      <div key={u.id} className="flex items-center gap-3 p-3 hover:bg-slate-50">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                          <span className="text-xs font-bold text-blue-600">{(u.full_name || u.email || '?')[0]}</span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                  {onlineUsers.map((u) => (
+                    <div key={u.id}
+                      className="relative bg-white rounded-2xl border border-blue-100 shadow-sm hover:shadow-md hover:border-blue-300 transition-all duration-200 p-4 group overflow-hidden"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-50/60 to-indigo-50/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center mx-auto mb-3 shadow-md">
+                          <span className="text-lg font-black text-white">{(u.full_name || u.email || '?')[0]}</span>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-slate-800 text-sm truncate">{u.full_name || u.email}</p>
-                          <p className="text-xs text-slate-400 truncate">{u.email}</p>
+                        <p className="font-bold text-slate-800 text-sm text-center truncate">{u.full_name || u.email}</p>
+                        {u.position && <p className="text-xs text-slate-400 text-center truncate mt-0.5">{u.position}</p>}
+                        <div className="flex justify-center mt-2">
+                          <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">通販</span>
                         </div>
-                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">通販</span>
                       </div>
-                    ))
-                  }
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-              <p className="text-sm text-amber-800">
-                <span className="font-semibold">所属先の変更</span>は「スタッフ管理」→各スタッフの「編集」から行ってください。
-              </p>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ===== 製造タブ ===== */}
-        {mainTab === 'manufacturing' && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-              <Factory className="w-6 h-6 text-amber-600 flex-shrink-0" />
+        {mainTab === 'manufacturing' && (() => {
+          const hokuUsers = allUsers
+            .filter(u => (u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking) && u.user_role !== 'admin' && u.role !== 'admin')
+            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+          const kagaUsers = allUsers
+            .filter(u => (u.belongs_kagaya_bagging || u.belongs_kagaya_cooking) && u.user_role !== 'admin' && u.role !== 'admin')
+            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+          const totalMfg = hokuUsers.length + kagaUsers.length;
+          const MfgStaffCard = ({ u, accentFrom, accentTo, borderColor, hoverBg }) => (
+            <div className={"relative bg-white rounded-2xl border " + borderColor + " shadow-sm hover:shadow-md transition-all duration-200 p-4 group overflow-hidden"}>
+              <div className={"absolute inset-0 " + hoverBg + " opacity-0 group-hover:opacity-100 transition-opacity"} />
+              <div className="relative">
+                <div className={"w-12 h-12 rounded-2xl bg-gradient-to-br " + accentFrom + " " + accentTo + " flex items-center justify-center mx-auto mb-3 shadow-md"}>
+                  <span className="text-lg font-black text-white">{(u.full_name || u.email || '?')[0]}</span>
+                </div>
+                <p className="font-bold text-slate-800 text-sm text-center truncate">{u.full_name || u.email}</p>
+                {u.position && <p className="text-xs text-slate-400 text-center truncate mt-0.5">{u.position}</p>}
+                <div className="flex justify-center gap-1 mt-2 flex-wrap">
+                  {u.belongs_hokusetsu_bagging && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">袋詰め</span>}
+                  {u.belongs_hokusetsu_cooking && <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-semibold">炊き場</span>}
+                  {u.belongs_kagaya_bagging && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">袋詰め</span>}
+                  {u.belongs_kagaya_cooking && <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-semibold">炊き場</span>}
+                </div>
+              </div>
+            </div>
+          );
+          return (
+            <div className="space-y-6">
+              {/* サマリーバナー */}
+              <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 p-5 text-white shadow-xl">
+                <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent" />
+                <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-white/10" />
+                <div className="relative flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shadow-lg">
+                      <Factory className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-amber-100 text-xs font-semibold uppercase tracking-wider">製造部門</p>
+                      <h2 className="text-xl font-black">製造 所属スタッフ</h2>
+                      <p className="text-amber-200 text-xs mt-0.5">北摂工場・加賀屋工場</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-4 text-right">
+                    <div><p className="text-3xl font-black">{totalMfg}</p><p className="text-amber-200 text-xs">全体</p></div>
+                    <div><p className="text-3xl font-black">{hokuUsers.length}</p><p className="text-amber-200 text-xs">北摂</p></div>
+                    <div><p className="text-3xl font-black">{kagaUsers.length}</p><p className="text-amber-200 text-xs">加賀屋</p></div>
+                  </div>
+                </div>
+              </div>
+              {/* 注意書き */}
+              <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <span className="text-amber-600 text-sm">⚠️</span>
+                <p className="text-sm text-amber-800">
+                  <span className="font-semibold">所属先の変更</span>は「スタッフ管理」→各スタッフの「編集」から行ってください。
+                </p>
+              </div>
+              {/* 北摂工場 */}
               <div>
-                <h2 className="font-bold text-slate-800">製造部門のスタッフ</h2>
-                <p className="text-sm text-slate-500">北摂工場・加賀屋工場に所属するスタッフ一覧</p>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-md">
+                    <Factory className="w-4 h-4 text-white" />
+                  </div>
+                  <h3 className="font-black text-slate-800 text-base">北摂工場</h3>
+                  <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold">{hokuUsers.length}名</span>
+                </div>
+                {hokuUsers.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center">
+                    <Factory className="w-10 h-10 text-slate-200 mx-auto mb-2" />
+                    <p className="text-slate-400 text-sm">北摂工場所属のスタッフがいません</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {hokuUsers.map(u => (
+                      <MfgStaffCard key={u.id} u={u}
+                        accentFrom="from-amber-400" accentTo="to-amber-600"
+                        borderColor="border-amber-100" hoverBg="bg-amber-50/60"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* 加賀屋工場 */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center shadow-md">
+                    <Factory className="w-4 h-4 text-white" />
+                  </div>
+                  <h3 className="font-black text-slate-800 text-base">加賀屋工場</h3>
+                  <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-semibold">{kagaUsers.length}名</span>
+                </div>
+                {kagaUsers.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center">
+                    <Factory className="w-10 h-10 text-slate-200 mx-auto mb-2" />
+                    <p className="text-slate-400 text-sm">加賀屋工場所属のスタッフがいません</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {kagaUsers.map(u => (
+                      <MfgStaffCard key={u.id} u={u}
+                        accentFrom="from-orange-400" accentTo="to-orange-600"
+                        borderColor="border-orange-100" hoverBg="bg-orange-50/60"
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-
-            {/* 北摂工場 */}
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <span className="font-semibold text-slate-700 flex items-center gap-2">
-                  <Factory className="w-4 h-4 text-amber-500" />
-                  北摂工場
-                </span>
-                <span className="text-sm text-slate-400">
-                  {allUsers.filter(u => (u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking) && u.user_role !== 'admin' && u.role !== 'admin').length}名
-                </span>
-              </div>
-              {allUsers.filter(u => (u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking) && u.user_role !== 'admin' && u.role !== 'admin').length === 0 ? (
-                <div className="p-6 text-center">
-                  <p className="text-slate-400 text-sm">北摂工場所属のスタッフがいません</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {allUsers
-                    .filter(u => (u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking) && u.user_role !== 'admin' && u.role !== 'admin')
-                    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
-                    .map(u => (
-                      <div key={u.id} className="flex items-center gap-3 p-3 hover:bg-slate-50">
-                        <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-                          <span className="text-xs font-bold text-amber-600">{(u.full_name || u.email || '?')[0]}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-slate-800 text-sm truncate">{u.full_name || u.email}</p>
-                          <p className="text-xs text-slate-400 truncate">{u.email}</p>
-                        </div>
-                        <div className="flex gap-1">
-                          {u.belongs_hokusetsu_bagging && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">袈詰</span>}
-                          {u.belongs_hokusetsu_cooking && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">調理</span>}
-                        </div>
-                      </div>
-                    ))
-                  }
-                </div>
-              )}
-            </div>
-
-            {/* 加賀屋工場 */}
-            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <span className="font-semibold text-slate-700 flex items-center gap-2">
-                  <Factory className="w-4 h-4 text-orange-500" />
-                  加賀屋工場
-                </span>
-                <span className="text-sm text-slate-400">
-                  {allUsers.filter(u => (u.belongs_kagaya_bagging || u.belongs_kagaya_cooking) && u.user_role !== 'admin' && u.role !== 'admin').length}名
-                </span>
-              </div>
-              {allUsers.filter(u => (u.belongs_kagaya_bagging || u.belongs_kagaya_cooking) && u.user_role !== 'admin' && u.role !== 'admin').length === 0 ? (
-                <div className="p-6 text-center">
-                  <p className="text-slate-400 text-sm">加賀屋工場所属のスタッフがいません</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {allUsers
-                    .filter(u => (u.belongs_kagaya_bagging || u.belongs_kagaya_cooking) && u.user_role !== 'admin' && u.role !== 'admin')
-                    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
-                    .map(u => (
-                      <div key={u.id} className="flex items-center gap-3 p-3 hover:bg-slate-50">
-                        <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
-                          <span className="text-xs font-bold text-orange-600">{(u.full_name || u.email || '?')[0]}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-slate-800 text-sm truncate">{u.full_name || u.email}</p>
-                          <p className="text-xs text-slate-400 truncate">{u.email}</p>
-                        </div>
-                        <div className="flex gap-1">
-                          {u.belongs_kagaya_bagging && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">袈詰</span>}
-                          {u.belongs_kagaya_cooking && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">調理</span>}
-                        </div>
-                      </div>
-                    ))
-                  }
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-              <p className="text-sm text-amber-800">
-                <span className="font-semibold">所属先の変更</span>は「スタッフ管理」→各スタッフの「編集」から行ってください。
-              </p>
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </main>
     </div>
   );

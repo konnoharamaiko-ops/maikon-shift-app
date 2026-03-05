@@ -2132,7 +2132,12 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       emp => emp.status === '勤務中' || emp.status === '休憩中' || emp.status === '退出中'
     );
     const isBeforeOpen = firstClockInMinutes === null || nowMinutes < firstClockInMinutes;
-    const isAfterClose = !hasWorkingStaff && lastClockOutMinutes !== null && nowMinutes > lastClockOutMinutes;
+    // 閉店時刻（分単位）を取得（設定から取得、なければデフォルトの19:00）
+    const closeHour = businessHours.close || 19;
+    const closeMinutes = closeHour * 60;
+    // 閉店後判定：「全員退勤済」かつ「最後の退勤時刻を過ぎている」かつ「閉店時刻を過ぎている」場合のみグレーアウト
+    // 閉店時刻前は絶対にグレーアウトしない（API取得不安定による誤判定を防止）
+    const isAfterClose = !hasWorkingStaff && lastClockOutMinutes !== null && nowMinutes > lastClockOutMinutes && nowMinutes >= closeMinutes;
     const isDuringBusiness = !isBeforeOpen && !isAfterClose;
 
     // 売上データの選択：
