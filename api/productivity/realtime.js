@@ -2538,7 +2538,10 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
   // 売上がある最大時間帯（現在時刻以前のデータのみ対象 = 未来の売上データを除外）
   // 前日のレジ締め後データが翌日の時間帯に混入するケースを防ぐため、
   // currentHour を上限として売上時間帯を絞り込む
-  const salesHoursCapped = salesHours.filter(h => h <= currentHour);
+  // ただし閉店後（深夜0時跨ぎ）の場合は currentHour が翌日早朝になるため、
+  // 閉店時刻(close-1)を上限として使う
+  const effectiveMaxHour = storeIsAfterClose ? (businessHours.close - 1) : currentHour;
+  const salesHoursCapped = salesHours.filter(h => h <= effectiveMaxHour);
   const maxSalesHour = salesHoursCapped.length > 0 ? Math.max(...salesHoursCapped) : (businessHours.close - 1);
   const rawMaxHour = isFinite(maxSalesHour) ? maxSalesHour : businessHours.close - 1;
 
@@ -2547,9 +2550,10 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
   const lastClockOutHour = lastClockOutMinutes !== null ? Math.floor((lastClockOutMinutes - 1) / 60) : null;
 
   // 表示する最大時間帯を決定：
+  // - 閉店後（深夜0時跨ぎ）の場合は effectiveMaxHour（close-1）を基準にする
   // - 出勤者がいる間は閉店時刻を超えても表示し続ける
   // - 最後の退勤時刻の時間帯 vs 売上がある最大時間帯（現在時刻以前） vs 現在時刻 の最大値を採用
-  const maxCandidates = [currentHour, rawMaxHour];
+  const maxCandidates = [effectiveMaxHour, rawMaxHour];
   if (lastClockOutHour !== null) maxCandidates.push(lastClockOutHour);
   const safeMaxHour = Math.max(...maxCandidates);
 

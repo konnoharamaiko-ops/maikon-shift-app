@@ -389,8 +389,10 @@ function StoreCard({ store, onClick, index, currentJstHour }) {
   const Icon = config.icon;
   // 現在時刻以前の時間帯のみを対象にして直近の2件を取得
   // currentJstHourが未定義の場合はフィルタリングなし（安全フォールバック）
+  // 閉店後（is_after_close）の場合はフィルタなしで全データの最後2件を返す（最終値固定）
   const recentHourly = (() => {
     const all = store.hourly_productivity || [];
+    if (isAfterClose) return all.slice(-2); // 閉店後は最終値を固定表示
     if (currentJstHour === undefined || currentJstHour === null) return all.slice(-2);
     // 現在時刻の時間帯以前（hour <= currentJstHour）のみを対象
     const past = all.filter(h => h.hour <= currentJstHour);
