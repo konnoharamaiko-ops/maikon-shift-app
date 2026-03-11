@@ -116,12 +116,12 @@ async function scrapeJobcanAttendance(companyId, loginId, password, date) {
         '10800': 'アベノ店',
         '10150': '心斎橋店',
         '10160': 'かがや店',
-        '10170': 'エキマル',
+        '10170': '駅丸',
         '10180': '北摂店',
         '10190': '堺東店',
         '10200': 'イオン松原店',
         '10210': 'イオン守口店',
-        '10220': '美和堂FC店',
+        '10220': '美和堂福島店',
       };
 
       // 店舗別データを集計
@@ -226,12 +226,12 @@ function generateDummyAttendanceData(date) {
     { code: '10800', name: 'アベノ店' },
     { code: '10150', name: '心斎橋店' },
     { code: '10160', name: 'かがや店' },
-    { code: '10170', name: 'エキマル' },
+    { code: '10170', name: '駅丸' },
     { code: '10180', name: '北摂店' },
     { code: '10190', name: '堺東店' },
     { code: '10200', name: 'イオン松原店' },
     { code: '10210', name: 'イオン守口店' },
-    { code: '10220', name: '美和堂FC店' },
+    { code: '10220', name: '美和堂福島店' },
   ];
 
   return stores.map(store => {

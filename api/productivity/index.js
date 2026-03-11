@@ -224,12 +224,12 @@ function generateDummySalesData(date) {
     { code: '10800', name: 'アベノ店' },
     { code: '10150', name: '心斎橋店' },
     { code: '10160', name: 'かがや店' },
-    { code: '10170', name: 'エキマル' },
+    { code: '10170', name: '駅丸' },
     { code: '10180', name: '北摂店' },
     { code: '10190', name: '堺東店' },
     { code: '10200', name: 'イオン松原店' },
     { code: '10210', name: 'イオン守口店' },
-    { code: '10220', name: '美和堂FC店' },
+    { code: '10220', name: '美和堂福島店' },
   ];
 
   return stores.map(store => {
@@ -268,12 +268,12 @@ function generateDummyAttendanceData(date) {
     { code: '10800', name: 'アベノ店' },
     { code: '10150', name: '心斎橋店' },
     { code: '10160', name: 'かがや店' },
-    { code: '10170', name: 'エキマル' },
+    { code: '10170', name: '駅丸' },
     { code: '10180', name: '北摂店' },
     { code: '10190', name: '堺東店' },
     { code: '10200', name: 'イオン松原店' },
     { code: '10210', name: 'イオン守口店' },
-    { code: '10220', name: '美和堂FC店' },
+    { code: '10220', name: '美和堂福島店' },
   ];
 
   return stores.map(store => {

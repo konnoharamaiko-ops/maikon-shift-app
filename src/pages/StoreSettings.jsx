@@ -29,12 +29,12 @@ const JOBCAN_STORE_LIST = [
   { id: 'store-10800', store_code: '10800', store_name: 'アベノ店' },
   { id: 'store-10900', store_code: '10900', store_name: '心斎橋店' },
   { id: 'store-11010', store_code: '11010', store_name: 'かがや店' },
-  { id: 'store-11200', store_code: '11200', store_name: 'エキマル' },
+  { id: 'store-11200', store_code: '11200', store_name: '駅丸' },
   { id: 'store-12000', store_code: '12000', store_name: '北摂店' },
   { id: 'store-12200', store_code: '12200', store_name: '堺東店' },
   { id: 'store-12300', store_code: '12300', store_name: 'イオン松原店' },
   { id: 'store-12400', store_code: '12400', store_name: 'イオン守口店' },
-  { id: 'store-20000', store_code: '20000', store_name: '美和堂FC店' },
+  { id: 'store-20000', store_code: '20000', store_name: '美和堂福島店' },
 ];
 
 // ========== 日別売上ダイアログ ==========

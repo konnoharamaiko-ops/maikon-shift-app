@@ -18,12 +18,12 @@ const STORE_DEPT_MAP = {
   '10800': 'アベノ店',
   '10900': '心斎橋店',
   '11010': 'かがや店',
-  '11200': 'エキマル',
+  '11200': '駅丸',
   '12000': '北摂店',
   '12200': '堺東店',
   '12300': 'イオン松原店',
   '12400': 'イオン守口店',
-  '20000': '美和堂FC店',
+  '20000': '美和堂福島店',
 };
 
 // 店舗名 → Supabase store_id のマッピング（Supabaseから動的取得も可能）
@@ -36,12 +36,12 @@ const STORE_NAME_TO_ID_MAP = {
   'アベノ店':     'abeno',
   '心斎橋店':     'shinsaibashi',
   'かがや店':     'kagaya',
-  'エキマル':     'ekimaru',
+  '駅丸':     'ekimaru',
   '北摂店':       'hokusetsu',
   '堺東店':       'sakaikita',
   'イオン松原店': 'aeon_matsubara',
   'イオン守口店': 'aeon_moriguchi',
-  '美和堂FC店':   'miwado_fc',
+  '美和堂福島店':   'miwado_fc',
 };
 
 export const config = {

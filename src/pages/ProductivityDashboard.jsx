@@ -145,8 +145,8 @@ const STORE_SETTINGS_KEY = 'maikon_store_settings_v2'; // v2: 曜日別対応
 
 const ALL_STORE_NAMES = [
   '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
-  '心斎橋店', 'かがや店', 'エキマル', '北摂店', '堺東店',
-  'イオン松原店', 'イオン守口店', '美和堂FC店'
+  '心斎橋店', 'かがや店', '駅丸', '北摂店', '堺東店',
+  'イオン松原店', 'イオン守口店', '美和堂福島店'
 ];
 
 const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
@@ -170,7 +170,7 @@ const DEFAULT_STORE_SETTINGS = {
   'アベノ店':     { days: makeDefaultDays(10, 18) },
   '心斎橋店':     { days: makeDefaultDays(10, 18) },
   'かがや店':     { days: makeDefaultDays(10, 18) },
-  'エキマル':     { days: makeDefaultDays(10, 22) },
+  '駅丸':     { days: makeDefaultDays(10, 22) },
   '北摂店':       { days: makeDefaultDays(10, 18) },
   '堺東店':       { days: (() => {
     const d = makeDefaultDays(10, 20);
@@ -179,7 +179,7 @@ const DEFAULT_STORE_SETTINGS = {
   })() },
   'イオン松原店': { days: makeDefaultDays(9,  20) },
   'イオン守口店': { days: makeDefaultDays(9,  20) },
-  '美和堂FC店':   { days: makeDefaultDays(10, 18, [0]) }, // 日曜定休
+  '美和堂福島店':   { days: makeDefaultDays(10, 18, [0]) }, // 日曜定休
 };
 
 // 旧形式（open/close/closed_days）を新形式（days[]）に変換
@@ -745,9 +745,22 @@ function ExcludedStaffCard({ s, updateStaffSetting, i }) {
               className="w-full rounded border dark:border-gray-600 bg-gray-50 dark:bg-gray-800 px-2 py-1 text-xs"
             >
               <option value="">移動先なし</option>
-              {ALL_STORE_NAMES.map(n => <option key={n} value={n}>{n}</option>)}
-              <option value="通販">通販</option>
-              <option value="製造">製造</option>
+              <optgroup label="店1018">
+                {ALL_STORE_NAMES.map(n => <option key={n} value={n}>{n}</option>)}
+              </optgroup>
+              <optgroup label="通企総0919">
+                <option value="特販部">特販部</option>
+                <option value="通販部">通販部</option>
+                <option value="企画部">企画部</option>
+              </optgroup>
+              <optgroup label="工房0918">
+                <option value="北摂工場">北摂工場</option>
+                <option value="かがや工場">かがや工場</option>
+                <option value="南田辺工房">南田辺工房</option>
+              </optgroup>
+              <optgroup label="駅催事出張">
+                <option value="駅催事出張">駅催事出張</option>
+              </optgroup>
             </select>
           </div>
         </div>
@@ -1381,8 +1394,19 @@ function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsC
                                         {ALL_STORE_NAMES.map(s => (
                                           <option key={s} value={s}>{s}</option>
                                         ))}
-                                        <option value="通販">通販</option>
-                                        <option value="製造">製造</option>
+                                        <optgroup label="通企総0919">
+                                          <option value="特販部">特販部</option>
+                                          <option value="通販部">通販部</option>
+                                          <option value="企画部">企画部</option>
+                                        </optgroup>
+                                        <optgroup label="工房0918">
+                                          <option value="北摂工場">北摂工場</option>
+                                          <option value="かがや工場">かがや工場</option>
+                                          <option value="南田辺工房">南田辺工房</option>
+                                        </optgroup>
+                                        <optgroup label="駅催事出張">
+                                          <option value="駅催事出張">駅催事出張</option>
+                                        </optgroup>
                                       </select>
                                     </div>
                                     {isExcluded && (
@@ -1876,13 +1900,22 @@ function StaffSettingsModal({ onClose, onSave }) {
                             className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm disabled:opacity-50"
                           >
                             <option value="">デフォルト（{staff.store_name || '未設定'}）</option>
-                            {[
-                              '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
-                              '心斎橋店', 'かがや店', 'エキマル', '北摂店', '堺東店',
-                              'イオン松原店', 'イオン守口店', '美和堂FC店'
-                            ].map(s => (
+                            {ALL_STORE_NAMES.map(s => (
                               <option key={s} value={s}>{s}</option>
                             ))}
+                            <optgroup label="通企総0919">
+                              <option value="特販部">特販部</option>
+                              <option value="通販部">通販部</option>
+                              <option value="企画部">企画部</option>
+                            </optgroup>
+                            <optgroup label="工房0918">
+                              <option value="北摂工場">北摂工場</option>
+                              <option value="かがや工場">かがや工場</option>
+                              <option value="南田辺工房">南田辺工房</option>
+                            </optgroup>
+                            <optgroup label="駅催事出張">
+                              <option value="駅催事出張">駅催事出張</option>
+                            </optgroup>
                           </select>
                         </div>
 
@@ -2312,7 +2345,29 @@ export default function ProductivityDashboard() {
     // localStorageからスタッフ設定を読み込む
     try {
       const saved = localStorage.getItem('maikon_staff_settings');
-      return saved ? JSON.parse(saved) : {};
+      if (!saved) return {};
+      const parsed = JSON.parse(saved);
+      // 旧店舗名マイグレーション（エキマル→駅丸、美和堂FC店→美和堂福島店）
+      const STORE_NAME_MIGRATION = { 'エキマル': '駅丸', '美和堂FC店': '美和堂福島店' };
+      let migrated = false;
+      const migratedSettings = {};
+      for (const [id, setting] of Object.entries(parsed)) {
+        const newSetting = { ...setting };
+        if (setting.override_store && STORE_NAME_MIGRATION[setting.override_store]) {
+          newSetting.override_store = STORE_NAME_MIGRATION[setting.override_store];
+          migrated = true;
+        }
+        if (setting.excluded_from_store && STORE_NAME_MIGRATION[setting.excluded_from_store]) {
+          newSetting.excluded_from_store = STORE_NAME_MIGRATION[setting.excluded_from_store];
+          migrated = true;
+        }
+        migratedSettings[id] = newSetting;
+      }
+      if (migrated) {
+        localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
+        console.log('[Migration] 店舗名を新名称に更新しました');
+      }
+      return migratedSettings;
     } catch { return {}; }
   });
   const queryClient = useQueryClient();

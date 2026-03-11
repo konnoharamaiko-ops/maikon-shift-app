@@ -177,7 +177,7 @@ async function fetchStaffList(cookies) {
         // 5桁数字 = 部署コード
         if (/^\d{5}$/.test(text)) deptCode = text;
         // 店舗名を含むセル
-        if (text.includes('店') || text.includes('エキマル')) storeName = text;
+        if (text.includes('店') || text.includes('駅丸') || text.includes('エキマル')) storeName = text;
       });
 
       staffList.push({
