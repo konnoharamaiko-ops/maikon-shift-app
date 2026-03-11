@@ -194,7 +194,11 @@ export default async function handler(req, res) {
     const isCacheValid = _cache !== null && cacheAge < CACHE_TTL_MS;
     const isCacheStale = _cache !== null && cacheAge < CACHE_STALE_MS;
 
-    if (!forceRefresh && isCacheValid) {
+    // staff_settingsが指定されている場合：キャッシュをスキップして必ず再計算する
+    // （除外スタッフの設定がキャッシュに影響されないように）
+    const hasStaffSettings = Object.keys(clientStaffSettings).length > 0;
+
+    if (!forceRefresh && !hasStaffSettings && isCacheValid) {
       // キャッシュが新鮮：即座に返す
       console.log(`[Cache] HIT (age: ${Math.round(cacheAge/1000)}s)`);
       return res.status(200).json({
@@ -204,12 +208,12 @@ export default async function handler(req, res) {
       });
     }
 
-    if (!forceRefresh && isCacheStale && !_isRevalidating) {
+    if (!forceRefresh && !hasStaffSettings && isCacheStale && !_isRevalidating) {
       // キャッシュが古い（stale）：古いデータを即座に返し、バックグラウンドで更新開始
       console.log(`[Cache] STALE (age: ${Math.round(cacheAge/1000)}s) - returning stale data, revalidating in background`);
       _isRevalidating = true;
       // バックグラウンドで更新（awaitしない）
-      fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings, clientStaffSettings)
+      fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings, {})
         .catch(e => console.error('[Cache] Background revalidation failed:', e.message))
         .finally(() => { _isRevalidating = false; });
       return res.status(200).json({
@@ -572,14 +576,20 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
       ? (clientStaffSettings[master.id] || clientStaffSettings[master.staff_name] || null)
       : (clientStaffSettings[emp.name] || null);
 
-    // 除外設定がある場合は人時計算から除外
+    // 除外設定がある場合の処理
     if (clientSetting?.excluded === true) {
-      console.log(`[StaffSettings] 除外: ${emp.name}`);
-      return; // storeEmployeesに追加しない
-    }
-
-    // 所属店舗変更設定がある場合は上書き
-    if (clientSetting?.override_store) {
+      if (clientSetting?.override_store) {
+        // 移動先が設定されている場合：元の店舗から除外し、移動先店舗の人時計算に追加する
+        emp = { ...emp, store_name: clientSetting.override_store, is_transferred: true };
+        console.log(`[StaffSettings] 除外＋移動: ${emp.name} → ${clientSetting.override_store}`);
+        // 移動先として処理を続行（returnしない）
+      } else {
+        // 移動先なし：どの店舗にも追加しない
+        console.log(`[StaffSettings] 除外: ${emp.name}`);
+        return;
+      }
+    } else if (clientSetting?.override_store) {
+      // 除外なし・所属店舗変更のみの場合
       emp = { ...emp, store_name: clientSetting.override_store };
       console.log(`[StaffSettings] 所属変更: ${emp.name} → ${clientSetting.override_store}`);
     }
@@ -2574,8 +2584,19 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
     const totalHoursFromHourly = hourlyProductivity.reduce((sum, h) => sum + (h.person_hours || 0), 0);
     // 小数点1桁に丸めてヘッダー表示用に使用
     const totalHours = parseFloat(totalHoursFromHourly.toFixed(1));
-    // 人時生産性はhourlyの合計人時数（丸めなし）で割って正確に計算
-    const productivity = totalHoursFromHourly > 0 ? Math.round(todaySales / totalHoursFromHourly) : 0;
+
+    // 閉店後（isAfterClose）の場合：
+    //   hourlyProductivityのperson_hoursは全て0になるため、
+    //   attendInfo.total_hours（実際の総労働時間）を使って人時生産性を計算し固定表示する
+    // 営業中の場合：hourlyの合計人時数（丸めなし）で割って正確に計算
+    let productivity;
+    if (isAfterClose) {
+      const actualTotalHours = attendInfo.total_hours || 0;
+      productivity = actualTotalHours > 0 ? Math.round(todaySales / actualTotalHours) : 0;
+      console.log(`[mergeStoreData] ${storeName}: 閉店後固定 todaySales=${todaySales}, actualTotalHours=${actualTotalHours}, productivity=${productivity}`);
+    } else {
+      productivity = totalHoursFromHourly > 0 ? Math.round(todaySales / totalHoursFromHourly) : 0;
+    }
 
     return {
       tenpo_name: storeName,
