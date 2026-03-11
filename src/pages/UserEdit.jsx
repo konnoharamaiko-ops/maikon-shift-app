@@ -84,6 +84,7 @@ export default function UserEdit() {
         belongs_hokusetsu_cooking: targetUser.belongs_hokusetsu_cooking || false,
         belongs_kagaya_bagging: targetUser.belongs_kagaya_bagging || false,
         belongs_kagaya_cooking: targetUser.belongs_kagaya_cooking || false,
+        jobcan_code: targetUser.jobcan_code || '',
       });
     }
   }, [targetUser]);
@@ -125,6 +126,7 @@ export default function UserEdit() {
       daily_hours_min: editedUser.daily_hours_min ? parseFloat(editedUser.daily_hours_min) : null,
       daily_hours_max: editedUser.daily_hours_max ? parseFloat(editedUser.daily_hours_max) : null,
       admin_memo: editedUser.admin_memo || null,
+      jobcan_code: editedUser.jobcan_code || null,
       metadata: {
         ...currentMetadata,
         display_name: finalDisplayName,
@@ -317,6 +319,10 @@ export default function UserEdit() {
                     <p className="font-medium">{targetUser.email}</p>
                   </div>
                   <div>
+                    <p className="text-sm text-slate-500">ジョブカンコード</p>
+                    <p className="font-medium">{targetUser.jobcan_code || <span className="text-slate-400 text-sm">未設定</span>}</p>
+                  </div>
+                  <div>
                     <p className="text-sm text-slate-500">氏名</p>
                     <p className="font-medium">{targetUser.full_name || '-'}</p>
                   </div>
@@ -428,9 +434,19 @@ export default function UserEdit() {
                     </div>
                   </div>
 
-                  <div>
-                    <Label className="text-sm font-medium text-slate-700 mb-2 block">メールアドレス</Label>
-                    <Input value={targetUser.email} disabled className="bg-slate-50" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium text-slate-700 mb-2 block">メールアドレス</Label>
+                      <Input value={targetUser.email} disabled className="bg-slate-50" />
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-slate-700 mb-2 block">ジョブカンコード <span className="text-xs text-slate-400">(初期パスワード)</span></Label>
+                      <Input
+                        value={editedUser?.jobcan_code || ''}
+                        onChange={(e) => setEditedUser({ ...editedUser, jobcan_code: e.target.value })}
+                        placeholder="例：113"
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">

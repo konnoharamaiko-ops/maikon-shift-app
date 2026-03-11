@@ -34,32 +34,62 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'ジョブカンコードとパスワードを入力してください' });
     }
 
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+    // Vercel Serverless Functions では VITE_ プレフィックスは実行時に undefined になるため
+    // NEXT_PUBLIC_ または プレフィックスなしの変数を優先して使用する
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      || process.env.SUPABASE_URL
+      || process.env.VITE_SUPABASE_URL;
+
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      || process.env.SUPABASE_ANON_KEY
+      || process.env.VITE_SUPABASE_ANON_KEY;
+
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+      || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+
+    // デバッグ用ログ（本番でも一時的に残す）
+    console.log('[JobcanLogin] ENV check:', {
+      hasUrl: !!supabaseUrl,
+      urlPrefix: supabaseUrl ? supabaseUrl.substring(0, 30) : 'MISSING',
+      hasAnonKey: !!supabaseAnonKey,
+      hasServiceKey: !!supabaseServiceKey,
+      jobcan_code,
+    });
 
     if (!supabaseUrl || !supabaseAnonKey) {
-      return res.status(500).json({ error: 'Supabase設定が不正です' });
+      console.error('[JobcanLogin] Missing Supabase config. Available env keys:', Object.keys(process.env).filter(k => k.includes('SUPABASE')));
+      return res.status(500).json({ error: 'Supabase設定が不正です（環境変数未設定）' });
     }
 
     // 1. ジョブカンコードからメールアドレスを検索（Service Roleキーを使用）
     const lookupKey = supabaseServiceKey || supabaseAnonKey;
-    const userLookupRes = await fetch(
-      `${supabaseUrl}/rest/v1/User?jobcan_code=eq.${encodeURIComponent(jobcan_code)}&select=id,email,full_name,is_active,jobcan_code&limit=1`,
-      {
-        headers: {
-          'apikey': lookupKey,
-          'Authorization': `Bearer ${lookupKey}`,
-        },
-      }
-    );
+    const lookupUrl = `${supabaseUrl}/rest/v1/User?jobcan_code=eq.${encodeURIComponent(jobcan_code)}&select=id,email,full_name,is_active,jobcan_code&limit=1`;
+
+    console.log('[JobcanLogin] Lookup URL:', lookupUrl.replace(supabaseUrl, '[URL]'));
+
+    const userLookupRes = await fetch(lookupUrl, {
+      headers: {
+        'apikey': lookupKey,
+        'Authorization': `Bearer ${lookupKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const lookupBody = await userLookupRes.text();
+    console.log('[JobcanLogin] Lookup response:', userLookupRes.status, lookupBody.substring(0, 200));
 
     if (!userLookupRes.ok) {
-      console.error('[JobcanLogin] User lookup failed:', userLookupRes.status);
-      return res.status(500).json({ error: 'ユーザー検索に失敗しました' });
+      console.error('[JobcanLogin] User lookup failed:', userLookupRes.status, lookupBody);
+      return res.status(500).json({ error: `ユーザー検索に失敗しました (${userLookupRes.status})` });
     }
 
-    const users = await userLookupRes.json();
+    let users;
+    try {
+      users = JSON.parse(lookupBody);
+    } catch (e) {
+      console.error('[JobcanLogin] Failed to parse lookup response:', lookupBody);
+      return res.status(500).json({ error: 'ユーザー検索レスポンスの解析に失敗しました' });
+    }
 
     if (!users || users.length === 0) {
       return res.status(401).json({ error: 'このジョブカンコードは登録されていません。\n管理者にお問い合わせください。' });
@@ -99,7 +129,7 @@ export default async function handler(req, res) {
       console.error('[JobcanLogin] SignIn failed:', signInRes.status, errMsg);
 
       if (errMsg.includes('Invalid login credentials') || signInRes.status === 400) {
-        return res.status(401).json({ error: 'パスワードが違います。' });
+        return res.status(401).json({ error: 'パスワードが違います。\n初期パスワードはジョブカンコード（例：113）です。' });
       } else if (errMsg.includes('Email not confirmed')) {
         return res.status(401).json({ error: 'メールアドレスの確認が完了していません。' });
       } else if (errMsg.includes('too many requests') || errMsg.includes('rate limit')) {

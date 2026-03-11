@@ -63,6 +63,7 @@ function SortableUserCard({ id, user, renderContent }) {
 export default function UserManagement() {
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
+  const [jobcanCode, setJobcanCode] = useState('');
   const [role, setRole] = useState('user');
   const [storeIds, setStoreIds] = useState([]);
   // editingUser and showEditModal are removed as editing is now handled via a separate page linked by `Link`
@@ -290,6 +291,7 @@ export default function UserManagement() {
         throw new Error('管理者APIが設定されていません。.envファイルにVITE_SUPABASE_SERVICE_ROLE_KEYを設定してください。');
       }
 
+      // 初期パスワードはジョブカンコード（未設定の場合はShiftApp2025!）
       const defaultPassword = password || 'ShiftApp2025!';
       let authUserId = null;
 
@@ -356,6 +358,7 @@ export default function UserManagement() {
           role,
           store_id: storeIds[0] || null,
           store_ids: storeIds,
+          jobcan_code: jobcanCode || null,
           invited_at: new Date().toISOString(),
           invited_by: currentUser?.email || 'admin',
         });
@@ -389,7 +392,7 @@ export default function UserManagement() {
       }
 
       // Return data for onSuccess to use
-      return { email, fullName, role, storeIds, defaultPassword, appUrl, supabaseEmailSent, inviteLink };
+      return { email, fullName, role, storeIds, jobcanCode, defaultPassword, appUrl, supabaseEmailSent, inviteLink };
     },
     onSuccess: (data) => {
       invalidateUserQueries(queryClient);
@@ -401,6 +404,7 @@ export default function UserManagement() {
       
       setEmail('');
       setFullName('');
+      setJobcanCode('');
       setRole('user');
       setStoreIds([]);
       
@@ -418,7 +422,9 @@ export default function UserManagement() {
       toast.error('全ての項目を入力してください');
       return;
     }
-    inviteMutation.mutate({ email, fullName, role, storeIds });
+    // 初期パスワード = ジョブカンコード（未入力の場合はShiftApp2025!）
+    const initialPassword = jobcanCode || 'ShiftApp2025!';
+    inviteMutation.mutate({ email, fullName, role, storeIds, password: initialPassword, jobcanCode });
   };
 
   const updateMutation = useMutation({
@@ -821,6 +827,22 @@ export default function UserManagement() {
               />
             </div>
             <div>
+              <Label htmlFor="jobcanCode" className="text-sm font-medium text-slate-700 mb-2 block">
+                ジョブカンコード <span className="text-xs text-slate-400">（初期パスワードになります）</span>
+              </Label>
+              <div className="relative">
+                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  id="jobcanCode"
+                  type="text"
+                  value={jobcanCode}
+                  onChange={(e) => setJobcanCode(e.target.value)}
+                  placeholder="例：113"
+                  className="pl-10 border-slate-200"
+                />
+              </div>
+            </div>
+            <div>
               <Label htmlFor="email" className="text-sm font-medium text-slate-700 mb-2 block">
                 メールアドレス
               </Label>
@@ -892,7 +914,7 @@ export default function UserManagement() {
             </Button>
           </form>
           <p className="text-xs text-slate-400 mt-3">
-            ※ 追加されたユーザーには招待メールが送信されます（Supabase自動メール + Gmailからのメール）。初期パスワードは「ShiftApp2025!」です。ログイン後、設定画面からパスワードを変更できます。
+            ※ 初期パスワードはジョブカンコードです（未入力の場合は「ShiftApp2025!」）。ログイン後、設定画面からパスワードを変更できます。
           </p>
           
           {/* Gmail招待メール送信ダイアログ */}

@@ -44,6 +44,7 @@ export const AuthProvider = ({ children }) => {
         full_name: pending.full_name,
         user_role: pending.role || 'user',
         store_ids: pending.store_ids || (pending.store_id ? [pending.store_id] : []),
+        jobcan_code: pending.jobcan_code || null,
         is_active: true,
         metadata: { display_name: pending.full_name, employment_type: 'part_time' },
       };
