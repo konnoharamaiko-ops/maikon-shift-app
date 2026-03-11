@@ -68,7 +68,7 @@ export default function ExportButton({
       } else if (type === 'users') {
         // ユーザーデータ
         csvContent = '\uFEFF';
-        csvContent += '氏名,メールアドレス,権限,所属店舗,雇用形態,時給,登録日\n';
+        csvContent += '氏名,メールアドレス,権限,所属先,雇用形態,時給,登録日\n';
         
         data.forEach(item => {
           const roleLabel = item.user_role === 'admin' ? '管理者' : 
@@ -195,7 +195,7 @@ export default function ExportButton({
         doc.text('氏名', 15, yPos);
         doc.text('メール', 50, yPos);
         doc.text('権限', 100, yPos);
-        doc.text('所属店舗', 130, yPos);
+        doc.text('所属先', 130, yPos);
         doc.text('雇用形態', 170, yPos);
         doc.text('時給', 200, yPos);
         doc.text('登録日', 230, yPos);

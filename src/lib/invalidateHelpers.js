@@ -9,7 +9,7 @@
 export function invalidateStoreQueries(queryClient) {
   // 店舗一覧（各ページで使用）
   queryClient.invalidateQueries({ queryKey: ['stores'] });
-  // ユーザーの所属店舗（ConfirmedShiftViewer等）
+  // ユーザーの所属先（ConfirmedShiftViewer等）
   queryClient.invalidateQueries({ queryKey: ['userStores'] });
   // 店舗別ユーザー（ShiftCreation, ShiftTableViewer等）
   queryClient.invalidateQueries({ queryKey: ['storeUsers'] });
@@ -37,7 +37,7 @@ export function invalidateUserQueries(queryClient) {
   queryClient.invalidateQueries({ queryKey: ['storeUsers'] });
   // 店舗別確認メンバー（ConfirmedShiftViewer）
   queryClient.invalidateQueries({ queryKey: ['storeMembersForConfirm'] });
-  // ユーザーの所属店舗（ConfirmedShiftViewer）
+  // ユーザーの所属先（ConfirmedShiftViewer）
   queryClient.invalidateQueries({ queryKey: ['userStores'] });
   // Analytics用ユーザー
   queryClient.invalidateQueries({ queryKey: ['allUsersAnalytics'] });

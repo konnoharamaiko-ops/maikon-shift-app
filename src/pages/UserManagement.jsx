@@ -152,11 +152,14 @@ export default function UserManagement() {
     const isRegularUser = u.user_role !== 'admin' && u.role !== 'admin';
     if (!isRegularUser) return false;
     if (selectedStoreFilter === 'all') return true;
+    if (selectedStoreFilter === 'tokuhan') return u.belongs_tokuhan === true;
     if (selectedStoreFilter === 'online') return u.belongs_online === true;
-    if (selectedStoreFilter === 'manufacturing') return u.belongs_hokusetsu_bagging === true || u.belongs_hokusetsu_cooking === true || u.belongs_kagaya_bagging === true || u.belongs_kagaya_cooking === true;
-    if (selectedStoreFilter === 'manufacturing_hokusetsu') return u.belongs_hokusetsu_bagging === true || u.belongs_hokusetsu_cooking === true;
-    if (selectedStoreFilter === 'manufacturing_kagaya') return u.belongs_kagaya_bagging === true || u.belongs_kagaya_cooking === true;
     if (selectedStoreFilter === 'planning') return u.belongs_planning === true;
+    if (selectedStoreFilter === 'manufacturing') return u.belongs_hokusetsu === true || u.belongs_kagaya === true || u.belongs_minamitanabe === true;
+    if (selectedStoreFilter === 'manufacturing_hokusetsu') return u.belongs_hokusetsu === true;
+    if (selectedStoreFilter === 'manufacturing_kagaya') return u.belongs_kagaya === true;
+    if (selectedStoreFilter === 'manufacturing_minamitanabe') return u.belongs_minamitanabe === true;
+    if (selectedStoreFilter === 'ekimaru') return u.belongs_ekimaru === true;
     return u.store_ids?.includes(selectedStoreFilter);
   });
 
@@ -696,24 +699,39 @@ export default function UserManagement() {
               {userStores.length > 2 && (
                 <span className="text-[9px] sm:text-[10px] text-slate-400">+{userStores.length - 2}</span>
               )}
+              {user?.belongs_tokuhan && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full flex items-center gap-0.5">
+                  <ShoppingCart className="w-2 h-2 sm:w-2.5 sm:h-2.5" />特販部
+                </span>
+              )}
               {user?.belongs_online && (
                 <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full flex items-center gap-0.5">
-                  <ShoppingCart className="w-2 h-2 sm:w-2.5 sm:h-2.5" />通販
-                </span>
-              )}
-              {(user?.belongs_hokusetsu_bagging || user?.belongs_hokusetsu_cooking) && (
-                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
-                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />北摂
-                </span>
-              )}
-              {(user?.belongs_kagaya_bagging || user?.belongs_kagaya_cooking) && (
-                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
-                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />加賀屋
+                  <ShoppingCart className="w-2 h-2 sm:w-2.5 sm:h-2.5" />通販部
                 </span>
               )}
               {user?.belongs_planning && (
-                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-purple-100 text-purple-600 rounded-full flex items-center gap-0.5">
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full flex items-center gap-0.5">
                   <Briefcase className="w-2 h-2 sm:w-2.5 sm:h-2.5" />企画部
+                </span>
+              )}
+              {user?.belongs_hokusetsu && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
+                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />北摂工場
+                </span>
+              )}
+              {user?.belongs_kagaya && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
+                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />かがや工場
+                </span>
+              )}
+              {user?.belongs_minamitanabe && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
+                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />南田辺工房
+                </span>
+              )}
+              {user?.belongs_ekimaru && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-green-100 text-green-600 rounded-full flex items-center gap-0.5">
+                  <Building2 className="w-2 h-2 sm:w-2.5 sm:h-2.5" />駅催事出張
                 </span>
               )}
             </div>
@@ -876,7 +894,7 @@ export default function UserManagement() {
               </div>
               <div>
                 <Label htmlFor="stores" className="text-sm font-medium text-slate-700 mb-2 block">
-                  所属店舗（複数選択可）
+                  所属先（複数選択可）
                 </Label>
                 <div className="space-y-2 border border-slate-200 rounded-lg p-3 max-h-40 overflow-y-auto">
                   {stores.length === 0 ? (
@@ -1126,11 +1144,14 @@ export default function UserManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">すべて</SelectItem>
-                  <SelectItem value="online"><span className="flex items-center gap-1.5"><ShoppingCart className="w-3.5 h-3.5 text-blue-500" />通販部門</span></SelectItem>
-                  <SelectItem value="manufacturing"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />製造（全工場）</span></SelectItem>
-                  <SelectItem value="manufacturing_hokusetsu"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />北摂工場</span></SelectItem>
-                  <SelectItem value="manufacturing_kagaya"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />加賀屋工場</span></SelectItem>
+                  <SelectItem value="tokuhan"><span className="flex items-center gap-1.5"><ShoppingCart className="w-3.5 h-3.5 text-blue-500" />特販部</span></SelectItem>
+                  <SelectItem value="online"><span className="flex items-center gap-1.5"><ShoppingCart className="w-3.5 h-3.5 text-blue-500" />通販部</span></SelectItem>
                   <SelectItem value="planning"><span className="flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5 text-purple-500" />企画部</span></SelectItem>
+                  <SelectItem value="manufacturing"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />工房0918（全工場）</span></SelectItem>
+                  <SelectItem value="manufacturing_hokusetsu"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />北摂工場</span></SelectItem>
+                  <SelectItem value="manufacturing_kagaya"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />かがや工場</span></SelectItem>
+                  <SelectItem value="manufacturing_minamitanabe"><span className="flex items-center gap-1.5"><Factory className="w-3.5 h-3.5 text-amber-500" />南田辺工房</span></SelectItem>
+                  <SelectItem value="ekimaru"><span className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-green-500" />駅催事出張</span></SelectItem>
                   {sortStoresByOrder(stores).map(store => (
                     <SelectItem key={store.id} value={store.id}>
                       {store.store_name}

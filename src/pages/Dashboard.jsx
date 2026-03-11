@@ -210,7 +210,7 @@ export default function Dashboard() {
 
   const allCards = [
     { id: 'shift-submit', label: 'シフト希望提出', icon: Calendar, path: 'Home', color: 'from-indigo-500 to-purple-600', desc: 'シフト希望を入力・管理', show: true },
-    { id: 'shift-overview', label: 'シフト一覧表', icon: Eye, path: 'ShiftOverview', color: 'from-cyan-500 to-blue-600', desc: '所属店舗のシフト希望一覧', show: true },
+    { id: 'shift-overview', label: 'シフト一覧表', icon: Eye, path: 'ShiftOverview', color: 'from-cyan-500 to-blue-600', desc: '所属先のシフト希望一覧', show: true },
     { id: 'analytics', label: '有給管理・勤務分析', icon: CalendarHeart, path: 'Analytics', color: 'from-orange-400 to-amber-500', desc: '有給休暇管理・労働時間の可視化', show: true },
     { id: 'productivity', label: '人時生産性', icon: Activity, path: 'productivity-dashboard', color: 'from-violet-500 to-indigo-600', desc: '各店舗の売上・稼働状況をリアルタイム監視', show: isAdminOrManager },
     { id: 'admin-view', label: 'シフト提出状況', icon: ClipboardList, path: 'Admin', color: 'from-purple-500 to-pink-600', desc: '全員のシフト希望を確認・管理', show: isAdminOrManager },

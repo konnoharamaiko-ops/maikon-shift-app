@@ -1179,7 +1179,7 @@ function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsC
                               />
                             </div>
                             <div className="col-span-2">
-                              <label className="text-xs text-muted-foreground block mb-1">所属店舗</label>
+                              <label className="text-xs text-muted-foreground block mb-1">所属先</label>
                               <select
                                 value={addStaffForm.store_name}
                                 onChange={e => setAddStaffForm(f => ({ ...f, store_name: e.target.value }))}
@@ -1381,9 +1381,9 @@ function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsC
                                         }`} />
                                       </button>
                                     </div>
-                                    {/* 所属店舗変更 */}
+                                    {/* 所属先変更 */}
                                     <div>
-                                      <label className="text-xs text-muted-foreground block mb-1">所属店舗変更（任意）</label>
+                                      <label className="text-xs text-muted-foreground block mb-1">所属先変更（任意）</label>
                                       <select
                                         value={setting.override_store || ''}
                                         onChange={e => updateStaffSetting(staffId, 'override_store', e.target.value)}
@@ -1890,9 +1890,9 @@ function StaffSettingsModal({ onClose, onSave }) {
                           </div>
                         </div>
 
-                        {/* 所属店舗変更 */}
+                        {/* 所属先変更 */}
                         <div className="mb-3">
-                          <label className="text-xs text-muted-foreground block mb-1">所属店舗変更（任意）</label>
+                          <label className="text-xs text-muted-foreground block mb-1">所属先変更（任意）</label>
                           <select
                             value={setting.override_store || ''}
                             onChange={e => updateStaffSetting(staff.id, 'override_store', e.target.value)}

@@ -1449,7 +1449,7 @@ export default function ShiftOverview() {
            </div>
            <div>
              <h1 className="text-base sm:text-2xl font-bold text-slate-800">シフト一覧表</h1>
-             <p className="text-[10px] sm:text-sm text-slate-500">所属店舗のシフト希望を確認・編集</p>
+             <p className="text-[10px] sm:text-sm text-slate-500">所属先のシフト希望を確認・編集</p>
            </div>
          </div>
         <div className="flex items-center gap-2 flex-wrap">

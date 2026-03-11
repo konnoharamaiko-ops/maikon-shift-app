@@ -75,7 +75,7 @@ export default function Layout({ children, currentPageName }) {
       { name: 'productivity-history', label: '過去実績分析', icon: History, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'Admin', label: 'シフト提出状況', icon: Shield, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'ShiftCreation', label: 'シフト作成', icon: FileEdit, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
-      { name: 'StoreSettings', label: '店舗設定', icon: Shield, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
+      { name: 'StoreSettings', label: '所属先設定', icon: Shield, show: isAdminOrManager, mobileBottom: false, badgeCount: 0 },
       { name: 'UserManagement', label: 'ユーザー', icon: Users, show: isAdmin, mobileBottom: false, badgeCount: 0 },
       { name: 'SystemSettings', label: 'システム設定', icon: Settings, show: isAdmin, mobileBottom: false, badgeCount: 0 },
       { name: 'Settings', label: '基本設定', icon: User, show: true, mobileBottom: true, badgeCount: 0 },

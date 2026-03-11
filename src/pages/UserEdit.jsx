@@ -105,7 +105,7 @@ export default function UserEdit() {
 
   const handleSave = () => {
     if (!editedUser.full_name || !editedUser.store_ids || editedUser.store_ids.length === 0) {
-      toast.error('氏名と所属店舗は必須です');
+      toast.error('氏名と所属先は必須です');
       return;
     }
     // Store all user info in metadata JSON to match Supabase schema
@@ -337,7 +337,7 @@ export default function UserEdit() {
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-slate-500">所属店舗</p>
+                    <p className="text-sm text-slate-500">所属先</p>
                     <p className="font-medium">
                       {targetUser.store_ids?.length > 0 
                         ? stores.filter(s => targetUser.store_ids.includes(s.id)).map(s => s.store_name).join(', ')
@@ -489,10 +489,10 @@ export default function UserEdit() {
                     {/* 所属先タブ */}
                     <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-3">
                       {[
-                        { id: 'store', label: '店舗' },
-                        { id: 'online', label: '通販' },
-                        { id: 'manufacturing', label: '製造' },
-                        { id: 'planning', label: '企画部' },
+                        { id: 'store', label: '店1018' },
+                        { id: 'online', label: '通企総0919' },
+                        { id: 'manufacturing', label: '工房0918' },
+                        { id: 'ekimaru', label: '駅催事出張' },
                       ].map(({ id, label }) => (
                         <button
                           key={id}
@@ -531,58 +531,61 @@ export default function UserEdit() {
                         ))}
                       </div>
                     )}
-                    {/* 通販タブ */}
+                    {/* 通企総0919タブ */}
                     {editedUser?._affiliationTab === 'online' && (
-                      <div className="border border-blue-200 rounded-lg p-3">
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-blue-50 p-2 rounded">
-                          <input
-                            type="checkbox"
-                            checked={editedUser?.belongs_online || false}
-                            onChange={(e) => setEditedUser({ ...editedUser, belongs_online: e.target.checked })}
-                            className="w-4 h-4"
-                          />
-                          <span className="text-sm font-medium">通販部門（受注処理・受電）</span>
-                        </label>
-                        <p className="text-[10px] text-slate-400 mt-2 ml-2">通販部門に所属する場合はチェックしてください</p>
-                      </div>
-                    )}
-                    {/* 企画部タブ */}
-                    {editedUser?._affiliationTab === 'planning' && (
-                      <div className="border border-purple-200 rounded-lg p-3">
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-purple-50 p-2 rounded">
-                          <input
-                            type="checkbox"
-                            checked={editedUser?.belongs_planning || false}
-                            onChange={(e) => setEditedUser({ ...editedUser, belongs_planning: e.target.checked })}
-                            className="w-4 h-4"
-                          />
-                          <span className="text-sm font-medium">企画部（加賀屋企画部）</span>
-                        </label>
-                        <p className="text-[10px] text-slate-400 mt-2 ml-2">企画部に所属する場合はチェックしてください</p>
-                      </div>
-                    )}
-                    {/* 製造タブ */}
-                    {editedUser?._affiliationTab === 'manufacturing' && (
-                      <div className="border border-amber-200 rounded-lg p-3 space-y-3">
+                      <div className="border border-blue-200 rounded-lg p-3 space-y-1">
                         {[
-                          { factory: '北摂工場', key: 'hokusetsu', sections: [{ label: '袋詰め', key: 'bagging' }, { label: '炊き場', key: 'cooking' }] },
-                          { factory: '加賀屋工場', key: 'kagaya', sections: [{ label: '袋詰め', key: 'bagging' }, { label: '炊き場', key: 'cooking' }] },
-                        ].map(({ factory, key, sections }) => (
-                          <div key={key}>
-                            <p className="text-xs font-bold text-amber-700 mb-1">{factory}</p>
-                            {sections.map(section => (
-                              <label key={section.key} className="flex items-center gap-2 cursor-pointer hover:bg-amber-50 p-2 rounded">
-                                <input
-                                  type="checkbox"
-                                  checked={editedUser?.[`belongs_${key}_${section.key}`] || false}
-                                  onChange={(e) => setEditedUser({ ...editedUser, [`belongs_${key}_${section.key}`]: e.target.checked })}
-                                  className="w-4 h-4"
-                                />
-                                <span className="text-sm">{section.label}</span>
-                              </label>
-                            ))}
-                          </div>
+                          { label: '特販部', key: 'belongs_tokuhan' },
+                          { label: '通販部', key: 'belongs_online' },
+                          { label: '企画部', key: 'belongs_planning' },
+                        ].map(({ label, key }) => (
+                          <label key={key} className="flex items-center gap-2 cursor-pointer hover:bg-blue-50 p-2 rounded">
+                            <input
+                              type="checkbox"
+                              checked={editedUser?.[key] || false}
+                              onChange={(e) => setEditedUser({ ...editedUser, [key]: e.target.checked })}
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm font-medium">{label}</span>
+                          </label>
                         ))}
+                        <p className="text-[10px] text-slate-400 mt-2 ml-2">通企総0919に所属する部門をチェックしてください</p>
+                      </div>
+                    )}
+                    {/* 工房0918タブ */}
+                    {editedUser?._affiliationTab === 'manufacturing' && (
+                      <div className="border border-amber-200 rounded-lg p-3 space-y-1">
+                        {[
+                          { label: '北摂工場', key: 'belongs_hokusetsu' },
+                          { label: 'かがや工場', key: 'belongs_kagaya' },
+                          { label: '南田辺工房', key: 'belongs_minamitanabe' },
+                        ].map(({ label, key }) => (
+                          <label key={key} className="flex items-center gap-2 cursor-pointer hover:bg-amber-50 p-2 rounded">
+                            <input
+                              type="checkbox"
+                              checked={editedUser?.[key] || false}
+                              onChange={(e) => setEditedUser({ ...editedUser, [key]: e.target.checked })}
+                              className="w-4 h-4"
+                            />
+                            <span className="text-sm font-medium">{label}</span>
+                          </label>
+                        ))}
+                        <p className="text-[10px] text-slate-400 mt-2 ml-2">工房0918に所属する工場をチェックしてください</p>
+                      </div>
+                    )}
+                    {/* 駅催事出張タブ */}
+                    {editedUser?._affiliationTab === 'ekimaru' && (
+                      <div className="border border-green-200 rounded-lg p-3">
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-green-50 p-2 rounded">
+                          <input
+                            type="checkbox"
+                            checked={editedUser?.belongs_ekimaru || false}
+                            onChange={(e) => setEditedUser({ ...editedUser, belongs_ekimaru: e.target.checked })}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm font-medium">駅催事出張</span>
+                        </label>
+                        <p className="text-[10px] text-slate-400 mt-2 ml-2">駅催事・出張に所属する場合はチェックしてください</p>
                       </div>
                     )}
                   </div>

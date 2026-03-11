@@ -751,15 +751,16 @@ export default function StoreSettings() {
               </div>
               <div>
                 <h1 className="text-base sm:text-xl font-bold text-slate-800">所属先設定</h1>
-                <p className="text-xs text-slate-500 hidden sm:block">店舗・通販・製造の所属先を管理</p>
+                <p className="text-xs text-slate-500 hidden sm:block">店1018・通企総0919・工房0918・駅催事出張の所属先を管理</p>
               </div>
             </div>
             {/* メインタブ */}
             <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-0.5">
               {[
-                { id: 'store', label: '店舗', icon: Building2 },
-                { id: 'online', label: '通販', icon: ShoppingCart },
-                { id: 'manufacturing', label: '製造', icon: Factory },
+                { id: 'store', label: '店1018', icon: Building2 },
+                { id: 'online', label: '通企総0919', icon: ShoppingCart },
+                { id: 'manufacturing', label: '工房0918', icon: Factory },
+                { id: 'ekimaru', label: '駅催事出張', icon: Building2 },
               ].map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
@@ -946,48 +947,55 @@ export default function StoreSettings() {
           </div>
         )}
 
-        {/* ===== 通販タブ ===== */}
+        {/* ===== 通企総0919タブ ===== */}
         {mainTab === 'online' && (() => {
-          const onlineUsers = allUsers
-            .filter(u => u.belongs_online === true && u.user_role !== 'admin' && u.role !== 'admin')
-            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+          const deptList = [
+            { key: 'belongs_tokuhan', label: '特販部', color: 'blue' },
+            { key: 'belongs_online', label: '通販部', color: 'indigo' },
+            { key: 'belongs_planning', label: '企画部', color: 'purple' },
+          ];
           return (
             <div className="flex gap-0 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden min-h-[70vh]">
-              {/* 左サイドバー */}
-              <div className="flex flex-col w-full sm:w-56 md:w-64 border-r border-slate-100 flex-shrink-0">
-                <div className="px-4 py-3 border-b border-slate-100 bg-blue-50">
-                  <p className="text-xs font-bold text-blue-600 uppercase tracking-wider">通販部門</p>
-                  <p className="text-2xl font-black text-blue-700 mt-1">{onlineUsers.length}<span className="text-sm font-normal text-blue-500 ml-1">名</span></p>
-                </div>
-                <div className="flex-1 overflow-y-auto">
-                  {onlineUsers.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-                      <ShoppingCart className="w-8 h-8 text-slate-200 mb-2" />
-                      <p className="text-xs text-slate-400">通販所属のスタッフがいません</p>
+              {deptList.map(({ key, label, color }) => {
+                const deptUsers = allUsers
+                  .filter(u => u[key] === true && u.user_role !== 'admin' && u.role !== 'admin')
+                  .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+                return (
+                  <div key={key} className="flex flex-col w-full sm:w-56 md:w-64 border-r border-slate-100 flex-shrink-0">
+                    <div className={`px-4 py-3 border-b border-slate-100 bg-${color}-50`}>
+                      <p className={`text-xs font-bold text-${color}-600 uppercase tracking-wider`}>{label}</p>
+                      <p className={`text-2xl font-black text-${color}-700 mt-1`}>{deptUsers.length}<span className="text-sm font-normal ml-1">名</span></p>
                     </div>
-                  ) : (
-                    onlineUsers.map(u => (
-                      <div key={u.id} className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 hover:bg-blue-50/50 transition-colors">
-                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center flex-shrink-0 shadow-sm">
-                          <span className="text-sm font-black text-white">{(u.full_name || u.email || '?')[0]}</span>
+                    <div className="flex-1 overflow-y-auto">
+                      {deptUsers.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                          <ShoppingCart className="w-8 h-8 text-slate-200 mb-2" />
+                          <p className="text-xs text-slate-400">{label}所属のスタッフがいません</p>
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold text-slate-800 truncate">{u.full_name || u.email}</p>
-                          {u.position && <p className="text-xs text-slate-400 truncate">{u.position}</p>}
-                        </div>
-                        <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold flex-shrink-0">通販</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
+                      ) : (
+                        deptUsers.map(u => (
+                          <div key={u.id} className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 hover:bg-blue-50/50 transition-colors">
+                            <div className={`w-9 h-9 rounded-xl bg-gradient-to-br from-${color}-400 to-${color}-600 flex items-center justify-center flex-shrink-0 shadow-sm`}>
+                              <span className="text-sm font-black text-white">{(u.full_name || u.email || '?')[0]}</span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-slate-800 truncate">{u.full_name || u.email}</p>
+                            </div>
+                            <span className={`text-[10px] bg-${color}-100 text-${color}-700 px-2 py-0.5 rounded-full font-semibold flex-shrink-0`}>{label}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
               {/* 右側: 説明 */}
-              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+              <div className="flex-1 hidden sm:flex flex-col items-center justify-center p-8 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-blue-100 flex items-center justify-center mb-4">
                   <ShoppingCart className="w-8 h-8 text-blue-500" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-700 mb-2">通販部門 所属スタッフ</h3>
-                <p className="text-sm text-slate-500 mb-4">受注処理・受電業務を担当するスタッフ</p>
+                <h3 className="text-lg font-bold text-slate-700 mb-2">通企総0919 所属スタッフ</h3>
+                <p className="text-sm text-slate-500 mb-4">特販部・通販部・企画部のスタッフ</p>
                 <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-left max-w-sm">
                   <span className="text-amber-600 text-sm flex-shrink-0">⚠️</span>
                   <p className="text-xs text-amber-800">
@@ -999,62 +1007,106 @@ export default function StoreSettings() {
           );
         })()}
 
-        {/* ===== 製造タブ ===== */}
+        {/* ===== 工房0918タブ ===== */}
         {mainTab === 'manufacturing' && (() => {
-          const hokuUsers = allUsers
-            .filter(u => (u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking) && u.user_role !== 'admin' && u.role !== 'admin')
-            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-          const kagaUsers = allUsers
-            .filter(u => (u.belongs_kagaya_bagging || u.belongs_kagaya_cooking) && u.user_role !== 'admin' && u.role !== 'admin')
-            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
-
-          const FactorySection = ({ title, users, accentColor, badgeText }) => (
-            <div className="flex flex-col w-full sm:w-56 md:w-64 border-r border-slate-100 flex-shrink-0">
-              <div className={`px-4 py-3 border-b border-slate-100 ${accentColor === 'amber' ? 'bg-amber-50' : 'bg-orange-50'}`}>
-                <p className={`text-xs font-bold ${accentColor === 'amber' ? 'text-amber-600' : 'text-orange-600'} uppercase tracking-wider`}>{title}</p>
-                <p className={`text-2xl font-black ${accentColor === 'amber' ? 'text-amber-700' : 'text-orange-700'} mt-1`}>{users.length}<span className="text-sm font-normal ml-1">名</span></p>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                {users.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-                    <Factory className="w-8 h-8 text-slate-200 mb-2" />
-                    <p className="text-xs text-slate-400">所属スタッフなし</p>
-                  </div>
-                ) : (
-                  users.map(u => (
-                    <div key={u.id} className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 hover:bg-amber-50/50 transition-colors">
-                      <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${accentColor === 'amber' ? 'from-amber-400 to-amber-600' : 'from-orange-400 to-orange-600'} flex items-center justify-center flex-shrink-0 shadow-sm`}>
-                        <span className="text-sm font-black text-white">{(u.full_name || u.email || '?')[0]}</span>
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-bold text-slate-800 truncate">{u.full_name || u.email}</p>
-                        <div className="flex gap-1 mt-0.5 flex-wrap">
-                          {u.belongs_hokusetsu_bagging && <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">袋詰め</span>}
-                          {u.belongs_hokusetsu_cooking && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full">炊き場</span>}
-                          {u.belongs_kagaya_bagging && <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">袋詰め</span>}
-                          {u.belongs_kagaya_cooking && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full">炊き場</span>}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          );
-
+          const factoryList = [
+            { key: 'belongs_hokusetsu', label: '北摂工場', color: 'amber' },
+            { key: 'belongs_kagaya', label: 'かがや工場', color: 'orange' },
+            { key: 'belongs_minamitanabe', label: '南田辺工房', color: 'yellow' },
+          ];
           return (
             <div className="flex gap-0 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden min-h-[70vh]">
-              {/* 北摂工場 */}
-              <FactorySection title="北摂工場" users={hokuUsers} accentColor="amber" badgeText="北摂" />
-              {/* 加賀屋工場 */}
-              <FactorySection title="加賀屋工場" users={kagaUsers} accentColor="orange" badgeText="加賀屋" />
+              {factoryList.map(({ key, label, color }) => {
+                const factoryUsers = allUsers
+                  .filter(u => u[key] === true && u.user_role !== 'admin' && u.role !== 'admin')
+                  .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+                return (
+                  <div key={key} className="flex flex-col w-full sm:w-56 md:w-64 border-r border-slate-100 flex-shrink-0">
+                    <div className={`px-4 py-3 border-b border-slate-100 bg-${color}-50`}>
+                      <p className={`text-xs font-bold text-${color}-600 uppercase tracking-wider`}>{label}</p>
+                      <p className={`text-2xl font-black text-${color}-700 mt-1`}>{factoryUsers.length}<span className="text-sm font-normal ml-1">名</span></p>
+                    </div>
+                    <div className="flex-1 overflow-y-auto">
+                      {factoryUsers.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                          <Factory className="w-8 h-8 text-slate-200 mb-2" />
+                          <p className="text-xs text-slate-400">{label}所属のスタッフがいません</p>
+                        </div>
+                      ) : (
+                        factoryUsers.map(u => (
+                          <div key={u.id} className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 hover:bg-amber-50/50 transition-colors">
+                            <div className={`w-9 h-9 rounded-xl bg-gradient-to-br from-${color}-400 to-${color}-600 flex items-center justify-center flex-shrink-0 shadow-sm`}>
+                              <span className="text-sm font-black text-white">{(u.full_name || u.email || '?')[0]}</span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-slate-800 truncate">{u.full_name || u.email}</p>
+                            </div>
+                            <span className={`text-[10px] bg-${color}-100 text-${color}-700 px-2 py-0.5 rounded-full font-semibold flex-shrink-0`}>{label}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
               {/* 右側: 説明 */}
               <div className="flex-1 hidden sm:flex flex-col items-center justify-center p-8 text-center">
                 <div className="w-16 h-16 rounded-2xl bg-amber-100 flex items-center justify-center mb-4">
                   <Factory className="w-8 h-8 text-amber-500" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-700 mb-2">製造部門 所属スタッフ</h3>
-                <p className="text-sm text-slate-500 mb-4">北摂工場・加賀屋工場の製造スタッフ</p>
+                <h3 className="text-lg font-bold text-slate-700 mb-2">工房0918 所属スタッフ</h3>
+                <p className="text-sm text-slate-500 mb-4">北摂工場・かがや工場・南田辺工房のスタッフ</p>
+                <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-left max-w-sm">
+                  <span className="text-amber-600 text-sm flex-shrink-0">⚠️</span>
+                  <p className="text-xs text-amber-800">
+                    <span className="font-semibold">所属先の変更</span>は「スタッフ管理」→各スタッフの「編集」から行ってください。
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ===== 駅催事出張タブ ===== */}
+        {mainTab === 'ekimaru' && (() => {
+          const ekiUsers = allUsers
+            .filter(u => u.belongs_ekimaru === true && u.user_role !== 'admin' && u.role !== 'admin')
+            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+          return (
+            <div className="flex gap-0 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden min-h-[70vh]">
+              <div className="flex flex-col w-full sm:w-56 md:w-64 border-r border-slate-100 flex-shrink-0">
+                <div className="px-4 py-3 border-b border-slate-100 bg-green-50">
+                  <p className="text-xs font-bold text-green-600 uppercase tracking-wider">駅催事出張</p>
+                  <p className="text-2xl font-black text-green-700 mt-1">{ekiUsers.length}<span className="text-sm font-normal text-green-500 ml-1">名</span></p>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  {ekiUsers.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                      <Building2 className="w-8 h-8 text-slate-200 mb-2" />
+                      <p className="text-xs text-slate-400">駅催事出張所属のスタッフがいません</p>
+                    </div>
+                  ) : (
+                    ekiUsers.map(u => (
+                      <div key={u.id} className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 hover:bg-green-50/50 transition-colors">
+                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+                          <span className="text-sm font-black text-white">{(u.full_name || u.email || '?')[0]}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-800 truncate">{u.full_name || u.email}</p>
+                        </div>
+                        <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold flex-shrink-0">駅催事</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              {/* 右側: 説明 */}
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-green-100 flex items-center justify-center mb-4">
+                  <Building2 className="w-8 h-8 text-green-500" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-700 mb-2">駅催事出張 所属スタッフ</h3>
+                <p className="text-sm text-slate-500 mb-4">駅催事・出張担当のスタッフ</p>
                 <div className="flex items-center gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-left max-w-sm">
                   <span className="text-amber-600 text-sm flex-shrink-0">⚠️</span>
                   <p className="text-xs text-amber-800">

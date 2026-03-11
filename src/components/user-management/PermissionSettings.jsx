@@ -158,7 +158,7 @@ export default function PermissionSettings({ user, currentUserEmail, onClose }) 
         <div className="divide-y divide-slate-100">
           {userStores.length === 0 ? (
             <div className="p-4 text-center text-sm text-slate-500">
-              所属店舗がありません
+              所属先がありません
             </div>
           ) : (
             userStores.map(store => {

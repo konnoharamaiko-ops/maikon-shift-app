@@ -167,7 +167,7 @@ export function EmployeeProductivityTable({ data, loading }) {
                     onClick={() => handleSort('store')}
                     className="flex items-center gap-1 hover:text-primary"
                   >
-                    所属店舗
+                    所属先
                     <ArrowUpDown className="h-4 w-4" />
                   </button>
                 </th>
