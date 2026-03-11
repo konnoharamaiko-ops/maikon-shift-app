@@ -175,6 +175,17 @@ export default async function handler(req, res) {
       }
     }
 
+    // クエリパラメータからスタッフ設定を取得（除外・所属変更）
+    let clientStaffSettings = {};
+    if (req.query.staff_settings) {
+      try {
+        clientStaffSettings = JSON.parse(decodeURIComponent(req.query.staff_settings));
+        console.log('[StaffSettings] Received client staff settings:', Object.keys(clientStaffSettings).length, 'entries');
+      } catch (e) {
+        console.warn('[StaffSettings] Failed to parse client staff_settings:', e.message);
+      }
+    }
+
     // ============================================================
     // キャッシュチェック（stale-while-revalidate）
     // ============================================================
@@ -198,7 +209,7 @@ export default async function handler(req, res) {
       console.log(`[Cache] STALE (age: ${Math.round(cacheAge/1000)}s) - returning stale data, revalidating in background`);
       _isRevalidating = true;
       // バックグラウンドで更新（awaitしない）
-      fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings)
+      fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings, clientStaffSettings)
         .catch(e => console.error('[Cache] Background revalidation failed:', e.message))
         .finally(() => { _isRevalidating = false; });
       return res.status(200).json({
@@ -210,7 +221,7 @@ export default async function handler(req, res) {
 
     // キャッシュがない（初回）または強制更新：フル取得
     console.log(`[Cache] MISS - fetching fresh data`);
-    const freshData = await fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings);
+    const freshData = await fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings, clientStaffSettings);
     return res.status(200).json(freshData);
 
   } catch (error) {
@@ -226,7 +237,7 @@ export default async function handler(req, res) {
  * 実際のデータ取得・計算・キャッシュ更新を行う関数
  * handlerから分離し、バックグラウンド再検証でも尌用できるようにする
  */
-async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings) {
+async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, jobcanUser, jobcanPass, clientStoreSettings, clientStaffSettings = {}) {
   const [salesResult, attendanceResult, supabaseSettingsResult, staffMasterResult, appUsersResult] = await Promise.allSettled([
     fetchTempoVisorAllData(tempovisorUser, tempovisorPass),
     fetchJobcanAttendance(jobcanCompany, jobcanUser, jobcanPass),
@@ -246,7 +257,7 @@ async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, 
   const storeSettings = buildStoreSettings(clientStoreSettings, supabaseSettings);
 
   const allEmployees = attendance.employees || [];
-  const { storeEmployees, employeeProductivity } = applyEmployeeServiceHours(allEmployees, staffMaster);
+  const { storeEmployees, employeeProductivity } = applyEmployeeServiceHours(allEmployees, staffMaster, clientStaffSettings);
 
   // アプリ内所属設定に基づいてstoreEmployeesのstore_nameを上書き
   // belongs_planning/online/manufacturingが登録されている場合は打刻場所に関わらずその所属に振り分け
@@ -522,7 +533,7 @@ async function fetchStaffMaster() {
  * @param {Array} staffMaster - Supabaseのスタッフマスタ
  * @returns {{ storeEmployees: Array, employeeProductivity: Array }}
  */
-function applyEmployeeServiceHours(employees, staffMaster) {
+function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings = {}) {
   // スタッフマスタをスタッフ名でマップ化（部分一致対応）
   const staffMap = {};
   staffMaster.forEach(sm => {
@@ -551,6 +562,23 @@ function applyEmployeeServiceHours(employees, staffMaster) {
   employees.forEach(emp => {
     const master = findStaffMaster(emp.name);
     const isEmployee = master?.staff_type === '社員' || master?.staff_type === '契約社員' || master?.staff_type === '役員';
+
+    // クライアントスタッフ設定をスタッフIDまたは名前で検索
+    const clientSetting = master?.id
+      ? (clientStaffSettings[master.id] || clientStaffSettings[master.staff_name] || null)
+      : (clientStaffSettings[emp.name] || null);
+
+    // 除外設定がある場合は人時計算から除外
+    if (clientSetting?.excluded === true) {
+      console.log(`[StaffSettings] 除外: ${emp.name}`);
+      return; // storeEmployeesに追加しない
+    }
+
+    // 所属店舗変更設定がある場合は上書き
+    if (clientSetting?.override_store) {
+      emp = { ...emp, store_name: clientSetting.override_store };
+      console.log(`[StaffSettings] 所属変更: ${emp.name} → ${clientSetting.override_store}`);
+    }
 
     if (!isEmployee || !master?.service_start || !master?.service_end) {
       // パート・アルバイト、または接客時間帯未設定の社員：従来通り

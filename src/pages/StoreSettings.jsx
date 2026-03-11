@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -41,6 +41,10 @@ const JOBCAN_STORE_LIST = [
 function StoreSalesInput({ store }) {
   const queryClient = useQueryClient();
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [fetchingMonth, setFetchingMonth] = useState(null); // テンポバイザー取得中の月
+  const [fetchingAll, setFetchingAll] = useState(false); // 全月一括取得中
+  // 各月のフォームの値をRefで管理（テンポバイザー取得後に反映するため）
+  const formRefs = useRef({});
 
   const { data: salesData = [] } = useQuery({
     queryKey: ['storeSales', store.id],
@@ -90,6 +94,81 @@ function StoreSalesInput({ store }) {
     upsertMutation.mutate({ storeId: store.id, yearMonth: ym, amount: parseFloat(amount) || 0, notes });
   };
 
+  // テンポバイザーから1ヶ月分の売上を取得して保存
+  const fetchFromTempoVisor = async (month) => {
+    setFetchingMonth(month);
+    try {
+      const storeName = encodeURIComponent(store.store_name);
+      const res = await fetch(`/api/productivity/monthly-sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.success && data.total_sales > 0) {
+        const ym = `${selectedYear}-${String(month).padStart(2, '0')}`;
+        upsertMutation.mutate({
+          storeId: store.id,
+          yearMonth: ym,
+          amount: data.total_sales,
+          notes: `テンポバイザー取得 ${new Date().toLocaleDateString('ja-JP')}`
+        });
+        toast.success(`${month}月の売上を取得しました: ¥${data.total_sales.toLocaleString()}`);
+      } else {
+        toast.warning(`${month}月のデータが見つかりませんでした（売上0円）`);
+      }
+    } catch (e) {
+      toast.error(`${month}月の取得に失敗: ${e.message}`);
+    } finally {
+      setFetchingMonth(null);
+    }
+  };
+
+  // 全月一括取得
+  const fetchAllMonths = async () => {
+    setFetchingAll(true);
+    toast.info(`${selectedYear}年の全月データを取得中...（時間がかかります）`);
+    let successCount = 0;
+    let failCount = 0;
+    for (const month of months) {
+      try {
+        const storeName = encodeURIComponent(store.store_name);
+        const res = await fetch(`/api/productivity/monthly-sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.success && data.total_sales > 0) {
+          const ym = `${selectedYear}-${String(month).padStart(2, '0')}`;
+          const existing = salesData.find(s => s.year_month === ym);
+          if (existing) {
+            await updateRecord('StoreSales', existing.id, {
+              sales_amount: data.total_sales,
+              notes: `テンポバイザー取得 ${new Date().toLocaleDateString('ja-JP')}`,
+              updated_at: new Date().toISOString()
+            });
+          } else {
+            await insertRecord('StoreSales', {
+              store_id: store.id,
+              year_month: ym,
+              sales_amount: data.total_sales,
+              notes: `テンポバイザー取得 ${new Date().toLocaleDateString('ja-JP')}`
+            });
+          }
+          successCount++;
+        }
+      } catch (e) {
+        failCount++;
+        console.error(`Month ${month} failed:`, e);
+      }
+    }
+    queryClient.invalidateQueries({ queryKey: ['storeSales', store.id] });
+    setFetchingAll(false);
+    if (successCount > 0) {
+      toast.success(`${successCount}ヶ月分の売上データを取得しました${failCount > 0 ? `（${failCount}ヶ月失敗）` : ''}`);
+    } else {
+      toast.error('売上データの取得に失敗しました');
+    }
+  };
+
   const totalYearSales = months.reduce((sum, m) => {
     const s = getSalesForMonth(m);
     return sum + (s ? parseFloat(s.sales_amount) || 0 : 0);
@@ -97,7 +176,7 @@ function StoreSalesInput({ store }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <Label className="text-base font-semibold text-slate-700">年度選択</Label>
           <select
@@ -110,14 +189,29 @@ function StoreSalesInput({ store }) {
             ))}
           </select>
         </div>
-        <div className="text-right">
-          <p className="text-xs text-slate-500">年間合計</p>
-          <p className="text-lg font-bold text-blue-700">¥{totalYearSales.toLocaleString()}</p>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchAllMonths}
+            disabled={fetchingAll}
+            className="flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 px-3 py-1.5 rounded-lg transition-all border border-orange-200 disabled:opacity-50"
+          >
+            {fetchingAll ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <BarChart3 className="w-3.5 h-3.5" />
+            )}
+            {fetchingAll ? '取得中...' : 'テンポバイザーから全月取得'}
+          </button>
+          <div className="text-right">
+            <p className="text-xs text-slate-500">年間合計</p>
+            <p className="text-lg font-bold text-blue-700">¥{totalYearSales.toLocaleString()}</p>
+          </div>
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {months.map(month => {
           const sales = getSalesForMonth(month);
+          const isFromTempoVisor = sales?.notes?.includes('テンポバイザー');
           return (
             <form
               key={month}
@@ -130,9 +224,17 @@ function StoreSalesInput({ store }) {
             >
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-bold text-slate-700">{month}月</span>
-                {sales && (
-                  <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">入力済</span>
-                )}
+                <div className="flex items-center gap-1">
+                  {sales && (
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      isFromTempoVisor
+                        ? 'text-orange-600 bg-orange-50'
+                        : 'text-green-600 bg-green-50'
+                    }`}>
+                      {isFromTempoVisor ? 'TV取得' : '入力済'}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="space-y-2">
                 <div className="relative">
@@ -141,6 +243,7 @@ function StoreSalesInput({ store }) {
                     type="number"
                     name="amount"
                     defaultValue={sales ? sales.sales_amount : ''}
+                    key={sales?.sales_amount} // 値が変わったら再レンダリング
                     placeholder="売上金額"
                     className="h-8 pl-6 text-sm"
                     step="1"
@@ -150,18 +253,34 @@ function StoreSalesInput({ store }) {
                   type="text"
                   name="notes"
                   defaultValue={sales ? sales.notes : ''}
+                  key={`notes-${sales?.notes}`}
                   placeholder="メモ（任意）"
                   className="h-7 text-xs"
                 />
-                <Button
-                  type="submit"
-                  size="sm"
-                  className="w-full h-7 text-xs bg-blue-600 hover:bg-blue-700"
-                  disabled={upsertMutation.isPending}
-                >
-                  <Save className="w-3 h-3 mr-1" />
-                  保存
-                </Button>
+                <div className="flex gap-1">
+                  <Button
+                    type="submit"
+                    size="sm"
+                    className="flex-1 h-7 text-xs bg-blue-600 hover:bg-blue-700"
+                    disabled={upsertMutation.isPending}
+                  >
+                    <Save className="w-3 h-3 mr-1" />
+                    保存
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => fetchFromTempoVisor(month)}
+                    disabled={fetchingMonth === month || fetchingAll}
+                    title="テンポバイザーから取得"
+                    className="h-7 px-2 text-xs font-semibold text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md border border-orange-200 transition-all disabled:opacity-50 flex items-center"
+                  >
+                    {fetchingMonth === month ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <BarChart3 className="w-3 h-3" />
+                    )}
+                  </button>
+                </div>
               </div>
             </form>
           );

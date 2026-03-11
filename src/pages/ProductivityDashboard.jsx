@@ -217,13 +217,17 @@ function saveStoreSettings(settings) {
   } catch (e) {}
 }
 
-async function fetchRealtimeData(storeSettings) {
+async function fetchRealtimeData(storeSettings, staffSettings) {
   // localStorageの設定をAPIに渡す
   let url = '/api/productivity/realtime';
+  const params = [];
   if (storeSettings) {
-    const encoded = encodeURIComponent(JSON.stringify(storeSettings));
-    url += `?store_settings=${encoded}`;
+    params.push(`store_settings=${encodeURIComponent(JSON.stringify(storeSettings))}`);
   }
+  if (staffSettings && Object.keys(staffSettings).length > 0) {
+    params.push(`staff_settings=${encodeURIComponent(JSON.stringify(staffSettings))}`);
+  }
+  if (params.length > 0) url += '?' + params.join('&');
   const response = await fetch(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' },
@@ -1242,10 +1246,13 @@ function StaffSettingsModal({ onClose, onSave }) {
     onClose();
   };
 
-  // 社員のみフィルタリング
-  const employeeList = staffList.filter(s =>
-    s.staff_type === '社員' || s.staff_type === '契約社員' || s.staff_type === '役員'
-  );
+  // 表示フィルター（社員のみ or 全スタッフ）
+  const [showAllStaff, setShowAllStaff] = useState(false);
+  const employeeList = showAllStaff
+    ? staffList
+    : staffList.filter(s =>
+        s.staff_type === '社員' || s.staff_type === '契約社員' || s.staff_type === '役員'
+      );
 
   const timeOptions = Array.from({ length: 24 }, (_, i) => {
     const h = String(i).padStart(2, '0');
@@ -1280,6 +1287,31 @@ function StaffSettingsModal({ onClose, onSave }) {
 
           {/* コンテンツ */}
           <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            {/* 表示フィルター */}
+            <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 rounded-xl px-4 py-2.5 border border-gray-200 dark:border-gray-700">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">表示対象</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowAllStaff(false)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    !showAllStaff ? 'bg-red-800 text-white shadow-sm' : 'text-muted-foreground hover:text-gray-700'
+                  }`}
+                >
+                  社員のみ
+                </button>
+                <button
+                  onClick={() => setShowAllStaff(true)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    showAllStaff ? 'bg-blue-600 text-white shadow-sm' : 'text-muted-foreground hover:text-gray-700'
+                  }`}
+                >
+                  全スタッフ
+                </button>
+              </div>
+            </div>
             {/* 同期ボタン */}
             <div className="bg-blue-50 dark:bg-blue-950/20 rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
@@ -1325,42 +1357,105 @@ function StaffSettingsModal({ onClose, onSave }) {
                 <div className="space-y-3">
                   {employeeList.map(staff => {
                     const setting = staffSettings[staff.id] || {};
+                    const isExcluded = setting.excluded === true;
+                    const isEmployee = staff.staff_type === '社員' || staff.staff_type === '契約社員' || staff.staff_type === '役員';
                     return (
-                      <div key={staff.id} className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4">
+                      <div key={staff.id} className={`rounded-xl p-4 border transition-all ${
+                        isExcluded
+                          ? 'bg-gray-100 dark:bg-gray-800/50 border-gray-300 dark:border-gray-600 opacity-70'
+                          : 'bg-gray-50 dark:bg-gray-800 border-transparent'
+                      }`}>
                         <div className="flex items-center justify-between mb-3">
-                          <div>
-                            <p className="font-bold text-sm">{staff.staff_name}</p>
-                            <p className="text-xs text-muted-foreground">{staff.store_name || staff.dept_code || ''} ・ {staff.staff_type}</p>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className={`font-bold text-sm ${ isExcluded ? 'line-through text-muted-foreground' : '' }`}>{staff.staff_name}</p>
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                                isEmployee
+                                  ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                                  : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                              }`}>{staff.staff_type || 'パート'}</span>
+                              {isExcluded && (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-500 font-semibold">除外中</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {setting.override_store || staff.store_name || staff.dept_code || '未設定'}
+                            </p>
                           </div>
-                          <span className="text-xs px-2 py-1 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 font-semibold">社員</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-xs text-muted-foreground block mb-1">接客開始</label>
-                            <select
-                              value={setting.service_start || ''}
-                              onChange={e => updateStaffSetting(staff.id, 'service_start', e.target.value)}
-                              className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+                          {/* 除外スイッチ */}
+                          <div className="flex items-center gap-2 ml-3">
+                            <span className="text-xs text-muted-foreground">除外</span>
+                            <button
+                              onClick={() => updateStaffSetting(staff.id, 'excluded', !isExcluded)}
+                              className={`relative w-10 h-5 rounded-full transition-colors ${
+                                isExcluded ? 'bg-red-500' : 'bg-gray-300 dark:bg-gray-600'
+                              }`}
                             >
-                              <option value="">未設定（全時間帯）</option>
-                              {timeOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-xs text-muted-foreground block mb-1">接客終了</label>
-                            <select
-                              value={setting.service_end || ''}
-                              onChange={e => updateStaffSetting(staff.id, 'service_end', e.target.value)}
-                              className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
-                            >
-                              <option value="">未設定（全時間帯）</option>
-                              {timeOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                            </select>
+                              <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                                isExcluded ? 'translate-x-5' : 'translate-x-0.5'
+                              }`} />
+                            </button>
                           </div>
                         </div>
-                        {setting.service_start && setting.service_end && (
-                          <p className="text-xs text-green-600 dark:text-green-400 mt-2">
-                            ✓ 店舗接客: {setting.service_start} 〜 {setting.service_end}（それ以外は社員個人業務）
+
+                        {/* 所属店舗変更 */}
+                        <div className="mb-3">
+                          <label className="text-xs text-muted-foreground block mb-1">所属店舗変更（任意）</label>
+                          <select
+                            value={setting.override_store || ''}
+                            onChange={e => updateStaffSetting(staff.id, 'override_store', e.target.value)}
+                            disabled={isExcluded}
+                            className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm disabled:opacity-50"
+                          >
+                            <option value="">デフォルト（{staff.store_name || '未設定'}）</option>
+                            {[
+                              '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
+                              '心斎橋店', 'かがや店', 'エキマル', '北摂店', '堺東店',
+                              'イオン松原店', 'イオン守口店', '美和堂FC店'
+                            ].map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* 接客時間帯設定（社員のみ） */}
+                        {isEmployee && !isExcluded && (
+                          <>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-xs text-muted-foreground block mb-1">接客開始</label>
+                                <select
+                                  value={setting.service_start || ''}
+                                  onChange={e => updateStaffSetting(staff.id, 'service_start', e.target.value)}
+                                  className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+                                >
+                                  <option value="">未設定（全時間帯）</option>
+                                  {timeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-xs text-muted-foreground block mb-1">接客終了</label>
+                                <select
+                                  value={setting.service_end || ''}
+                                  onChange={e => updateStaffSetting(staff.id, 'service_end', e.target.value)}
+                                  className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+                                >
+                                  <option value="">未設定（全時間帯）</option>
+                                  {timeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                              </div>
+                            </div>
+                            {setting.service_start && setting.service_end && (
+                              <p className="text-xs text-green-600 dark:text-green-400 mt-2">
+                                ✓ 店舗接客: {setting.service_start} 〜 {setting.service_end}（それ以外は社員個人業務）
+                              </p>
+                            )}
+                          </>
+                        )}
+
+                        {isExcluded && (
+                          <p className="text-xs text-red-500 dark:text-red-400 mt-1">
+                            ⚠ このスタッフは人時生産性計算から除外されます
                           </p>
                         )}
                       </div>
@@ -1745,6 +1840,13 @@ export default function ProductivityDashboard() {
   const [activeCategory, setActiveCategory] = useState('store'); // 'store' | 'online' | 'manufacturing'
   const [storeSettings, setStoreSettings] = useState(() => loadStoreSettings());
   const [storeSort, setStoreSort] = useState('default'); // 'default' | 'productivity' | 'sales' | 'person_hours'
+  const [clientStaffSettings, setClientStaffSettings] = useState(() => {
+    // localStorageからスタッフ設定を読み込む
+    try {
+      const saved = localStorage.getItem('maikon_staff_settings');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
   const queryClient = useQueryClient();
 
   // 通販・製造の手入力データ管理
@@ -1887,8 +1989,8 @@ export default function ProductivityDashboard() {
     refetch,
     dataUpdatedAt,
   } = useQuery({
-    queryKey: ['productivity-realtime', storeSettings],
-    queryFn: () => fetchRealtimeData(storeSettings),
+    queryKey: ['productivity-realtime', storeSettings, clientStaffSettings],
+    queryFn: () => fetchRealtimeData(storeSettings, clientStaffSettings),
     staleTime: 25 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchInterval: autoRefresh ? 30 * 1000 : false,
@@ -2694,7 +2796,9 @@ export default function ProductivityDashboard() {
         <StaffSettingsModal
           onClose={() => setShowStaffSettings(false)}
           onSave={(newStaffSettings) => {
-            refetch();
+            // スタッフ設定をメインコンポーネントのステートに保存してAPIに渡す
+            setClientStaffSettings(newStaffSettings);
+            queryClient.invalidateQueries({ queryKey: ['productivity-realtime'] });
           }}
         />
       )}
