@@ -99,7 +99,7 @@ function StoreSalesInput({ store }) {
     setFetchingMonth(month);
     try {
       const storeName = encodeURIComponent(store.store_name);
-      const res = await fetch(`/api/productivity/monthly-sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
+      const res = await fetch(`/api/productivity/sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.message || `HTTP ${res.status}`);
@@ -133,7 +133,7 @@ function StoreSalesInput({ store }) {
     for (const month of months) {
       try {
         const storeName = encodeURIComponent(store.store_name);
-        const res = await fetch(`/api/productivity/monthly-sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
+        const res = await fetch(`/api/productivity/sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.success && data.total_sales > 0) {
