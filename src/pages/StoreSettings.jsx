@@ -5,7 +5,7 @@ import { format } from 'date-fns';
 import {
   Store as StoreIcon, Settings, Building2, Plus, Edit2, Trash2, MapPin,
   Calendar, Save, Copy, ChevronLeft, DollarSign, BarChart3, Clock,
-  ShoppingCart, Factory, Users, Layers, X, RefreshCw, ChevronRight
+  ShoppingCart, Factory, Users, Layers, X, RefreshCw, ChevronRight, TrendingUp, List
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -37,14 +37,187 @@ const JOBCAN_STORE_LIST = [
   { id: 'store-20000', store_code: '20000', store_name: '美和堂FC店' },
 ];
 
+// ========== 日別売上ダイアログ ==========
+function DailySalesDialog({ open, onClose, store, year, month }) {
+  const [loading, setLoading] = useState(false);
+  const [dailyData, setDailyData] = useState([]);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!open || !store || !year || !month) return;
+    setLoading(true);
+    setError(null);
+    setDailyData([]);
+    const storeName = encodeURIComponent(store.store_name);
+    fetch(`/api/productivity/sales?mode=daily&year=${year}&month=${month}&store_name=${storeName}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && data.daily_list && data.daily_list.length > 0) {
+          // daily_listの各エントリに day（日部分）と day_of_week（0-6）を追加
+          const enriched = data.daily_list.map(d => {
+            const dateObj = new Date(d.date.replace(/\//g, '-'));
+            return {
+              ...d,
+              day: dateObj.getDate(),
+              day_of_week: dateObj.getDay(), // 0=日, 1=月, ..., 6=土
+              customers: d.customers || 0,
+              gross_profit_rate: d.gross_profit_rate || null,
+            };
+          });
+          setDailyData(enriched);
+        } else {
+          setError(data.message || 'データが取得できませんでした');
+        }
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [open, store, year, month]);
+
+  const maxSales = dailyData.length > 0 ? Math.max(...dailyData.map(d => d.sales)) : 1;
+  const totalSales = dailyData.reduce((sum, d) => sum + d.sales, 0);
+  const avgSales = dailyData.length > 0 ? Math.round(totalSales / dailyData.length) : 0;
+
+  const DAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+  const DAY_COLORS = {
+    '土': 'bg-blue-400',
+    '日': 'bg-red-400',
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-orange-500" />
+            {store?.store_name} — {year}年{month}月 日別売上
+          </DialogTitle>
+          <DialogDescription>
+            テンポバイザーから取得した日別売上データ
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-12">
+            <RefreshCw className="w-8 h-8 animate-spin text-orange-400 mb-3" />
+            <p className="text-sm text-slate-500">テンポバイザーからデータ取得中...</p>
+          </div>
+        )}
+
+        {error && !loading && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-center">
+            <p className="text-sm text-red-600 font-semibold">取得エラー</p>
+            <p className="text-xs text-red-500 mt-1">{error}</p>
+          </div>
+        )}
+
+        {!loading && !error && dailyData.length > 0 && (
+          <div className="space-y-4">
+            {/* サマリー */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="p-3 bg-orange-50 rounded-xl text-center">
+                <p className="text-xs text-orange-600 font-semibold">月間合計</p>
+                <p className="text-base font-black text-orange-700">¥{totalSales.toLocaleString()}</p>
+              </div>
+              <div className="p-3 bg-blue-50 rounded-xl text-center">
+                <p className="text-xs text-blue-600 font-semibold">日平均</p>
+                <p className="text-base font-black text-blue-700">¥{avgSales.toLocaleString()}</p>
+              </div>
+              <div className="p-3 bg-green-50 rounded-xl text-center">
+                <p className="text-xs text-green-600 font-semibold">営業日数</p>
+                <p className="text-base font-black text-green-700">{dailyData.filter(d => d.sales > 0).length}日</p>
+              </div>
+            </div>
+
+            {/* 棒グラフ */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <p className="text-xs font-bold text-slate-600 mb-3">日別売上グラフ</p>
+              <div className="flex items-end gap-0.5 h-32 overflow-x-auto">
+                {dailyData.map((d, i) => {
+                  const heightPct = maxSales > 0 ? (d.sales / maxSales) * 100 : 0;
+                  const dayLabel = DAY_LABELS[d.day_of_week] || '';
+                  const isSat = dayLabel === '土';
+                  const isSun = dayLabel === '日';
+                  return (
+                    <div key={i} className="flex flex-col items-center flex-1 min-w-[16px]" title={`${d.date}: ¥${d.sales.toLocaleString()}`}>
+                      <div className="w-full flex flex-col justify-end" style={{ height: '100px' }}>
+                        <div
+                          className={`w-full rounded-t-sm transition-all ${
+                            isSun ? 'bg-red-400' : isSat ? 'bg-blue-400' : 'bg-orange-400'
+                          }`}
+                          style={{ height: `${Math.max(heightPct, d.sales > 0 ? 4 : 0)}%` }}
+                        />
+                      </div>
+                      <p className={`text-[8px] mt-0.5 font-semibold ${isSun ? 'text-red-500' : isSat ? 'text-blue-500' : 'text-slate-500'}`}>
+                        {d.day}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 日別一覧テーブル */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-2 bg-slate-50 border-b border-slate-200">
+                <p className="text-xs font-bold text-slate-600">日別売上一覧</p>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50">
+                    <tr>
+                      <th className="text-left px-3 py-2 text-slate-500 font-semibold">日付</th>
+                      <th className="text-right px-3 py-2 text-slate-500 font-semibold">売上</th>
+                      <th className="text-right px-3 py-2 text-slate-500 font-semibold">客数</th>
+                      <th className="text-right px-3 py-2 text-slate-500 font-semibold">粗利率</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dailyData.map((d, i) => {
+                      const dayLabel = DAY_LABELS[d.day_of_week] || '';
+                      const isSun = dayLabel === '日';
+                      const isSat = dayLabel === '土';
+                      return (
+                        <tr key={i} className={`border-t border-slate-100 ${isSun ? 'bg-red-50' : isSat ? 'bg-blue-50' : ''}`}>
+                          <td className={`px-3 py-1.5 font-medium ${isSun ? 'text-red-600' : isSat ? 'text-blue-600' : 'text-slate-700'}`}>
+                            {d.date}（{dayLabel}）
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-bold text-slate-800">
+                            {d.sales > 0 ? `¥${d.sales.toLocaleString()}` : '—'}
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-slate-600">
+                            {d.customers > 0 ? `${d.customers.toLocaleString()}人` : '—'}
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-slate-600">
+                            {d.gross_profit_rate ? `${d.gross_profit_rate}%` : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!loading && !error && dailyData.length === 0 && (
+          <div className="text-center py-8 text-slate-400">
+            <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">データがありません</p>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ========== 売上入力コンポーネント ==========
 function StoreSalesInput({ store }) {
   const queryClient = useQueryClient();
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [fetchingMonth, setFetchingMonth] = useState(null); // テンポバイザー取得中の月
-  const [fetchingAll, setFetchingAll] = useState(false); // 全月一括取得中
-  // 各月のフォームの値をRefで管理（テンポバイザー取得後に反映するため）
-  const formRefs = useRef({});
+  const [fetchingMonth, setFetchingMonth] = useState(null);
+  const [fetchingAll, setFetchingAll] = useState(false);
+  const [dailyDialogMonth, setDailyDialogMonth] = useState(null); // 日別ダイアログ表示中の月
 
   const { data: salesData = [] } = useQuery({
     queryKey: ['storeSales', store.id],
@@ -243,7 +416,7 @@ function StoreSalesInput({ store }) {
                     type="number"
                     name="amount"
                     defaultValue={sales ? sales.sales_amount : ''}
-                    key={sales?.sales_amount} // 値が変わったら再レンダリング
+                    key={sales?.sales_amount}
                     placeholder="売上金額"
                     className="h-8 pl-6 text-sm"
                     step="1"
@@ -267,11 +440,12 @@ function StoreSalesInput({ store }) {
                     <Save className="w-3 h-3 mr-1" />
                     保存
                   </Button>
+                  {/* テンポバイザーから月別取得ボタン */}
                   <button
                     type="button"
                     onClick={() => fetchFromTempoVisor(month)}
                     disabled={fetchingMonth === month || fetchingAll}
-                    title="テンポバイザーから取得"
+                    title="テンポバイザーから月別売上を取得"
                     className="h-7 px-2 text-xs font-semibold text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md border border-orange-200 transition-all disabled:opacity-50 flex items-center"
                   >
                     {fetchingMonth === month ? (
@@ -280,12 +454,30 @@ function StoreSalesInput({ store }) {
                       <BarChart3 className="w-3 h-3" />
                     )}
                   </button>
+                  {/* 日別売上ダイアログ表示ボタン */}
+                  <button
+                    type="button"
+                    onClick={() => setDailyDialogMonth(month)}
+                    title="日別売上を確認"
+                    className="h-7 px-2 text-xs font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md border border-blue-200 transition-all flex items-center"
+                  >
+                    <List className="w-3 h-3" />
+                  </button>
                 </div>
               </div>
             </form>
           );
         })}
       </div>
+
+      {/* 日別売上ダイアログ */}
+      <DailySalesDialog
+        open={dailyDialogMonth !== null}
+        onClose={() => setDailyDialogMonth(null)}
+        store={store}
+        year={selectedYear}
+        month={dailyDialogMonth}
+      />
     </div>
   );
 }
@@ -429,7 +621,6 @@ function StoreListItem({ store, isSelected, onSelect }) {
   const openTime = todayHours?.open || '';
   const closeTime = todayHours?.close || '';
 
-  // 営業時間の表示テキスト
   let hoursText = '時間未設定';
   if (isClosed) {
     hoursText = '定休日';
@@ -468,12 +659,11 @@ function StoreListItem({ store, isSelected, onSelect }) {
 // ========== メインコンポーネント ==========
 export default function StoreSettings() {
   const queryClient = useQueryClient();
-  const [mainTab, setMainTab] = useState('store'); // 'store' | 'online' | 'manufacturing'
+  const [mainTab, setMainTab] = useState('store');
   const [selectedStore, setSelectedStore] = useState(null);
-  const [activePanel, setActivePanel] = useState(null); // 'deadlines' | 'details' | 'sales'
+  const [activePanel, setActivePanel] = useState(null);
   const { user } = useAuth();
 
-  // Supabase Storeテーブルから詳細設定（営業時間等）を取得
   const { data: storeDetailMap = {}, isLoading } = useQuery({
     queryKey: ['storeDetails'],
     queryFn: async () => {
@@ -484,7 +674,6 @@ export default function StoreSettings() {
     },
   });
 
-  // ジョブカンの13店舗リストとSupabase詳細設定をマージ
   const stores = JOBCAN_STORE_LIST.map(s => ({
     ...s,
     ...(storeDetailMap[s.store_name] || {}),
@@ -543,7 +732,6 @@ export default function StoreSettings() {
     }
   };
 
-  // 選択中の店舗が更新されたらstoresから最新データを反映
   useEffect(() => {
     if (selectedStore) {
       const updated = stores.find(s => s.id === selectedStore.id);
@@ -729,7 +917,6 @@ export default function StoreSettings() {
                       <DetailedStoreSettings
                         store={selectedStore}
                         onUpdate={async (data) => {
-                          // Supabaseに保存（IDがある場合はupdate、ない場合はinsert）
                           const dbRecord = storeDetailMap[selectedStore.store_name];
                           if (dbRecord?.id) {
                             await updateRecord('Store', dbRecord.id, data);

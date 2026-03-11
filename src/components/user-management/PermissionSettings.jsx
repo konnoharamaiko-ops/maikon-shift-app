@@ -27,7 +27,7 @@ export default function PermissionSettings({ user, currentUserEmail, onClose }) 
   const queryClient = useQueryClient();
 
   const { data: stores = [] } = useQuery({
-    queryKey: ['stores'],
+    queryKey: ['stores-all'],
     queryFn: async () => {
       const allStores = await fetchAll('Store');
       return sortStoresByOrder(allStores);

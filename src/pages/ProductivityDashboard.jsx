@@ -583,9 +583,19 @@ function StatusBadge({ status }) {
 /**
  * 店舗詳細モーダル（時間帯別グラフ付き）
  */
-function StoreDetailModal({ store, onClose }) {
+function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsChange }) {
   const [activeTab, setActiveTab] = useState('overview');
+  const [expandedStaff, setExpandedStaff] = useState(null);
   if (!store) return null;
+
+  const updateStaffSetting = (staffId, key, value) => {
+    const newSettings = {
+      ...staffSettings,
+      [staffId]: { ...(staffSettings[staffId] || {}), [key]: value },
+    };
+    saveStaffSettings(newSettings);
+    if (onStaffSettingsChange) onStaffSettingsChange(newSettings);
+  };
 
   const level = getProductivityLevel(store.productivity);
   const config = LEVEL_CONFIG[level];
@@ -857,76 +867,153 @@ function StoreDetailModal({ store, onClose }) {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 10 }}
                 >
+                  {/* スタッフ設定の説明 */}
+                  <div className="mb-3 px-3 py-2 bg-blue-50 dark:bg-blue-950/20 rounded-xl border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-400">
+                    各スタッフをタップすると除外・所属変更の設定ができます
+                  </div>
                   <div className="space-y-2">
                     {sortedEmployees.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground text-sm">
                         本日のシフトデータがありません
                       </div>
                     ) : (
-                      sortedEmployees.map((emp, i) => (
-                        <motion.div
-                          key={i}
-                          initial={{ opacity: 0, y: 5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: i * 0.03 }}
-                          className={`rounded-xl p-3 flex items-center gap-3 ${
-                            emp.status === '勤務中' ? 'bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800' :
-                            (emp.status === '休憩中' || emp.status === '退出中') ? 'bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800' :
-                            emp.status === '未出勤' ? 'bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800' :
-                            'bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700'
-                          }`}
-                        >
-                          <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${
-                            emp.status === '勤務中' ? 'bg-green-500' :
-                            emp.status === '退勤済み' ? 'bg-gray-400' :
-                            emp.status === '未出勤' ? 'bg-amber-400' : 'bg-blue-400'  // 休憩中・退出中は青
-                          }`}>
-                            {emp.name.charAt(0)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-semibold text-sm truncate">{emp.name}</p>
-                              {/* 店舗間移動バッジ */}
-                              {emp.cross_store_transfer && (
-                                <span className="text-[9px] bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded-full shrink-0 flex items-center gap-0.5">
-                                  <ArrowRight className="h-2.5 w-2.5" />
-                                  {emp.is_transfer_arrival ? `${emp.transfer_from}より移動` : `${emp.transfer_to}へ移動`}
-                                </span>
-                              )}
-                              {/* 掛け持ち表示（店舗間移動でない場合のみ） */}
-                              {!emp.cross_store_transfer && emp.clock_location && emp.clock_location !== emp.dept_store_name && (
-                                <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded-full shrink-0">
-                                  掛持
-                                </span>
-                              )}
+                      sortedEmployees.map((emp, i) => {
+                        const staffId = emp.jobcan_id || emp.name;
+                        const setting = staffSettings[staffId] || {};
+                        const isExcluded = setting.excluded === true;
+                        const isExpanded = expandedStaff === staffId;
+                        return (
+                          <motion.div
+                            key={i}
+                            initial={{ opacity: 0, y: 5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: i * 0.03 }}
+                            className={`rounded-xl border overflow-hidden ${
+                              isExcluded ? 'opacity-50 border-red-300 dark:border-red-700' :
+                              emp.status === '勤務中' ? 'border-green-200 dark:border-green-800' :
+                              (emp.status === '休憩中' || emp.status === '退出中') ? 'border-blue-200 dark:border-blue-800' :
+                              emp.status === '未出勤' ? 'border-amber-200 dark:border-amber-800' :
+                              'border-gray-200 dark:border-gray-700'
+                            }`}
+                          >
+                            {/* スタッフ情報行（タップで展開） */}
+                            <div
+                              className={`p-3 flex items-center gap-3 cursor-pointer ${
+                                isExcluded ? 'bg-red-50 dark:bg-red-950/20' :
+                                emp.status === '勤務中' ? 'bg-green-50 dark:bg-green-950/20' :
+                                (emp.status === '休憩中' || emp.status === '退出中') ? 'bg-blue-50 dark:bg-blue-950/20' :
+                                emp.status === '未出勤' ? 'bg-amber-50 dark:bg-amber-950/20' :
+                                'bg-gray-50 dark:bg-gray-800'
+                              }`}
+                              onClick={() => setExpandedStaff(isExpanded ? null : staffId)}
+                            >
+                              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${
+                                isExcluded ? 'bg-red-400' :
+                                emp.status === '勤務中' ? 'bg-green-500' :
+                                emp.status === '退勤済み' ? 'bg-gray-400' :
+                                emp.status === '未出勤' ? 'bg-amber-400' : 'bg-blue-400'
+                              }`}>
+                                {emp.name.charAt(0)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="font-semibold text-sm truncate">{emp.name}</p>
+                                  {isExcluded && (
+                                    <span className="text-[9px] bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded-full shrink-0">除外中</span>
+                                  )}
+                                  {setting.override_store && (
+                                    <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded-full shrink-0">→{setting.override_store}</span>
+                                  )}
+                                  {emp.cross_store_transfer && (
+                                    <span className="text-[9px] bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded-full shrink-0 flex items-center gap-0.5">
+                                      <ArrowRight className="h-2.5 w-2.5" />
+                                      {emp.is_transfer_arrival ? `${emp.transfer_from}より移動` : `${emp.transfer_to}へ移動`}
+                                    </span>
+                                  )}
+                                  {!emp.cross_store_transfer && emp.clock_location && emp.clock_location !== emp.dept_store_name && (
+                                    <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 rounded-full shrink-0">掛持</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+                                  {emp.clock_in && <span>出勤 {emp.clock_in}</span>}
+                                  {emp.break_start && <span>休憩開始 {emp.break_start}</span>}
+                                  {!emp.break_start && emp.had_break && emp.break_minutes > 0 && (
+                                    <span className="text-blue-500">休憩 {Math.floor(emp.break_minutes / 60) > 0 ? `${Math.floor(emp.break_minutes / 60)}時間` : ''}{emp.break_minutes % 60 > 0 ? `${emp.break_minutes % 60}分` : ''}</span>
+                                  )}
+                                  {emp.clock_out && <span>{emp.cross_store_transfer && !emp.is_transfer_arrival ? '移動前退勤' : '退勤'} {emp.clock_out}</span>}
+                                  {!emp.cross_store_transfer && emp.clock_location && emp.clock_location !== emp.dept_store_name && (
+                                    <span className="flex items-center gap-0.5"><MapPin className="h-2.5 w-2.5" />{emp.clock_location}</span>
+                                  )}
+                                  {emp.dept_store_name && emp.dept_store_name !== emp.store_name && (
+                                    <span className="text-[10px] text-muted-foreground">(所属:{emp.dept_store_name})</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <div className="text-right">
+                                  <StatusBadge status={emp.status} />
+                                  {emp.work_hours > 0 && (
+                                    <p className="text-xs text-muted-foreground mt-1">{emp.work_hours.toFixed(1)}h</p>
+                                  )}
+                                </div>
+                                {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
-                              {emp.clock_in && <span>出勤 {emp.clock_in}</span>}
-                              {emp.break_start && <span>休憩開始 {emp.break_start}</span>}
-                              {/* 勤務中に戻った後も休憩実績があれば表示 */}
-                              {!emp.break_start && emp.had_break && emp.break_minutes > 0 && (
-                                <span className="text-blue-500">休憩 {Math.floor(emp.break_minutes / 60) > 0 ? `${Math.floor(emp.break_minutes / 60)}時間` : ''}{emp.break_minutes % 60 > 0 ? `${emp.break_minutes % 60}分` : ''}</span>
+                            {/* 展開パネル：除外・所属変更設定 */}
+                            <AnimatePresence>
+                              {isExpanded && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="px-4 py-3 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-700 space-y-3">
+                                    {/* 除外スイッチ */}
+                                    <div className="flex items-center justify-between">
+                                      <div>
+                                        <p className="text-sm font-semibold">人時計算から除外</p>
+                                        <p className="text-xs text-muted-foreground">このスタッフを人時生産性の計算対象外にします</p>
+                                      </div>
+                                      <button
+                                        onClick={() => updateStaffSetting(staffId, 'excluded', !isExcluded)}
+                                        className={`relative w-11 h-6 rounded-full transition-colors ${
+                                          isExcluded ? 'bg-red-500' : 'bg-gray-300 dark:bg-gray-600'
+                                        }`}
+                                      >
+                                        <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                                          isExcluded ? 'translate-x-5' : 'translate-x-0.5'
+                                        }`} />
+                                      </button>
+                                    </div>
+                                    {/* 所属店舗変更 */}
+                                    <div>
+                                      <label className="text-xs text-muted-foreground block mb-1">所属店舗変更（任意）</label>
+                                      <select
+                                        value={setting.override_store || ''}
+                                        onChange={e => updateStaffSetting(staffId, 'override_store', e.target.value)}
+                                        disabled={isExcluded}
+                                        className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm disabled:opacity-50"
+                                      >
+                                        <option value="">デフォルト（{emp.dept_store_name || emp.store_name || '未設定'}）</option>
+                                        {ALL_STORE_NAMES.map(s => (
+                                          <option key={s} value={s}>{s}</option>
+                                        ))}
+                                        <option value="通販">通販</option>
+                                        <option value="製造">製造</option>
+                                      </select>
+                                    </div>
+                                    {isExcluded && (
+                                      <p className="text-xs text-red-500 dark:text-red-400">⚠ このスタッフは人時生産性計算から除外されます</p>
+                                    )}
+                                  </div>
+                                </motion.div>
                               )}
-                              {emp.clock_out && <span>{emp.cross_store_transfer && !emp.is_transfer_arrival ? '移動前退勤' : '退勤'} {emp.clock_out}</span>}
-                              {!emp.cross_store_transfer && emp.clock_location && emp.clock_location !== emp.dept_store_name && (
-                                <span className="flex items-center gap-0.5">
-                                  <MapPin className="h-2.5 w-2.5" />{emp.clock_location}
-                                </span>
-                              )}
-                              {/* 所属店舗が異なる場合は所属店舗名を表示 */}
-                              {emp.dept_store_name && emp.dept_store_name !== emp.store_name && (
-                                <span className="text-[10px] text-muted-foreground">(所属:{emp.dept_store_name})</span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <StatusBadge status={emp.status} />
-                            {emp.work_hours > 0 && (
-                              <p className="text-xs text-muted-foreground mt-1">{emp.work_hours.toFixed(1)}h</p>
-                            )}
-                          </div>
-                        </motion.div>
-                      ))
+                            </AnimatePresence>
+                          </motion.div>
+                        );
+                      })
                     )}
                   </div>
                   {sortedEmployees.length > 0 && (
@@ -2140,16 +2227,6 @@ export default function ProductivityDashboard() {
             <span className="hidden md:inline">店舗設定</span>
           </button>
 
-          {/* スタッフ設定 */}
-          <button
-            onClick={() => setShowStaffSettings(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-700 dark:hover:text-blue-400 transition-all text-xs font-semibold"
-            title="社員接客時間帯設定"
-          >
-            <Briefcase className="h-3.5 w-3.5" />
-            <span className="hidden md:inline">スタッフ</span>
-          </button>
-
           {/* ダークモード */}
           <button
             onClick={toggleDark}
@@ -2777,7 +2854,15 @@ export default function ProductivityDashboard() {
 
       {/* 詳細モーダル */}
       {selectedStore && (
-        <StoreDetailModal store={selectedStore} onClose={() => setSelectedStore(null)} />
+        <StoreDetailModal
+          store={selectedStore}
+          onClose={() => setSelectedStore(null)}
+          staffSettings={clientStaffSettings}
+          onStaffSettingsChange={(newSettings) => {
+            setClientStaffSettings(newSettings);
+            queryClient.invalidateQueries({ queryKey: ['productivity-realtime'] });
+          }}
+        />
       )}
 
       {/* 店舗設定モーダル */}
@@ -2791,17 +2876,7 @@ export default function ProductivityDashboard() {
         />
       )}
 
-      {/* スタッフ設定モーダル */}
-      {showStaffSettings && (
-        <StaffSettingsModal
-          onClose={() => setShowStaffSettings(false)}
-          onSave={(newStaffSettings) => {
-            // スタッフ設定をメインコンポーネントのステートに保存してAPIに渡す
-            setClientStaffSettings(newStaffSettings);
-            queryClient.invalidateQueries({ queryKey: ['productivity-realtime'] });
-          }}
-        />
-      )}
+
     </div>
   );
 }
