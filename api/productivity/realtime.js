@@ -284,6 +284,9 @@ async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, 
     salesData.yesterdayHourly || {}
   );
 
+  // 通販部・製造部・企画部の勤務データを集計
+  const departmentData = buildDepartmentData(storeEmployees);
+
   // JSTの現在時刻を計算（フロントエンドでの時間帯フィルタリング用）
   const _now = new Date();
   const _jstNow = new Date(_now.getTime() + 9 * 60 * 60 * 1000);
@@ -293,6 +296,7 @@ async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, 
   const responseData = {
     success: true,
     data: storeData,
+    department_data: departmentData,
     employees: storeEmployees,
     employee_productivity: employeeProductivity,
     timestamp: new Date().toISOString(),
@@ -734,6 +738,72 @@ function rebuildAttendanceWithServiceHours(originalStores, storeEmployees) {
   });
 
   return rebuilt;
+}
+
+/**
+ * 通販部・製造部・企画部の勤務データを集計する
+ * storeEmployeesのapp_affiliationフィールドを使用して各部署に挙計
+ */
+function buildDepartmentData(storeEmployees) {
+  // 部署定義
+  const DEPARTMENTS = [
+    { key: 'online',                   name: '通販部',   type: 'online',         color: '#3b82f6', icon: 'ShoppingCart' },
+    { key: 'manufacturing_hokusetsu',  name: '北摂工場',  type: 'manufacturing',  color: '#f59e0b', icon: 'Factory' },
+    { key: 'manufacturing_kagaya',     name: '加賀屋工場', type: 'manufacturing',  color: '#f97316', icon: 'Factory' },
+    { key: 'planning',                 name: '企画部',   type: 'planning',       color: '#8b5cf6', icon: 'Lightbulb' },
+  ];
+
+  const result = {};
+
+  DEPARTMENTS.forEach(dept => {
+    result[dept.key] = {
+      key: dept.key,
+      name: dept.name,
+      type: dept.type,
+      color: dept.color,
+      icon: dept.icon,
+      employees: [],
+      attended_employees: 0,
+      working_employees: 0,
+      break_employees: 0,
+      total_hours: 0,
+    };
+  });
+
+  storeEmployees.forEach(emp => {
+    const affiliation = emp.app_affiliation;
+    const affiliationStore = emp.app_affiliation_store;
+    if (!affiliation) return;
+
+    let deptKey = null;
+    if (affiliation === 'online') deptKey = 'online';
+    else if (affiliation === 'planning') deptKey = 'planning';
+    else if (affiliation === 'manufacturing') {
+      // 北摂工場 vs 加賀屋工場は affiliationStoreで判別
+      if (affiliationStore === '北摂工場') deptKey = 'manufacturing_hokusetsu';
+      else if (affiliationStore === '加賀屋工場' || affiliationStore === 'かがや工場') deptKey = 'manufacturing_kagaya';
+      else deptKey = 'manufacturing_hokusetsu'; // デフォルト
+    }
+
+    if (!deptKey || !result[deptKey]) return;
+
+    const dept = result[deptKey];
+    dept.employees.push(emp);
+
+    if (['勤務中', '退勤済み', '休憩中', '退出中'].includes(emp.status)) {
+      dept.attended_employees++;
+      dept.total_hours += emp.work_hours || 0;
+    }
+    if (emp.status === '勤務中') dept.working_employees++;
+    if (emp.status === '休憩中' || emp.status === '退出中') dept.break_employees++;
+  });
+
+  // total_hoursを小数点1桁に丸める
+  Object.values(result).forEach(dept => {
+    dept.total_hours = parseFloat(dept.total_hours.toFixed(1));
+  });
+
+  return result;
 }
 
 /**

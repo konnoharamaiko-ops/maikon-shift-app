@@ -236,6 +236,7 @@ async function fetchRealtimeData(storeSettings, staffSettings) {
   const result = await response.json();
   return {
     stores: transformStoreData(result.data || []),
+    departmentData: result.department_data || {},
     sources: result.sources || {},
     timestamp: result.timestamp,
     currentJstHour: result.current_jst_hour ?? new Date().getHours(),
@@ -581,20 +582,263 @@ function StatusBadge({ status }) {
 }
 
 /**
+ * 除外スタッフカード（ループ内useStateを避けるため別コンポーネント化）
+ */
+// 企画部メモ・タスクセクション
+function PlanningMemoSection({ selectedDate }) {
+  const dateKey = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd');
+  const storageKey = `planning_memo_${dateKey}`;
+  const [memo, setMemo] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(storageKey) || '{"text":"","tasks":[]}'); }
+    catch { return { text: '', tasks: [] }; }
+  });
+  const [newTask, setNewTask] = useState('');
+
+  const save = (updated) => {
+    setMemo(updated);
+    localStorage.setItem(storageKey, JSON.stringify(updated));
+  };
+
+  const addTask = () => {
+    if (!newTask.trim()) return;
+    save({ ...memo, tasks: [...(memo.tasks || []), { id: Date.now(), text: newTask.trim(), done: false }] });
+    setNewTask('');
+  };
+
+  const toggleTask = (id) => {
+    save({ ...memo, tasks: memo.tasks.map(t => t.id === id ? { ...t, done: !t.done } : t) });
+  };
+
+  const removeTask = (id) => {
+    save({ ...memo, tasks: memo.tasks.filter(t => t.id !== id) });
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* 作業メモ */}
+      <div className="bg-white dark:bg-gray-800 rounded-2xl border border-purple-200 dark:border-purple-800 p-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <Edit3 className="h-4 w-4 text-purple-600" />
+          <h3 className="font-bold text-sm">本日の作業メモ</h3>
+          <span className="text-xs text-muted-foreground ml-auto">{dateKey}</span>
+        </div>
+        <textarea
+          value={memo.text || ''}
+          onChange={e => save({ ...memo, text: e.target.value })}
+          placeholder="本日の企画・作業内容を記録..."
+          rows={4}
+          className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-gray-900 text-slate-800 dark:text-slate-100 resize-none focus:outline-none focus:ring-2 focus:ring-purple-400"
+        />
+      </div>
+
+      {/* タスクリスト */}
+      <div className="bg-white dark:bg-gray-800 rounded-2xl border border-purple-200 dark:border-purple-800 p-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <CheckCircle className="h-4 w-4 text-purple-600" />
+          <h3 className="font-bold text-sm">本日のタスク</h3>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {(memo.tasks || []).filter(t => t.done).length}/{(memo.tasks || []).length} 完了
+          </span>
+        </div>
+        <div className="space-y-2 mb-3">
+          {(memo.tasks || []).map(task => (
+            <div key={task.id} className="flex items-center gap-2 group">
+              <button
+                onClick={() => toggleTask(task.id)}
+                className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                  task.done ? 'bg-purple-500 border-purple-500' : 'border-gray-300 dark:border-gray-600 hover:border-purple-400'
+                }`}
+              >
+                {task.done && <CheckCircle className="h-3 w-3 text-white" />}
+              </button>
+              <span className={`flex-1 text-sm ${
+                task.done ? 'line-through text-muted-foreground' : 'text-slate-800 dark:text-slate-100'
+              }`}>{task.text}</span>
+              <button
+                onClick={() => removeTask(task.id)}
+                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 transition-all"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          {(memo.tasks || []).length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-2">タスクがありません</p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newTask}
+            onChange={e => setNewTask(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addTask()}
+            placeholder="タスクを追加..."
+            className="flex-1 text-sm border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 bg-gray-50 dark:bg-gray-900 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-400"
+          />
+          <button
+            onClick={addTask}
+            className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-xl transition-all"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExcludedStaffCard({ s, updateStaffSetting, i }) {
+  const [editingReason, setEditingReason] = useState(false);
+  const [reasonText, setReasonText] = useState(s.exclude_reason || '');
+  return (
+    <div key={s.id} className={`p-3 bg-white dark:bg-gray-900 ${i > 0 ? 'border-t border-red-100 dark:border-red-900' : ''}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-bold">{s.id}</p>
+            {s.override_store && (
+              <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 px-1.5 py-0.5 rounded-full">→{s.override_store}</span>
+            )}
+          </div>
+          {s.excluded_from_store && (
+            <p className="text-xs text-muted-foreground mt-0.5">除外元: {s.excluded_from_store}</p>
+          )}
+          {s.excluded_at && (
+            <p className="text-xs text-muted-foreground">除外日時: {s.excluded_at}</p>
+          )}
+          {/* 除外理由 */}
+          <div className="mt-1.5">
+            {editingReason ? (
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={reasonText}
+                  onChange={e => setReasonText(e.target.value)}
+                  placeholder="除外理由（例：研修・本社対応）"
+                  className="flex-1 rounded border dark:border-gray-600 bg-gray-50 dark:bg-gray-800 px-2 py-1 text-xs"
+                  autoFocus
+                />
+                <button
+                  onClick={() => {
+                    updateStaffSetting(s.id, 'exclude_reason', reasonText);
+                    setEditingReason(false);
+                  }}
+                  className="px-2 py-1 bg-blue-500 text-white text-xs rounded"
+                >保存</button>
+                <button onClick={() => setEditingReason(false)} className="px-2 py-1 bg-gray-200 dark:bg-gray-700 text-xs rounded">×</button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setEditingReason(true)}
+                className="text-xs text-blue-500 hover:underline"
+              >
+                {s.exclude_reason ? `理由: ${s.exclude_reason}` : '＋ 除外理由を入力'}
+              </button>
+            )}
+          </div>
+          {/* 移動先変更 */}
+          <div className="mt-1.5">
+            <label className="text-xs text-muted-foreground block mb-0.5">移動先店舗（任意）</label>
+            <select
+              value={s.override_store || ''}
+              onChange={e => updateStaffSetting(s.id, 'override_store', e.target.value)}
+              className="w-full rounded border dark:border-gray-600 bg-gray-50 dark:bg-gray-800 px-2 py-1 text-xs"
+            >
+              <option value="">移動先なし</option>
+              {ALL_STORE_NAMES.map(n => <option key={n} value={n}>{n}</option>)}
+              <option value="通販">通販</option>
+              <option value="製造">製造</option>
+            </select>
+          </div>
+        </div>
+        {/* 除外解除ボタン */}
+        <button
+          onClick={() => updateStaffSetting(s.id, 'excluded', false)}
+          className="shrink-0 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs font-bold rounded-lg hover:bg-green-200 transition-colors"
+        >
+          解除
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * 店舗詳細モーダル（時間帯別グラフ付き）
  */
 function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsChange }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [expandedStaff, setExpandedStaff] = useState(null);
+  const [showExcludedPanel, setShowExcludedPanel] = useState(false);
+  const [showAddStaffForm, setShowAddStaffForm] = useState(false);
+  const [addStaffForm, setAddStaffForm] = useState({ name: '', clock_in: '', clock_out: '', store_name: store?.store_name || '' });
   if (!store) return null;
 
+  // 除外スタッフ一覧（このダイアログの店舗に関係なく全除外スタッフを表示）
+  const excludedStaffList = Object.entries(staffSettings)
+    .filter(([, s]) => s.excluded === true)
+    .map(([id, s]) => ({ id, ...s }));
+
   const updateStaffSetting = (staffId, key, value) => {
+    const current = staffSettings[staffId] || {};
+    let extra = {};
+    // 除外ONになった瞬間に履歴を記録
+    if (key === 'excluded' && value === true && !current.excluded) {
+      extra = {
+        excluded_at: new Date().toLocaleString('ja-JP'),
+        excluded_from_store: store.store_name,
+        exclude_reason: current.exclude_reason || '',
+      };
+    }
+    // 除外OFFになった瞬間に履歴をクリア
+    if (key === 'excluded' && value === false) {
+      extra = { excluded_at: null, excluded_from_store: null };
+    }
     const newSettings = {
       ...staffSettings,
-      [staffId]: { ...(staffSettings[staffId] || {}), [key]: value },
+      [staffId]: { ...current, [key]: value, ...extra },
     };
     saveStaffSettings(newSettings);
     if (onStaffSettingsChange) onStaffSettingsChange(newSettings);
+  };
+
+  // 手動追加スタッフをlocalStorageに保存
+  const loadManualStaff = () => {
+    try { return JSON.parse(localStorage.getItem('manual_staff') || '[]'); } catch { return []; }
+  };
+  const saveManualStaff = (list) => {
+    localStorage.setItem('manual_staff', JSON.stringify(list));
+  };
+  const handleAddStaff = () => {
+    if (!addStaffForm.name.trim()) return;
+    const list = loadManualStaff();
+    const clockIn = addStaffForm.clock_in || '09:00';
+    const clockOut = addStaffForm.clock_out || '18:00';
+    const [inH, inM] = clockIn.split(':').map(Number);
+    const [outH, outM] = clockOut.split(':').map(Number);
+    const workHours = Math.max(0, (outH * 60 + outM - inH * 60 - inM) / 60);
+    const newStaff = {
+      id: `manual_${Date.now()}`,
+      name: addStaffForm.name.trim(),
+      clock_in: clockIn,
+      clock_out: clockOut,
+      work_hours: workHours,
+      store_name: addStaffForm.store_name || store.store_name,
+      status: '勤務中',
+      is_manual: true,
+      added_at: new Date().toLocaleString('ja-JP'),
+    };
+    list.push(newStaff);
+    saveManualStaff(list);
+    setAddStaffForm({ name: '', clock_in: '', clock_out: '', store_name: store?.store_name || '' });
+    setShowAddStaffForm(false);
+    if (onStaffSettingsChange) onStaffSettingsChange({ ...staffSettings });
+  };
+  const manualStaffForStore = loadManualStaff().filter(s => s.store_name === store.store_name);
+  const removeManualStaff = (id) => {
+    const list = loadManualStaff().filter(s => s.id !== id);
+    saveManualStaff(list);
+    if (onStaffSettingsChange) onStaffSettingsChange({ ...staffSettings });
   };
 
   const level = getProductivityLevel(store.productivity);
@@ -867,10 +1111,147 @@ function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsC
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 10 }}
                 >
-                  {/* スタッフ設定の説明 */}
-                  <div className="mb-3 px-3 py-2 bg-blue-50 dark:bg-blue-950/20 rounded-xl border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-400">
-                    各スタッフをタップすると除外・所属変更の設定ができます
+                  {/* ヘッダーアクションバー */}
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="flex-1 px-3 py-2 bg-blue-50 dark:bg-blue-950/20 rounded-xl border border-blue-200 dark:border-blue-800 text-xs text-blue-700 dark:text-blue-400">
+                      各スタッフをタップすると除外・所属変更の設定ができます
+                    </div>
+                    <button
+                      onClick={() => setShowAddStaffForm(v => !v)}
+                      className="shrink-0 flex items-center gap-1 px-3 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-xl transition-colors"
+                    >
+                      <span className="text-base leading-none">＋</span>追加
+                    </button>
                   </div>
+
+                  {/* 手動スタッフ追加フォーム */}
+                  <AnimatePresence>
+                    {showAddStaffForm && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden mb-3"
+                      >
+                        <div className="p-4 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-xl space-y-3">
+                          <p className="text-xs font-bold text-green-700 dark:text-green-400">スタッフを手動追加（人時計算に含まれます）</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="col-span-2">
+                              <label className="text-xs text-muted-foreground block mb-1">氏名 *</label>
+                              <input
+                                type="text"
+                                value={addStaffForm.name}
+                                onChange={e => setAddStaffForm(f => ({ ...f, name: e.target.value }))}
+                                placeholder="例：田中 太郎"
+                                className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-1.5 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground block mb-1">出勤時刻</label>
+                              <input
+                                type="time"
+                                value={addStaffForm.clock_in}
+                                onChange={e => setAddStaffForm(f => ({ ...f, clock_in: e.target.value }))}
+                                className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground block mb-1">退勤時刻</label>
+                              <input
+                                type="time"
+                                value={addStaffForm.clock_out}
+                                onChange={e => setAddStaffForm(f => ({ ...f, clock_out: e.target.value }))}
+                                className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <label className="text-xs text-muted-foreground block mb-1">所属店舗</label>
+                              <select
+                                value={addStaffForm.store_name}
+                                onChange={e => setAddStaffForm(f => ({ ...f, store_name: e.target.value }))}
+                                className="w-full rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1.5 text-sm"
+                              >
+                                {ALL_STORE_NAMES.map(s => <option key={s} value={s}>{s}</option>)}
+                                <option value="通販">通販</option>
+                                <option value="製造">製造</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={handleAddStaff}
+                              disabled={!addStaffForm.name.trim()}
+                              className="flex-1 py-2 bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white text-sm font-bold rounded-lg transition-colors"
+                            >
+                              追加する
+                            </button>
+                            <button
+                              onClick={() => setShowAddStaffForm(false)}
+                              className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-sm rounded-lg transition-colors"
+                            >
+                              キャンセル
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* 手動追加スタッフ一覧 */}
+                  {manualStaffForStore.length > 0 && (
+                    <div className="mb-3 p-3 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-xl">
+                      <p className="text-xs font-bold text-green-700 dark:text-green-400 mb-2">手動追加スタッフ（{manualStaffForStore.length}名）</p>
+                      <div className="space-y-2">
+                        {manualStaffForStore.map(s => (
+                          <div key={s.id} className="flex items-center justify-between bg-white dark:bg-gray-800 rounded-lg px-3 py-2">
+                            <div>
+                              <p className="text-sm font-semibold">{s.name}</p>
+                              <p className="text-xs text-muted-foreground">{s.clock_in}〜{s.clock_out}（{s.work_hours.toFixed(1)}h）追加: {s.added_at}</p>
+                            </div>
+                            <button
+                              onClick={() => removeManualStaff(s.id)}
+                              className="ml-2 p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 除外スタッフ履歴パネル */}
+                  {excludedStaffList.length > 0 && (
+                    <div className="mb-3">
+                      <button
+                        onClick={() => setShowExcludedPanel(v => !v)}
+                        className="w-full flex items-center justify-between px-3 py-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-xl text-xs font-bold text-red-700 dark:text-red-400"
+                      >
+                        <span>除外中スタッフ一覧（{excludedStaffList.length}名）</span>
+                        {showExcludedPanel ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                      </button>
+                      <AnimatePresence>
+                        {showExcludedPanel && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="mt-1 border border-red-200 dark:border-red-800 rounded-xl overflow-hidden">
+                              {excludedStaffList.map((s, i) => (
+                                <ExcludedStaffCard key={s.id} s={s} i={i} updateStaffSetting={updateStaffSetting} />
+                              ))}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+
+                  {/* 通常スタッフ一覧 */}
                   <div className="space-y-2">
                     {sortedEmployees.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground text-sm">
@@ -2100,6 +2481,7 @@ export default function ProductivityDashboard() {
   }, [autoRefresh, dataUpdatedAt]);
 
   const stores = queryData?.stores || [];
+  const departmentData = queryData?.departmentData || {};
   const sources = queryData?.sources || {};
   const employeeProductivity = queryData?.employeeProductivity || [];
   // APIから取得したJST現在時刻（直近の人時生産性フィルタリング用）
@@ -2284,6 +2666,7 @@ export default function ProductivityDashboard() {
           { id: 'store', label: '店舗', icon: Building2, count: stores.length, color: 'text-red-800 dark:text-red-400', activeBg: 'bg-white dark:bg-gray-700', activeText: 'text-red-800 dark:text-red-400', desc: `${stores.filter(s => !s.is_closed).length}店舗営業中` },
           { id: 'online', label: '通販', icon: ShoppingCart, count: null, color: 'text-blue-700 dark:text-blue-400', activeBg: 'bg-white dark:bg-gray-700', activeText: 'text-blue-700 dark:text-blue-400', desc: '受注処理・受電' },
           { id: 'manufacturing', label: '製造（工房）', icon: Factory, count: null, color: 'text-amber-700 dark:text-amber-400', activeBg: 'bg-white dark:bg-gray-700', activeText: 'text-amber-700 dark:text-amber-400', desc: '北摂・加賀屋工場' },
+          { id: 'planning', label: '企画部', icon: Briefcase, count: null, color: 'text-purple-700 dark:text-purple-400', activeBg: 'bg-white dark:bg-gray-700', activeText: 'text-purple-700 dark:text-purple-400', desc: '企画・マーケティング' },
         ].map(({ id, label, icon: Icon, count, color, activeBg, activeText, desc }) => (
           <button
             key={id}
@@ -2428,27 +2811,85 @@ export default function ProductivityDashboard() {
           </div>
 
           {/* サマリーカード */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { label: '本日受注件数', value: onlineData?.order_count ?? '-', unit: '件', icon: Package, color: 'from-blue-500 to-indigo-600' },
-              { label: '本日売上', value: onlineData?.total_sales ? onlineData.total_sales.toLocaleString() : '-', unit: '円', icon: DollarSign, color: 'from-indigo-500 to-purple-600' },
-              { label: '勤務時間合計', value: onlineData?.total_hours ?? '-', unit: 'h', icon: Clock, color: 'from-emerald-500 to-teal-600' },
-              { label: '人時生産性', value: onlineData?.productivity ? onlineData.productivity.toLocaleString() : '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
-            ].map(({ label, value, unit, icon: Icon, color }) => (
-              <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`p-1.5 rounded-lg bg-gradient-to-br ${color}`}>
-                    <Icon className="h-3.5 w-3.5 text-white" />
+          {(() => {
+            const onlineDept = departmentData?.online || {};
+            const realtimeHours = onlineDept.total_hours || 0;
+            const realtimeWorking = onlineDept.working_now || 0;
+            const realtimeAttended = onlineDept.attended || 0;
+            // 勤務時間：ジョブカンリアルタイム優先、なければ手入力
+            const effectiveHours = realtimeHours > 0 ? realtimeHours : (onlineData?.total_hours || 0);
+            const effectiveSales = onlineData?.total_sales || 0;
+            const effectiveProductivity = effectiveHours > 0 && effectiveSales > 0 ? Math.round(effectiveSales / effectiveHours) : (onlineData?.productivity || 0);
+            return (
+              <>
+                {realtimeWorking > 0 && (
+                  <div className="flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl px-4 py-2 text-sm">
+                    <Users className="h-4 w-4 text-blue-600" />
+                    <span className="text-blue-700 dark:text-blue-300 font-semibold">
+                      勤務中 {realtimeWorking}人 / 本日出勤 {realtimeAttended}人
+                    </span>
+                    <span className="text-xs text-blue-500">（ジョブカン連携）</span>
                   </div>
-                  <span className="text-xs text-muted-foreground font-medium">{label}</span>
+                )}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { label: '本日受注件数', value: onlineData?.order_count ?? '-', unit: '件', icon: Package, color: 'from-blue-500 to-indigo-600' },
+                    { label: '本日売上', value: effectiveSales > 0 ? effectiveSales.toLocaleString() : '-', unit: '円', icon: DollarSign, color: 'from-indigo-500 to-purple-600' },
+                    { label: '勤務時間合計', value: effectiveHours > 0 ? effectiveHours.toFixed(1) : '-', unit: 'h', icon: Clock, color: 'from-emerald-500 to-teal-600', sub: realtimeHours > 0 ? 'JC自動取得' : '手入力' },
+                    { label: '人時生産性', value: effectiveProductivity > 0 ? effectiveProductivity.toLocaleString() : '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
+                  ].map(({ label, value, unit, icon: Icon, color, sub }) => (
+                    <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className={`p-1.5 rounded-lg bg-gradient-to-br ${color}`}>
+                          <Icon className="h-3.5 w-3.5 text-white" />
+                        </div>
+                        <span className="text-xs text-muted-foreground font-medium">{label}</span>
+                      </div>
+                      <div className="flex items-baseline gap-1">
+                        <span className={`text-2xl font-black ${value === '-' ? 'text-muted-foreground' : 'text-slate-800 dark:text-slate-100'}`}>{value}</span>
+                        <span className="text-xs text-muted-foreground">{unit}</span>
+                      </div>
+                      {sub && <div className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1">{sub}</div>}
+                    </div>
+                  ))}
                 </div>
-                <div className="flex items-baseline gap-1">
-                  <span className={`text-2xl font-black ${value === '-' ? 'text-muted-foreground' : 'text-slate-800 dark:text-slate-100'}`}>{value}</span>
-                  <span className="text-xs text-muted-foreground">{unit}</span>
-                </div>
-              </div>
-            ))}
-          </div>
+                {/* 通販スタッフ一覧 */}
+                {onlineDept.employees && onlineDept.employees.length > 0 && (
+                  <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Users className="h-4 w-4 text-blue-600" />
+                      <h3 className="font-bold text-sm">通販スタッフ勤務状況</h3>
+                    </div>
+                    <div className="space-y-2">
+                      {onlineDept.employees.map((emp, i) => (
+                        <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white ${
+                              emp.status === 'working' ? 'bg-emerald-500' : emp.status === 'break' ? 'bg-amber-500' : 'bg-gray-400'
+                            }`}>
+                              {emp.name?.charAt(0) || '?'}
+                            </div>
+                            <div>
+                              <div className="text-sm font-semibold">{emp.name}</div>
+                              <div className="text-xs text-muted-foreground">出勤 {emp.clock_in}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                              emp.status === 'working' ? 'bg-emerald-100 text-emerald-700' : emp.status === 'break' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                            }`}>
+                              {emp.status === 'working' ? '勤務中' : emp.status === 'break' ? '休憩中' : '退勤済'}
+                            </span>
+                            <span className="text-sm font-bold">{emp.work_hours?.toFixed(1)}h</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {/* 手入力フォーム */}
           {onlineEditMode && (
@@ -2547,45 +2988,72 @@ export default function ProductivityDashboard() {
             const totalKg = mfgDataList.reduce((s, d) => s + (d.production_kg || 0), 0);
             const totalSales = mfgDataList.reduce((s, d) => s + (d.total_sales || 0), 0);
             const totalHours = mfgDataList.reduce((s, d) => s + (d.total_hours || 0), 0);
-            const productivity = totalHours > 0 ? Math.round(totalSales / totalHours) : 0;
+            // ジョブカンリアルタイム勤務データ
+            const mfgDeptHokusetsu = departmentData?.manufacturing_hokusetsu || {};
+            const mfgDeptKagaya = departmentData?.manufacturing_kagaya || {};
+            const realtimeMfgWorking = (mfgDeptHokusetsu.working_now || 0) + (mfgDeptKagaya.working_now || 0);
+            const realtimeMfgAttended = (mfgDeptHokusetsu.attended || 0) + (mfgDeptKagaya.attended || 0);
+            const realtimeMfgHours = (mfgDeptHokusetsu.total_hours || 0) + (mfgDeptKagaya.total_hours || 0);
+            const effectiveMfgHours = realtimeMfgHours > 0 ? realtimeMfgHours : totalHours;
+            const productivity = effectiveMfgHours > 0 && totalSales > 0 ? Math.round(totalSales / effectiveMfgHours) : 0;
             return (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[
-                  { label: '本日製造量', value: totalKg > 0 ? totalKg.toFixed(1) : '-', unit: 'kg', icon: FlaskConical, color: 'from-amber-500 to-orange-500' },
-                  { label: '本日売上', value: totalSales > 0 ? totalSales.toLocaleString() : '-', unit: '円', icon: DollarSign, color: 'from-orange-500 to-red-500' },
-                  { label: '勤務時間合計', value: totalHours > 0 ? totalHours.toFixed(1) : '-', unit: 'h', icon: Clock, color: 'from-emerald-500 to-teal-600' },
-                  { label: '人時生産性', value: productivity > 0 ? productivity.toLocaleString() : '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
-                ].map(({ label, value, unit, icon: Icon, color }) => (
-                  <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className={`p-1.5 rounded-lg bg-gradient-to-br ${color}`}>
-                        <Icon className="h-3.5 w-3.5 text-white" />
-                      </div>
-                      <span className="text-xs text-muted-foreground font-medium">{label}</span>
-                    </div>
-                    <div className="flex items-baseline gap-1">
-                      <span className={`text-2xl font-black ${value === '-' ? 'text-muted-foreground' : 'text-slate-800 dark:text-slate-100'}`}>{value}</span>
-                      <span className="text-xs text-muted-foreground">{unit}</span>
-                    </div>
+              <>
+                {realtimeMfgWorking > 0 && (
+                  <div className="flex items-center gap-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl px-4 py-2 text-sm">
+                    <Users className="h-4 w-4 text-amber-600" />
+                    <span className="text-amber-700 dark:text-amber-300 font-semibold">
+                      勤務中 {realtimeMfgWorking}人 / 本日出勤 {realtimeMfgAttended}人
+                    </span>
+                    <span className="text-xs text-amber-500">（ジョブカン連携）</span>
                   </div>
-                ))}
-              </div>
+                )}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { label: '本日製造量', value: totalKg > 0 ? totalKg.toFixed(1) : '-', unit: 'kg', icon: FlaskConical, color: 'from-amber-500 to-orange-500' },
+                    { label: '本日売上', value: totalSales > 0 ? totalSales.toLocaleString() : '-', unit: '円', icon: DollarSign, color: 'from-orange-500 to-red-500' },
+                    { label: '勤務時間合計', value: effectiveMfgHours > 0 ? effectiveMfgHours.toFixed(1) : '-', unit: 'h', icon: Clock, color: 'from-emerald-500 to-teal-600', sub: realtimeMfgHours > 0 ? 'JC自動取得' : '手入力' },
+                    { label: '人時生産性', value: productivity > 0 ? productivity.toLocaleString() : '-', unit: '円/h', icon: Zap, color: 'from-amber-500 to-orange-500' },
+                  ].map(({ label, value, unit, icon: Icon, color, sub }) => (
+                    <div key={label} className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className={`p-1.5 rounded-lg bg-gradient-to-br ${color}`}>
+                          <Icon className="h-3.5 w-3.5 text-white" />
+                        </div>
+                        <span className="text-xs text-muted-foreground font-medium">{label}</span>
+                      </div>
+                      <div className="flex items-baseline gap-1">
+                        <span className={`text-2xl font-black ${value === '-' ? 'text-muted-foreground' : 'text-slate-800 dark:text-slate-100'}`}>{value}</span>
+                        <span className="text-xs text-muted-foreground">{unit}</span>
+                      </div>
+                      {sub && <div className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1">{sub}</div>}
+                    </div>
+                  ))}
+                </div>
+              </>
             );
           })()}
 
           {/* 工場別カード */}
           <div className="grid gap-4 md:grid-cols-2">
             {[
-              { name: '北摂工場', color: 'amber', baggingKey: 'hokusetsu_bagging', cookingKey: 'hokusetsu_cooking' },
-              { name: '加賀屋工場', color: 'orange', baggingKey: 'kagaya_bagging', cookingKey: 'kagaya_cooking' },
-            ].map(({ name, color, baggingKey, cookingKey }) => {
+              { name: '北摂工場', color: 'amber', baggingKey: 'hokusetsu_bagging', cookingKey: 'hokusetsu_cooking', deptKey: 'manufacturing_hokusetsu' },
+              { name: '加賀屋工場', color: 'orange', baggingKey: 'kagaya_bagging', cookingKey: 'kagaya_cooking', deptKey: 'manufacturing_kagaya' },
+            ].map(({ name, color, baggingKey, cookingKey, deptKey }) => {
               const baggingData = mfgDataList.find(d => d.factory_name === name && d.section_name === '袋詰め');
               const cookingData = mfgDataList.find(d => d.factory_name === name && d.section_name === '炊き場');
+              const factoryDept = departmentData?.[deptKey] || {};
               return (
                 <div key={name} className={`bg-white dark:bg-gray-800 rounded-2xl border border-${color}-200 dark:border-${color}-800 p-5 shadow-sm`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Factory className={`h-4 w-4 text-${color}-600 dark:text-${color}-400`} />
-                    <h3 className="font-bold text-sm">{name}</h3>
+                  <div className="flex items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <Factory className={`h-4 w-4 text-${color}-600 dark:text-${color}-400`} />
+                      <h3 className="font-bold text-sm">{name}</h3>
+                    </div>
+                    {factoryDept.working_now > 0 && (
+                      <span className={`text-xs px-2 py-0.5 rounded-full bg-${color}-100 dark:bg-${color}-900/30 text-${color}-700 dark:text-${color}-300 font-semibold`}>
+                        勤務中 {factoryDept.working_now}人 / 出勤 {factoryDept.attended}人
+                      </span>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     {[{ label: '袋詰め', data: baggingData, key: baggingKey }, { label: '炊き場', data: cookingData, key: cookingKey }].map(({ label, data, key }) => (
@@ -2641,6 +3109,37 @@ export default function ProductivityDashboard() {
                       ))}
                     </div>
                   )}
+                  {/* 工場スタッフ一覧（ジョブカン） */}
+                  {factoryDept.employees && factoryDept.employees.length > 0 && (
+                    <div className="border-t border-gray-100 dark:border-gray-700 pt-3 mt-3">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <Users className={`h-3.5 w-3.5 text-${color}-600`} />
+                        <span className="text-xs font-bold text-muted-foreground">勤務スタッフ</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {factoryDept.employees.map((emp, i) => (
+                          <div key={i} className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${
+                                emp.status === 'working' ? 'bg-emerald-500' : emp.status === 'break' ? 'bg-amber-500' : 'bg-gray-400'
+                              }`}>
+                                {emp.name?.charAt(0) || '?'}
+                              </div>
+                              <span className="text-xs font-semibold">{emp.name}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                                emp.status === 'working' ? 'bg-emerald-100 text-emerald-700' : emp.status === 'break' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                              }`}>
+                                {emp.status === 'working' ? '勤務中' : emp.status === 'break' ? '休憩' : '退勤'}
+                              </span>
+                              <span className="text-xs font-bold">{emp.work_hours?.toFixed(1)}h</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -2661,6 +3160,99 @@ export default function ProductivityDashboard() {
               </button>
             </div>
           )}
+        </motion.div>
+      )}
+
+      {/* 企画部セクション */}
+      {activeCategory === 'planning' && (
+        <motion.div
+          key="planning"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-4"
+        >
+          {/* ヘッダー */}
+          <div className="bg-gradient-to-r from-purple-600 to-violet-700 rounded-3xl p-5 text-white shadow-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Briefcase className="h-5 w-5" />
+                  <h2 className="text-xl font-black">企画部</h2>
+                </div>
+                <p className="text-purple-100 text-sm">企画・マーケティング・デザイン</p>
+              </div>
+              {(() => {
+                const planningDept = departmentData?.planning || {};
+                return planningDept.working_now > 0 ? (
+                  <div className="text-right">
+                    <div className="text-3xl font-black">{planningDept.working_now}</div>
+                    <div className="text-purple-200 text-xs">勤務中 / 出勤{planningDept.attended}人</div>
+                  </div>
+                ) : null;
+              })()}
+            </div>
+          </div>
+
+          {/* ジョブカン連携スタッフ一覧 */}
+          {(() => {
+            const planningDept = departmentData?.planning || {};
+            return planningDept.employees && planningDept.employees.length > 0 ? (
+              <div className="bg-white dark:bg-gray-800 rounded-2xl border border-purple-200 dark:border-purple-800 p-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <Users className="h-4 w-4 text-purple-600" />
+                  <h3 className="font-bold text-sm">企画部スタッフ勤務状況</h3>
+                  <span className="text-xs text-muted-foreground ml-auto">（ジョブカン連携）</span>
+                </div>
+                <div className="space-y-2">
+                  {planningDept.employees.map((emp, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${
+                          emp.status === 'working' ? 'bg-purple-500' : emp.status === 'break' ? 'bg-amber-500' : 'bg-gray-400'
+                        }`}>
+                          {emp.name?.charAt(0) || '?'}
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold">{emp.name}</div>
+                          <div className="text-xs text-muted-foreground">出勤 {emp.clock_in}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                          emp.status === 'working' ? 'bg-purple-100 text-purple-700' : emp.status === 'break' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {emp.status === 'working' ? '勤務中' : emp.status === 'break' ? '休憩中' : '退勤済'}
+                        </span>
+                        <span className="text-sm font-bold">{emp.work_hours?.toFixed(1)}h</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 grid grid-cols-3 gap-3">
+                  <div className="text-center">
+                    <div className="text-xl font-black text-purple-600">{planningDept.attended || 0}</div>
+                    <div className="text-[10px] text-muted-foreground">本日出勤</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-black text-emerald-600">{planningDept.working_now || 0}</div>
+                    <div className="text-[10px] text-muted-foreground">現在勤務中</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-black text-slate-700 dark:text-slate-300">{planningDept.total_hours?.toFixed(1) || '0.0'}</div>
+                    <div className="text-[10px] text-muted-foreground">合計勤務時間(h)</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-8 text-center">
+                <Users className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-40" />
+                <p className="text-muted-foreground text-sm">現在勤務中の企画部スタッフはいません</p>
+              </div>
+            );
+          })()}
+
+          {/* 作業メモ・当日タスク入力 */}
+          <PlanningMemoSection selectedDate={selectedDate} />
         </motion.div>
       )}
 
