@@ -93,12 +93,18 @@ const TEMPOVISOR_STORE_CODES = {
   'アベノ店': '0005',
   '心斎橋店': '0006',
   'かがや店': '0007',
-  '駅丸': '0008',
   '北摂店': '0009',
   '堺東店': '0010',
   'イオン松原店': '0011',
   'イオン守口店': '0012',
   '美和堂福島店':   '0013',
+};
+
+// TempoVisorのHTML上の店舗名 → システム内店舗名のマッピング
+// TempoVisorのN3D1Servletで表示される店舗名がシステム内の店舗名と異なる場合に使用
+const TEMPOVISOR_NAME_MAP = {
+  '美和堂FC店': '美和堂福島店',
+  // 駅丸はTempoVisorにN3D1データがないため、マッピング不要
 };
 
 // デフォルト営業時間（Supabaseから取得できない場合のフォールバック）
@@ -442,7 +448,7 @@ async function fetchAppUsers() {
 
   try {
     const response = await fetch(
-      `${supabaseUrl}/rest/v1/User?select=full_name,belongs_online,belongs_planning,belongs_hokusetsu_bagging,belongs_hokusetsu_cooking,belongs_kagaya_bagging,belongs_kagaya_cooking`,
+      `${supabaseUrl}/rest/v1/User?select=full_name,belongs_tokuhan,belongs_online,belongs_planning,belongs_hokusetsu,belongs_kagaya,belongs_minamitanabe,belongs_ekimaru`,
       {
         headers: {
           'apikey': supabaseKey,
@@ -468,21 +474,27 @@ async function fetchAppUsers() {
 
 /**
  * アプリ内所属設定からスタッフ名→所属カテゴリのマップを構築
- * カテゴリ: 'online'(通販) | 'planning'(企画部) | 'manufacturing_hokusetsu'(北摂工場) | 'manufacturing_kagaya'(加賀屋工場)
+ * カテゴリ: 'tokuhan'(特販部) | 'online'(通販部) | 'planning'(企画部) | 'manufacturing_hokusetsu'(北摂工場) | 'manufacturing_kagaya'(かがや工場) | 'manufacturing_minamitanabe'(南田辺工房)
  */
 function buildAppUserAffiliationMap(appUsers) {
   const map = {}; // staffName -> { category: string, storeName: string }
   appUsers.forEach(u => {
     if (!u.full_name) return;
     const name = u.full_name.trim();
-    if (u.belongs_planning) {
+    if (u.belongs_tokuhan) {
+      map[name] = { category: 'tokuhan', storeName: '特販部' };
+    } else if (u.belongs_planning) {
       map[name] = { category: 'planning', storeName: '企画部' };
     } else if (u.belongs_online) {
       map[name] = { category: 'online', storeName: '通販部' };
-    } else if (u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking) {
+    } else if (u.belongs_hokusetsu) {
       map[name] = { category: 'manufacturing', storeName: '北摂工場' };
-    } else if (u.belongs_kagaya_bagging || u.belongs_kagaya_cooking) {
-      map[name] = { category: 'manufacturing', storeName: '加賀屋工場' };
+    } else if (u.belongs_kagaya) {
+      map[name] = { category: 'manufacturing', storeName: 'かがや工場' };
+    } else if (u.belongs_minamitanabe) {
+      map[name] = { category: 'manufacturing', storeName: '南田辺工房' };
+    } else if (u.belongs_ekimaru) {
+      map[name] = { category: 'ekimaru', storeName: '駅丸' };
     }
     // 店舗所属（store_ids）の場合はマップに追加しない（打刻場所優先のため）
   });
@@ -757,10 +769,12 @@ function rebuildAttendanceWithServiceHours(originalStores, storeEmployees) {
 function buildDepartmentData(storeEmployees) {
   // 部署定義
   const DEPARTMENTS = [
+    { key: 'tokuhan',                  name: '特販部',   type: 'tokuhan',        color: '#2563eb', icon: 'Package' },
     { key: 'online',                   name: '通販部',   type: 'online',         color: '#3b82f6', icon: 'ShoppingCart' },
-    { key: 'manufacturing_hokusetsu',  name: '北摂工場',  type: 'manufacturing',  color: '#f59e0b', icon: 'Factory' },
-    { key: 'manufacturing_kagaya',     name: '加賀屋工場', type: 'manufacturing',  color: '#f97316', icon: 'Factory' },
     { key: 'planning',                 name: '企画部',   type: 'planning',       color: '#8b5cf6', icon: 'Lightbulb' },
+    { key: 'manufacturing_hokusetsu',  name: '北摂工場',  type: 'manufacturing',  color: '#f59e0b', icon: 'Factory' },
+    { key: 'manufacturing_kagaya',     name: 'かがや工場', type: 'manufacturing',  color: '#f97316', icon: 'Factory' },
+    { key: 'manufacturing_minamitanabe', name: '南田辺工房', type: 'manufacturing', color: '#eab308', icon: 'Factory' },
   ];
 
   const result = {};
@@ -786,12 +800,14 @@ function buildDepartmentData(storeEmployees) {
     if (!affiliation) return;
 
     let deptKey = null;
-    if (affiliation === 'online') deptKey = 'online';
+    if (affiliation === 'tokuhan') deptKey = 'tokuhan';
+    else if (affiliation === 'online') deptKey = 'online';
     else if (affiliation === 'planning') deptKey = 'planning';
     else if (affiliation === 'manufacturing') {
-      // 北摂工場 vs 加賀屋工場は affiliationStoreで判別
+      // 工場名で判別
       if (affiliationStore === '北摂工場') deptKey = 'manufacturing_hokusetsu';
       else if (affiliationStore === '加賀屋工場' || affiliationStore === 'かがや工場') deptKey = 'manufacturing_kagaya';
+      else if (affiliationStore === '南田辺工房') deptKey = 'manufacturing_minamitanabe';
       else deptKey = 'manufacturing_hokusetsu'; // デフォルト
     }
 
@@ -899,7 +915,8 @@ async function fetchStoreUpdateTimes(cookies) {
     $menu('table tr').each((i, row) => {
       const cells = $menu(row).find('td,th').toArray();
       if (cells.length < 9) return;
-      const storeName = $menu(cells[0]).text().trim().replace(/[\\\[\]]/g, '');
+      let storeName = $menu(cells[0]).text().trim().replace(/[\\\[\]]/g, '');
+      if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
       if (!TEMPOVISOR_STORE_CODES[storeName]) return;
       // 更新時刻は最後の列（または最後から2番目）
       const lastCell = $menu(cells[cells.length - 1]).text().trim();
@@ -1388,7 +1405,9 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
       const cells = $hourly(rows[r]).find('td,th').toArray();
       if (cells.length < 2) continue;
 
-      const storeName = $hourly(cells[0]).text().trim();
+      let storeName = $hourly(cells[0]).text().trim();
+      // TempoVisorの店舗名をシステム内店舗名に変換（例: 美和堂FC店→美和堂福島店）
+      if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
       // デバッグ: 全店舗名をログ出力（マッチしない店舗名も含む）
       if (storeName) console.log(`[TV] Row ${r} storeName="${storeName}" codepoints=${[...storeName].map(c=>c.codePointAt(0).toString(16)).join(',')} matched=${!!TEMPOVISOR_STORE_CODES[storeName]}`);
       if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
@@ -1460,7 +1479,8 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     for (let r = 1; r < rows.length; r++) {
       const cells = $yesterday(rows[r]).find('td,th').toArray();
       if (cells.length < 2) continue;
-      const storeName = $yesterday(cells[0]).text().trim();
+      let storeName = $yesterday(cells[0]).text().trim();
+      if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
       if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
 
       const hourly = {};
@@ -1558,7 +1578,8 @@ async function fetchAllStoresHourlySales(cookies, repBaseUrl) {
     for (let r = 1; r < rows.length; r++) {
       const cells = $tomorrow(rows[r]).find('td,th').toArray();
       if (cells.length < 2) continue;
-      const storeName = $tomorrow(cells[0]).text().trim();
+      let storeName = $tomorrow(cells[0]).text().trim();
+      if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
       if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
       if (!tomorrowHourlyAll[storeName]) tomorrowHourlyAll[storeName] = {};
       hourColumns.forEach(({ colIndex, hour: tomorrowHour }) => {

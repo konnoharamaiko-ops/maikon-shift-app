@@ -202,7 +202,7 @@ export default function Dashboard() {
   const [adminSettingsOpen, setAdminSettingsOpen] = useState(false);
 
   const adminSubItems = [
-    { id: 'store-settings', label: '店舗設定', icon: Shield, path: 'StoreSettings', color: 'from-orange-500 to-red-600', desc: '店舗情報・期限の設定' },
+    { id: 'store-settings', label: '所属先設定', icon: Shield, path: 'StoreSettings', color: 'from-orange-500 to-red-600', desc: '店舗・工房・部署の設定' },
     { id: 'user-mgmt', label: 'ユーザー管理', icon: Users, path: 'UserManagement', color: 'from-indigo-500 to-blue-600', desc: 'スタッフの登録・権限管理' },
     { id: 'system-settings', label: 'システム設定', icon: Wrench, path: 'SystemSettings', color: 'from-gray-600 to-gray-800', desc: 'アプリ全体の設定・管理' },
     { id: 'settings', label: '基本設定', icon: Settings, path: 'Settings', color: 'from-slate-500 to-slate-600', desc: 'アカウント設定・通知設定' },

@@ -426,7 +426,7 @@ export default function ShiftOverview() {
       return allUsers.filter(u => u.belongs_online === true).sort(sortByOrder);
     }
     if (selectedCategory === 'manufacturing') {
-      return allUsers.filter(u => u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking || u.belongs_kagaya_bagging || u.belongs_kagaya_cooking).sort(sortByOrder);
+      return allUsers.filter(u => u.belongs_hokusetsu || u.belongs_kagaya || u.belongs_minamitanabe).sort(sortByOrder);
     }
     if (!selectedStoreId) return [];
     return allUsers.filter(u => u.store_ids?.includes(selectedStoreId)).sort(sortByOrder);
@@ -525,7 +525,7 @@ export default function ShiftOverview() {
       if (selectedCategory === 'online') {
         targetUserEmails = allUsers.filter(u => u.belongs_online === true).map(u => u.email);
       } else if (selectedCategory === 'manufacturing') {
-        targetUserEmails = allUsers.filter(u => u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking || u.belongs_kagaya_bagging || u.belongs_kagaya_cooking).map(u => u.email);
+        targetUserEmails = allUsers.filter(u => u.belongs_hokusetsu || u.belongs_kagaya || u.belongs_minamitanabe).map(u => u.email);
       } else {
         if (!selectedStoreId) return [];
         targetUserEmails = allUsers.filter(u => u.store_ids?.includes(selectedStoreId)).map(u => u.email);
@@ -559,7 +559,7 @@ export default function ShiftOverview() {
           dbData = data || [];
         }
       } else if (selectedCategory === 'manufacturing') {
-        stUsers = allUsers.filter(u => u.belongs_hokusetsu_bagging || u.belongs_hokusetsu_cooking || u.belongs_kagaya_bagging || u.belongs_kagaya_cooking);
+        stUsers = allUsers.filter(u => u.belongs_hokusetsu || u.belongs_kagaya || u.belongs_minamitanabe);
         const emails = stUsers.map(u => u.email);
         if (emails.length > 0) {
           const { data, error } = await supabase.from('ShiftRequest').select('*')
