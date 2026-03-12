@@ -2367,6 +2367,37 @@ export default function ProductivityDashboard() {
         localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
         console.log('[Migration] 店舗名を新名称に更新しました');
       }
+      // 除外スタッフの自動解除：除外日の翌日以降になったら自動的に解除
+      const todayJaStr = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      let autoReleased = false;
+      for (const [id, setting] of Object.entries(migratedSettings)) {
+        if (setting.excluded === true && setting.excluded_at) {
+          // excluded_atは "2026/3/11 16:36:09" のような形式
+          const excludedDateStr = setting.excluded_at.split(' ')[0]; // "2026/3/11"
+          // 日付比較のためDateオブジェクトに変換
+          const excludedDate = new Date(excludedDateStr.replace(/\//g, '-'));
+          const today = new Date(todayJaStr.replace(/\//g, '-'));
+          excludedDate.setHours(0, 0, 0, 0);
+          today.setHours(0, 0, 0, 0);
+          if (today > excludedDate) {
+            // 翌日以降なので自動解除
+            migratedSettings[id] = {
+              ...setting,
+              excluded: false,
+              excluded_at: null,
+              excluded_from_store: null,
+              auto_released: true,
+              auto_released_at: new Date().toLocaleString('ja-JP'),
+            };
+            autoReleased = true;
+            console.log(`[除外自動解除] ${setting.staff_name || id}: 除外日=${excludedDateStr}, 今日=${todayJaStr}`);
+          }
+        }
+      }
+      if (autoReleased) {
+        localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
+        console.log('[除外自動解除] 翌日以降の除外スタッフを自動解除しました');
+      }
       return migratedSettings;
     } catch { return {}; }
   });
@@ -3307,7 +3338,7 @@ export default function ProductivityDashboard() {
           })()}
 
           {/* 作業メモ・当日タスク入力 */}
-          <PlanningMemoSection selectedDate={selectedDate} />
+          <PlanningMemoSection selectedDate={new Date()} />
         </motion.div>
       )}
 

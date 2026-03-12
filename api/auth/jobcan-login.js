@@ -34,18 +34,17 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'ジョブカンコードとパスワードを入力してください' });
     }
 
-    // Vercel Serverless Functions では VITE_ プレフィックスは実行時に undefined になるため
-    // NEXT_PUBLIC_ または プレフィックスなしの変数を優先して使用する
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    // 環境変数の参照順序をrealtime.jsと統一
+    const supabaseUrl = process.env.VITE_SUPABASE_URL
       || process.env.SUPABASE_URL
-      || process.env.VITE_SUPABASE_URL;
+      || process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY
       || process.env.SUPABASE_ANON_KEY
-      || process.env.VITE_SUPABASE_ANON_KEY;
+      || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-      || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+    const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY
+      || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     // デバッグ用ログ（本番でも一時的に残す）
     console.log('[JobcanLogin] ENV check:', {

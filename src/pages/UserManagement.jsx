@@ -66,6 +66,16 @@ export default function UserManagement() {
   const [jobcanCode, setJobcanCode] = useState('');
   const [role, setRole] = useState('user');
   const [storeIds, setStoreIds] = useState([]);
+  const [affiliationTab, setAffiliationTab] = useState('store');
+  const [belongsFlags, setBelongsFlags] = useState({
+    belongs_tokuhan: false,
+    belongs_online: false,
+    belongs_planning: false,
+    belongs_hokusetsu: false,
+    belongs_kagaya: false,
+    belongs_minamitanabe: false,
+    belongs_ekimaru: false,
+  });
   // editingUser and showEditModal are removed as editing is now handled via a separate page linked by `Link`
   const [permissionUser, setPermissionUser] = useState(null);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
@@ -128,7 +138,7 @@ export default function UserManagement() {
     { id: 'store-11010', store_code: '11010', store_name: 'かがや店' },
     { id: 'store-11200', store_code: '11200', store_name: '駅丸' },
     { id: 'store-12000', store_code: '12000', store_name: '北摂店' },
-    { id: 'store-12200', store_code: '12200', store_name: '堤東店' },
+    { id: 'store-12200', store_code: '12200', store_name: '堺東店' },
     { id: 'store-12300', store_code: '12300', store_name: 'イオン松原店' },
     { id: 'store-12400', store_code: '12400', store_name: 'イオン守口店' },
     { id: 'store-20000', store_code: '20000', store_name: '美和堂福島店' },
@@ -281,7 +291,7 @@ export default function UserManagement() {
   }, [pendingInvitations, users, queryClient]);
 
   const inviteMutation = useMutation({
-    mutationFn: async ({ email, fullName, role, storeIds, password }) => {
+    mutationFn: async ({ email, fullName, role, storeIds, password, belongsFlags: flags }) => {
       // Check if user already exists in User table (use cached data first, then verify)
       const cachedUsers = queryClient.getQueryData(['allUsers']) || [];
       const existingUser = cachedUsers.find(u => u.email === email);
@@ -364,6 +374,7 @@ export default function UserManagement() {
           jobcan_code: jobcanCode || null,
           invited_at: new Date().toISOString(),
           invited_by: currentUser?.email || 'admin',
+          ...(flags || {}),
         });
         console.log('[Invite] PendingInvitation created for:', email);
       } catch (pendingErr) {
@@ -410,6 +421,16 @@ export default function UserManagement() {
       setJobcanCode('');
       setRole('user');
       setStoreIds([]);
+      setBelongsFlags({
+        belongs_tokuhan: false,
+        belongs_online: false,
+        belongs_planning: false,
+        belongs_hokusetsu: false,
+        belongs_kagaya: false,
+        belongs_minamitanabe: false,
+        belongs_ekimaru: false,
+      });
+      setAffiliationTab('store');
       
       const emailStatus = data.supabaseEmailSent ? 'Supabase招待メール送信済み。' : '';
       toast.success(`${data.fullName}さんを招待中に追加しました。${emailStatus}初期パスワード: ${data.defaultPassword}`);
@@ -421,13 +442,14 @@ export default function UserManagement() {
 
   const handleInvite = (e) => {
     e.preventDefault();
-    if (!email || !fullName || storeIds.length === 0) {
-      toast.error('全ての項目を入力してください');
+    const hasAnyBelongs = Object.values(belongsFlags).some(v => v === true);
+    if (!email || !fullName || (storeIds.length === 0 && !hasAnyBelongs)) {
+      toast.error('全ての項目を入力し、所属先を最低1つ選択してください');
       return;
     }
     // 初期パスワード = ジョブカンコード（未入力の場合はShiftApp2025!）
     const initialPassword = jobcanCode || 'ShiftApp2025!';
-    inviteMutation.mutate({ email, fullName, role, storeIds, password: initialPassword, jobcanCode });
+    inviteMutation.mutate({ email, fullName, role, storeIds, password: initialPassword, jobcanCode, belongsFlags });
   };
 
   const updateMutation = useMutation({
@@ -894,15 +916,34 @@ export default function UserManagement() {
               </div>
               <div>
                 <Label htmlFor="stores" className="text-sm font-medium text-slate-700 mb-2 block">
-                  所属先（複数選択可）
+                  所属先設定 *
                 </Label>
-                <div className="space-y-2 border border-slate-200 rounded-lg p-3 max-h-40 overflow-y-auto">
-                  {stores.length === 0 ? (
-                    <div className="p-2 text-sm text-slate-500 text-center">
-                      店舗が登録されていません
-                    </div>
-                  ) : (
-                    sortStoresByOrder(stores).map((store) => (
+                {/* 所属先タブ */}
+                <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-3">
+                  {[
+                    { id: 'store', label: '店1018' },
+                    { id: 'online', label: '通企総0919' },
+                    { id: 'manufacturing', label: '工房0918' },
+                    { id: 'ekimaru', label: '駅催事出張' },
+                  ].map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setAffiliationTab(id)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        affiliationTab === id
+                          ? 'bg-white shadow text-blue-700'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {/* 店舗タブ */}
+                {affiliationTab === 'store' && (
+                  <div className="space-y-1 border border-slate-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+                    {sortStoresByOrder(stores).map((store) => (
                       <label key={store.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 p-2 rounded">
                         <input
                           type="checkbox"
@@ -918,9 +959,66 @@ export default function UserManagement() {
                         />
                         <span className="text-sm">{store.store_name}</span>
                       </label>
-                    ))
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
+                {/* 通企総0919タブ */}
+                {affiliationTab === 'online' && (
+                  <div className="border border-blue-200 rounded-lg p-3 space-y-1">
+                    {[
+                      { label: '特販部', key: 'belongs_tokuhan' },
+                      { label: '通販部', key: 'belongs_online' },
+                      { label: '企画部', key: 'belongs_planning' },
+                    ].map(({ label, key }) => (
+                      <label key={key} className="flex items-center gap-2 cursor-pointer hover:bg-blue-50 p-2 rounded">
+                        <input
+                          type="checkbox"
+                          checked={belongsFlags[key] || false}
+                          onChange={(e) => setBelongsFlags({ ...belongsFlags, [key]: e.target.checked })}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm font-medium">{label}</span>
+                      </label>
+                    ))}
+                    <p className="text-[10px] text-slate-400 mt-2 ml-2">通企総0919に所属する部門をチェックしてください</p>
+                  </div>
+                )}
+                {/* 工房0918タブ */}
+                {affiliationTab === 'manufacturing' && (
+                  <div className="border border-amber-200 rounded-lg p-3 space-y-1">
+                    {[
+                      { label: '北摂工場', key: 'belongs_hokusetsu' },
+                      { label: 'かがや工場', key: 'belongs_kagaya' },
+                      { label: '南田辺工房', key: 'belongs_minamitanabe' },
+                    ].map(({ label, key }) => (
+                      <label key={key} className="flex items-center gap-2 cursor-pointer hover:bg-amber-50 p-2 rounded">
+                        <input
+                          type="checkbox"
+                          checked={belongsFlags[key] || false}
+                          onChange={(e) => setBelongsFlags({ ...belongsFlags, [key]: e.target.checked })}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm font-medium">{label}</span>
+                      </label>
+                    ))}
+                    <p className="text-[10px] text-slate-400 mt-2 ml-2">工房0918に所属する工場をチェックしてください</p>
+                  </div>
+                )}
+                {/* 駅催事出張タブ */}
+                {affiliationTab === 'ekimaru' && (
+                  <div className="border border-green-200 rounded-lg p-3">
+                    <label className="flex items-center gap-2 cursor-pointer hover:bg-green-50 p-2 rounded">
+                      <input
+                        type="checkbox"
+                        checked={belongsFlags.belongs_ekimaru || false}
+                        onChange={(e) => setBelongsFlags({ ...belongsFlags, belongs_ekimaru: e.target.checked })}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm font-medium">駅催事出張</span>
+                    </label>
+                    <p className="text-[10px] text-slate-400 mt-2 ml-2">駅催事・出張に所属する場合はチェックしてください</p>
+                  </div>
+                )}
               </div>
             </div>
             <Button
