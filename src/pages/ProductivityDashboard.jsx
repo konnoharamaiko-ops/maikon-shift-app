@@ -12,7 +12,8 @@ import {
   Sun, Moon, LayoutGrid, LineChart as LineChartIcon, Timer, Coffee,
   Settings, Calendar, MapPin, ArrowUpRight, ArrowDownRight, Minus,
   Store, BanknoteIcon, Briefcase, ArrowRight, ShoppingCart, Factory,
-  Package, Truck, FlaskConical, Layers, Save, Edit3, Plus
+  Package, Truck, FlaskConical, Layers, Save, Edit3, Plus,
+  ClipboardList, Trash2, History
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -795,17 +796,34 @@ function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsC
   const updateStaffSetting = (staffId, key, value) => {
     const current = staffSettings[staffId] || {};
     let extra = {};
+    const todayStr = new Date().toLocaleDateString('ja-JP');
     // 除外ONになった瞬間に履歴を記録
     if (key === 'excluded' && value === true && !current.excluded) {
       extra = {
         excluded_at: new Date().toLocaleString('ja-JP'),
         excluded_from_store: store.store_name,
         exclude_reason: current.exclude_reason || '',
+        settings_date: todayStr,
       };
+      addOperationLog('除外', staffId, `${store.store_name}から除外`);
     }
     // 除外OFFになった瞬間に履歴をクリア
     if (key === 'excluded' && value === false) {
-      extra = { excluded_at: null, excluded_from_store: null };
+      extra = { excluded_at: null, excluded_from_store: null, settings_date: null };
+      addOperationLog('除外解除', staffId, `除外を解除`);
+    }
+    // 移動先変更の履歴を記録
+    if (key === 'override_store') {
+      extra.settings_date = todayStr;
+      if (value) {
+        addOperationLog('移動先変更', staffId, `移動先: ${value}`);
+      } else {
+        addOperationLog('移動先解除', staffId, `移動先をデフォルトに戻す`);
+      }
+    }
+    // 除外理由の変更
+    if (key === 'exclude_reason' && value) {
+      addOperationLog('除外理由変更', staffId, `理由: ${value}`);
     }
     const newSettings = {
       ...staffSettings,
@@ -843,14 +861,17 @@ function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsC
     };
     list.push(newStaff);
     saveManualStaff(list);
+    addOperationLog('手動追加', addStaffForm.name.trim(), `${addStaffForm.store_name || store.store_name}に追加（${clockIn}〜${clockOut}）`);
     setAddStaffForm({ name: '', clock_in: '', clock_out: '', store_name: store?.store_name || '' });
     setShowAddStaffForm(false);
     if (onStaffSettingsChange) onStaffSettingsChange({ ...staffSettings });
   };
   const manualStaffForStore = loadManualStaff().filter(s => s.store_name === store.store_name);
   const removeManualStaff = (id) => {
+    const removed = loadManualStaff().find(s => s.id === id);
     const list = loadManualStaff().filter(s => s.id !== id);
     saveManualStaff(list);
+    if (removed) addOperationLog('手動削除', removed.name, `${removed.store_name}から削除`);
     if (onStaffSettingsChange) onStaffSettingsChange({ ...staffSettings });
   };
 
@@ -1669,6 +1690,36 @@ function AllStoresHourlyChart({ stores }) {
 
 // ===== スタッフ設定モーダル =====
 const STAFF_SETTINGS_KEY = 'maikon_staff_settings';
+const OPERATION_LOG_KEY = 'maikon_operation_log';
+
+// ===== 操作履歴管理 =====
+function loadOperationLog() {
+  try {
+    const saved = localStorage.getItem(OPERATION_LOG_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return [];
+}
+
+function saveOperationLog(log) {
+  try {
+    // 最大100件まで保持
+    const trimmed = log.slice(0, 100);
+    localStorage.setItem(OPERATION_LOG_KEY, JSON.stringify(trimmed));
+  } catch (e) {}
+}
+
+function addOperationLog(action, staffName, detail) {
+  const log = loadOperationLog();
+  log.unshift({
+    timestamp: new Date().toLocaleString('ja-JP'),
+    date: new Date().toLocaleDateString('ja-JP'),
+    action,
+    staffName,
+    detail,
+  });
+  saveOperationLog(log);
+}
 
 function loadStaffSettings() {
   try {
@@ -2338,6 +2389,7 @@ export default function ProductivityDashboard() {
   const [showClosedStores, setShowClosedStores] = useState(false);
   const [showStoreSettings, setShowStoreSettings] = useState(false);
   const [showStaffSettings, setShowStaffSettings] = useState(false);
+  const [showOperationLog, setShowOperationLog] = useState(false);
   const [activeCategory, setActiveCategory] = useState('store'); // 'store' | 'online' | 'manufacturing'
   const [storeSettings, setStoreSettings] = useState(() => loadStoreSettings());
   const [storeSort, setStoreSort] = useState('default'); // 'default' | 'productivity' | 'sales' | 'person_hours'
@@ -2367,36 +2419,53 @@ export default function ProductivityDashboard() {
         localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
         console.log('[Migration] 店舗名を新名称に更新しました');
       }
-      // 除外スタッフの自動解除：除外日の翌日以降になったら自動的に解除
-      const todayJaStr = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      // 日次自動リセット：除外・移動先設定を翌日以降に自動解除
+      const todayJaStr = new Date().toLocaleDateString('ja-JP');
       let autoReleased = false;
       for (const [id, setting] of Object.entries(migratedSettings)) {
-        if (setting.excluded === true && setting.excluded_at) {
-          // excluded_atは "2026/3/11 16:36:09" のような形式
-          const excludedDateStr = setting.excluded_at.split(' ')[0]; // "2026/3/11"
-          // 日付比較のためDateオブジェクトに変換
-          const excludedDate = new Date(excludedDateStr.replace(/\//g, '-'));
+        // settings_dateがある場合はそれを使用、ない場合はexcluded_atから日付を取得
+        let settingDateStr = setting.settings_date;
+        if (!settingDateStr && setting.excluded_at) {
+          settingDateStr = setting.excluded_at.split(' ')[0];
+        }
+        const hasExcluded = setting.excluded === true;
+        const hasOverride = !!setting.override_store;
+        
+        if ((hasExcluded || hasOverride) && settingDateStr) {
+          // 日付比較
+          const settingDate = new Date(settingDateStr.replace(/\//g, '-'));
           const today = new Date(todayJaStr.replace(/\//g, '-'));
-          excludedDate.setHours(0, 0, 0, 0);
+          settingDate.setHours(0, 0, 0, 0);
           today.setHours(0, 0, 0, 0);
-          if (today > excludedDate) {
-            // 翌日以降なので自動解除
+          if (today > settingDate) {
+            // 翌日以降なので全設定を自動リセット
+            const resetFields = {};
+            if (hasExcluded) {
+              resetFields.excluded = false;
+              resetFields.excluded_at = null;
+              resetFields.excluded_from_store = null;
+              resetFields.exclude_reason = null;
+              addOperationLog('自動リセット', setting.staff_name || id, `除外設定を自動解除（設定日: ${settingDateStr}）`);
+            }
+            if (hasOverride) {
+              resetFields.override_store = null;
+              addOperationLog('自動リセット', setting.staff_name || id, `移動先「${setting.override_store}」を自動解除（設定日: ${settingDateStr}）`);
+            }
             migratedSettings[id] = {
               ...setting,
-              excluded: false,
-              excluded_at: null,
-              excluded_from_store: null,
+              ...resetFields,
+              settings_date: null,
               auto_released: true,
               auto_released_at: new Date().toLocaleString('ja-JP'),
             };
             autoReleased = true;
-            console.log(`[除外自動解除] ${setting.staff_name || id}: 除外日=${excludedDateStr}, 今日=${todayJaStr}`);
+            console.log(`[日次自動リセット] ${setting.staff_name || id}: 設定日=${settingDateStr}, 今日=${todayJaStr}`);
           }
         }
       }
       if (autoReleased) {
         localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
-        console.log('[除外自動解除] 翌日以降の除外スタッフを自動解除しました');
+        console.log('[日次自動リセット] 翌日以降の除外・移動先設定を自動解除しました');
       }
       return migratedSettings;
     } catch { return {}; }
@@ -2693,6 +2762,16 @@ export default function ProductivityDashboard() {
           >
             <Settings className="h-3.5 w-3.5" />
             <span className="hidden md:inline">店舗設定</span>
+          </button>
+
+          {/* 操作履歴 */}
+          <button
+            onClick={() => setShowOperationLog(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-700 dark:hover:text-blue-400 transition-all text-xs font-semibold"
+            title="除外・追加・修正の操作履歴"
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">操作履歴</span>
           </button>
 
           {/* ダークモード */}
@@ -3554,7 +3633,147 @@ export default function ProductivityDashboard() {
         />
       )}
 
+      {/* 操作履歴モーダル */}
+      {showOperationLog && (
+        <OperationLogModal onClose={() => setShowOperationLog(false)} />
+      )}
 
     </div>
+  );
+}
+
+// ===== 操作履歴モーダル =====
+function OperationLogModal({ onClose }) {
+  const [logs, setLogs] = useState(() => loadOperationLog());
+  const todayStr = new Date().toLocaleDateString('ja-JP');
+  const todayLogs = logs.filter(l => l.date === todayStr);
+  const pastLogs = logs.filter(l => l.date !== todayStr);
+
+  const clearAllLogs = () => {
+    saveOperationLog([]);
+    setLogs([]);
+  };
+
+  const actionColors = {
+    '除外': 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
+    '除外解除': 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
+    '移動先変更': 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400',
+    '移動先解除': 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
+    '手動追加': 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400',
+    '手動削除': 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
+    '除外理由変更': 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
+    '自動リセット': 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
+  };
+
+  const renderLogItem = (log, i) => (
+    <div key={i} className="flex items-start gap-3 py-2.5 px-3 border-b border-gray-100 dark:border-gray-800 last:border-0">
+      <div className="shrink-0 mt-0.5">
+        <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${actionColors[log.action] || 'bg-gray-100 text-gray-600'}`}>
+          {log.action}
+        </span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold truncate">{log.staffName}</p>
+        <p className="text-xs text-muted-foreground">{log.detail}</p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p className="text-[10px] text-muted-foreground whitespace-nowrap">{log.timestamp}</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+      >
+        <motion.div
+          className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+          onClick={onClose}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+        />
+        <motion.div
+          className="relative bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-2xl shadow-2xl w-full sm:max-w-lg flex flex-col"
+          style={{ maxHeight: 'calc(85dvh - env(safe-area-inset-bottom, 0px))', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+          initial={{ y: '100%', scale: 0.95 }}
+          animate={{ y: 0, scale: 1 }}
+          exit={{ y: '100%', scale: 0.95 }}
+          transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+        >
+          {/* ドラッグハンドル */}
+          <div className="flex justify-center pt-3 pb-1 sm:hidden">
+            <div className="w-10 h-1 bg-gray-300 dark:bg-gray-600 rounded-full" />
+          </div>
+
+          {/* ヘッダー */}
+          <div className="px-5 pt-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg">
+                  <ClipboardList className="h-4 w-4 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-black">操作履歴</h2>
+                  <p className="text-xs text-muted-foreground">除外・追加・修正の操作ログ</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {logs.length > 0 && (
+                  <button
+                    onClick={clearAllLogs}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 text-xs font-semibold hover:bg-red-100 transition-colors"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    全削除
+                  </button>
+                )}
+                <button
+                  onClick={onClose}
+                  className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* コンテンツ */}
+          <div className="flex-1 overflow-y-auto">
+            {logs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                <History className="h-12 w-12 mb-3 opacity-30" />
+                <p className="text-sm font-semibold">操作履歴はありません</p>
+                <p className="text-xs mt-1">除外・移動先変更・手動追加などの操作が記録されます</p>
+              </div>
+            ) : (
+              <>
+                {/* 本日の履歴 */}
+                {todayLogs.length > 0 && (
+                  <div>
+                    <div className="sticky top-0 bg-blue-50 dark:bg-blue-950/20 px-4 py-2 border-b border-blue-200 dark:border-blue-800">
+                      <p className="text-xs font-bold text-blue-700 dark:text-blue-400">本日の操作（{todayLogs.length}件）</p>
+                    </div>
+                    {todayLogs.map((log, i) => renderLogItem(log, `today-${i}`))}
+                  </div>
+                )}
+                {/* 過去の履歴 */}
+                {pastLogs.length > 0 && (
+                  <div>
+                    <div className="sticky top-0 bg-gray-50 dark:bg-gray-800 px-4 py-2 border-b border-gray-200 dark:border-gray-700">
+                      <p className="text-xs font-bold text-muted-foreground">過去の操作（{pastLogs.length}件）</p>
+                    </div>
+                    {pastLogs.map((log, i) => renderLogItem(log, `past-${i}`))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
   );
 }
