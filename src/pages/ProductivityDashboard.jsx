@@ -3848,7 +3848,7 @@ function HistoricalComparisonModal({ onClose, month1, month2, setMonth1, setMont
     try {
       const params = new URLSearchParams({ month1 });
       if (month2) params.append('month2', month2);
-      const res = await fetch(`${API_BASE}/api/productivity/historical?${params}`);
+      const res = await fetch(`${API_BASE}/api/productivity?${params}`);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       setData(json);

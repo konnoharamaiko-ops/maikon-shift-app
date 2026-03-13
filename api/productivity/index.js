@@ -1,310 +1,608 @@
 /**
- * Vercel Serverless Function: HR Productivity Integration API
- * 売上データと勤怠データを統合して人時生産性を計算
+ * 過去実績比較API
+ * TempoVisorから月別売上データ、ジョブカンから月間勤務時間を取得し、
+ * 店舗別の売上・客数・客単価・稼働時間・人時生産性を比較可能な形式で返す
  * 
- * エンドポイント: POST /api/productivity
- * リクエストボディ: { date_from: "yyyy-mm-dd", date_to: "yyyy-mm-dd", store_code: "001" (optional) }
- * レスポンス: { success: true, data: [...] }
+ * Query params:
+ *   month1: 比較月1 (YYYY-MM形式, 必須)
+ *   month2: 比較月2 (YYYY-MM形式, 任意 - 前年同月など)
  */
+import cheerio from 'cheerio';
+
+// ===== 定数 =====
+const TEMPOVISOR_STORE_CODES = {
+  '田辺店': '0001', '大正店': '0002', '天下茶屋店': '0003',
+  '天王寺店': '0004', 'アベノ店': '0005', '心斎橋店': '0006',
+  'かがや店': '0007', '駅丸': '0008', '北摂店': '0009',
+  '堺東店': '0010', 'イオン松原店': '0011', 'イオン守口店': '0012',
+  '美和堂福島店': '0013',
+};
+
+const TEMPOVISOR_NAME_MAP = {
+  '美和堂FC店': '美和堂福島店',
+  'エキマルシェ新大阪': '駅丸',
+  'エキマルシェ': '駅丸',
+  '駅マルシェ新大阪': '駅丸',
+  'エキマル新大阪': '駅丸',
+  'エキマル': '駅丸',
+};
+
+const JOBCAN_GROUP_MAP = {
+  '田辺': '田辺店', '大正': '大正店', '天下茶屋': '天下茶屋店',
+  '天王寺': '天王寺店', 'アベノ': 'アベノ店', '心斎橋': '心斎橋店',
+  'かがや': 'かがや店', '駅丸': '駅丸', 'エキマル': '駅丸',
+  'エキマルシェ': '駅丸', '北摂店': '北摂店', '北摂': '北摂店',
+  '堺東': '堺東店', 'イオン松原': 'イオン松原店',
+  'イオン守口': 'イオン守口店', '美和堂': '美和堂福島店',
+};
+
+// ===== キャッシュ =====
+let historicalCache = {};
+const CACHE_TTL = 10 * 60 * 1000; // 10分
 
 export default async function handler(req, res) {
-  // CORS設定
-  res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
-    const { date_from, date_to, store_code } = req.body;
-
-    if (!date_from) {
-      return res.status(400).json({ error: 'date_from is required' });
+    const { month1, month2 } = req.query;
+    if (!month1) {
+      return res.status(400).json({ error: 'month1 is required (YYYY-MM format)' });
     }
 
-    // date_toが指定されていない場合はdate_fromと同じ
-    const endDate = date_to || date_from;
+    const months = [month1];
+    if (month2) months.push(month2);
 
-    // 日付範囲の検証（最大62日）
-    const daysDiff = getDaysDifference(date_from, endDate);
-    if (daysDiff > 62) {
-      return res.status(400).json({ 
-        error: 'Date range exceeds maximum of 62 days',
-        days: daysDiff 
-      });
-    }
+    const tempovisorUser = process.env.TEMPOVISOR_USERNAME || 'manu';
+    const tempovisorPass = process.env.TEMPOVISOR_PASSWORD || 'manus';
+    const jobcanCompany = process.env.JOBCAN_COMPANY_ID || 'maikon';
+    const jobcanUser = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
+    const jobcanPass = process.env.JOBCAN_PASSWORD || 'fujita.yog';
 
-    // 日付範囲のリストを生成
-    const dates = getDateRange(date_from, endDate);
-
-    // 各日付のデータを取得・統合
-    const productivityData = [];
-
-    for (const date of dates) {
-      // 売上データを取得（内部API呼び出し）
-      const salesData = await fetchSalesData(date);
-      
-      // 勤怠データを取得（内部API呼び出し）
-      const attendanceData = await fetchAttendanceData(date);
-
-      // データを統合して人時生産性を計算
-      const integratedData = integrateSalesAndAttendance(salesData, attendanceData, date);
-
-      // 店舗コードでフィルタリング
-      if (store_code && store_code !== 'all') {
-        const filtered = integratedData.filter(item => item.code === store_code);
-        productivityData.push(...filtered);
-      } else {
-        productivityData.push(...integratedData);
+    // 各月のデータを取得
+    const comparison = [];
+    for (const month of months) {
+      const cacheKey = `historical_${month}`;
+      const cached = historicalCache[cacheKey];
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        console.log(`[Historical] Using cache for ${month}`);
+        comparison.push(cached.data);
+        continue;
       }
+
+      console.log(`[Historical] Fetching fresh data for ${month}`);
+      const [year, monthNum] = month.split('-').map(Number);
+
+      // TempoVisor月別売上 + ジョブカン月間勤務時間を並行取得
+      const [salesResult, hoursResult] = await Promise.allSettled([
+        fetchTempoVisorMonthly(tempovisorUser, tempovisorPass, year, monthNum),
+        fetchJobcanMonthlyHours(jobcanCompany, jobcanUser, jobcanPass, year, monthNum),
+      ]);
+
+      const salesData = salesResult.status === 'fulfilled' ? salesResult.value : {};
+      const hoursData = hoursResult.status === 'fulfilled' ? hoursResult.value : {};
+
+      console.log(`[Historical] TempoVisor: ${salesResult.status}, Jobcan: ${hoursResult.status}`);
+
+      // 店舗別データを構築
+      const stores = {};
+      const total = { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0 };
+      let totalCustomers = 0;
+      let totalSales = 0;
+      let totalHours = 0;
+
+      for (const storeName of Object.keys(TEMPOVISOR_STORE_CODES)) {
+        const sd = salesData[storeName] || {};
+        const sales = sd.sales || 0;
+        const customers = sd.customers || 0;
+        const unitPrice = customers > 0 ? Math.round(sales / customers) : 0;
+        const workHours = hoursData[storeName] || 0;
+        const productivity = workHours > 0 ? Math.round(sales / workHours) : 0;
+
+        stores[storeName] = {
+          sales,
+          customers,
+          unit_price: unitPrice,
+          work_hours: Math.round(workHours * 10) / 10,
+          productivity,
+        };
+
+        totalSales += sales;
+        totalCustomers += customers;
+        totalHours += workHours;
+      }
+
+      total.sales = totalSales;
+      total.customers = totalCustomers;
+      total.unit_price = totalCustomers > 0 ? Math.round(totalSales / totalCustomers) : 0;
+      total.work_hours = Math.round(totalHours * 10) / 10;
+      total.productivity = totalHours > 0 ? Math.round(totalSales / totalHours) : 0;
+
+      const monthData = { month, stores, total };
+      comparison.push(monthData);
+
+      // キャッシュに保存
+      historicalCache[cacheKey] = { data: monthData, timestamp: Date.now() };
     }
 
     return res.status(200).json({
-      success: true,
-      date_from,
-      date_to: endDate,
-      store_code: store_code || 'all',
-      data: productivityData,
+      comparison,
       timestamp: new Date().toISOString(),
+      cached: false,
     });
-
-  } catch (error) {
-    console.error('Productivity API error:', error);
-    return res.status(500).json({
-      error: 'Failed to calculate productivity',
-      message: error.message,
-    });
+  } catch (err) {
+    console.error('[Historical] Error:', err);
+    return res.status(500).json({ error: err.message });
   }
 }
 
-/**
- * 売上データを取得（ダミー実装）
- */
-async function fetchSalesData(date) {
-  // 実際の実装では /api/productivity/sales を呼び出す
-  // 現在はダミーデータを返す
-  return generateDummySalesData(date);
-}
+// ===== TempoVisor月別売上データ取得 =====
+async function fetchTempoVisorMonthly(username, password, year, month) {
+  const { cookies, repBaseUrl } = await loginTempoVisor(username, password);
 
-/**
- * 勤怠データを取得（ダミー実装）
- */
-async function fetchAttendanceData(date) {
-  // 実際の実装では /api/productivity/attendance を呼び出す
-  // 現在はダミーデータを返す
-  return generateDummyAttendanceData(date);
-}
+  // TempoVisorのN3M1Servlet（月別集計）を使用
+  // N3M1Servletは月別の売上・客数を店舗別に返す
+  const monthStr = String(month).padStart(2, '0');
+  const dateFrom = `${year}/${monthStr}/01`;
+  
+  // 月末日を計算
+  const lastDay = new Date(year, month, 0).getDate();
+  const dateTo = `${year}/${monthStr}/${String(lastDay).padStart(2, '0')}`;
 
-/**
- * 売上データと勤怠データを統合して人時生産性を計算
- */
-function integrateSalesAndAttendance(salesData, attendanceData, date) {
-  const result = [];
+  console.log(`[Historical TV] Fetching monthly data: ${dateFrom} - ${dateTo}`);
 
-  // 店舗ごとに統合
-  salesData.forEach(sales => {
-    const attendance = attendanceData.find(a => a.store_code === sales.store_code);
+  // N3M1Servlet: 月別売上集計
+  const monthlyUrl = `${repBaseUrl}N3M1Servlet`;
+  const formBody = new URLSearchParams({
+    dateFrom: dateFrom,
+    dateTo: dateTo,
+    storeCode: '',
+    submit: '実行',
+  }).toString();
 
-    if (!attendance) {
-      console.warn(`No attendance data for store ${sales.store_code}`);
-      return;
+  const monthlyRes = await fetch(monthlyUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Cookie': cookies,
+      'Referer': repBaseUrl,
+    },
+    body: formBody,
+  });
+
+  const monthlyHtml = await monthlyRes.text();
+  const $ = cheerio.load(monthlyHtml);
+
+  const storeData = {};
+
+  // テーブルから店舗別売上・客数を抽出
+  $('table').each((tableIdx, table) => {
+    const rows = $(table).find('tr').toArray();
+    if (rows.length < 2) return;
+
+    // ヘッダー行を解析して列インデックスを特定
+    const headerCells = $(rows[0]).find('td,th').toArray();
+    if (headerCells.length < 3) return;
+
+    const firstHeaderText = $(headerCells[0]).text().trim();
+    
+    // 店舗名列があるテーブルを探す
+    if (!firstHeaderText.includes('店舗') && firstHeaderText !== '店舗名') {
+      // 最初のセルが店舗名っぽいかチェック
+      let isStoreTable = false;
+      for (let r = 1; r < Math.min(rows.length, 3); r++) {
+        const cells = $(rows[r]).find('td,th').toArray();
+        if (cells.length < 3) continue;
+        const cellText = $(cells[0]).text().trim();
+        for (const name of Object.keys(TEMPOVISOR_STORE_CODES)) {
+          if (cellText.includes(name) || Object.keys(TEMPOVISOR_NAME_MAP).some(k => cellText.includes(k))) {
+            isStoreTable = true;
+            break;
+          }
+        }
+        if (isStoreTable) break;
+      }
+      if (!isStoreTable) return;
     }
 
-    // 時間帯別データを統合
-    const hourlyDetails = [];
-    sales.hourly_sales.forEach(hourSales => {
-      const hourAttendance = attendance.hourly_attendance.find(a => a.time === hourSales.time);
+    // ヘッダーから売上・客数の列インデックスを検出
+    let salesColIdx = -1;
+    let customersColIdx = -1;
+    for (let c = 0; c < headerCells.length; c++) {
+      const text = $(headerCells[c]).text().trim();
+      if (text.includes('売上') || text.includes('金額') || text.includes('合計')) {
+        if (salesColIdx === -1) salesColIdx = c;
+      }
+      if (text.includes('客数') || text.includes('人数') || text.includes('件数')) {
+        customersColIdx = c;
+      }
+    }
 
-      if (hourAttendance) {
-        const salesPerHour = hourAttendance.total_hours > 0 
-          ? Math.round(hourSales.sales / hourAttendance.total_hours)
-          : 0;
+    // ヘッダーで見つからない場合、最後の列を売上とする
+    if (salesColIdx === -1 && headerCells.length >= 3) {
+      salesColIdx = headerCells.length - 1;
+    }
 
-        hourlyDetails.push({
-          tm: hourSales.time,
-          kingaku: hourSales.sales.toString(),
-          wk_tm: hourAttendance.total_hours.toFixed(1),
-          wk_cnt: hourAttendance.employee_count,
-          sph: salesPerHour.toString(),
-          day_key: `${date}_${sales.store_code}_${hourSales.time}`,
-        });
+    // データ行を解析
+    for (let r = 1; r < rows.length; r++) {
+      const cells = $(rows[r]).find('td,th').toArray();
+      if (cells.length < 2) continue;
+
+      let storeName = $(cells[0]).text().trim();
+      if (!storeName || storeName === '合計' || storeName === '全店') continue;
+
+      // 店舗名マッピング
+      if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
+      if (!TEMPOVISOR_STORE_CODES[storeName]) {
+        // 部分一致を試みる
+        let matched = false;
+        for (const [key, mappedName] of Object.entries(TEMPOVISOR_NAME_MAP)) {
+          if (storeName.includes(key)) {
+            storeName = mappedName;
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) {
+          for (const name of Object.keys(TEMPOVISOR_STORE_CODES)) {
+            if (storeName.includes(name) || name.includes(storeName)) {
+              storeName = name;
+              matched = true;
+              break;
+            }
+          }
+        }
+        if (!matched) continue;
+      }
+
+      const parseCurrency = (text) => {
+        if (!text) return 0;
+        return parseInt(text.replace(/[¥\\,\s円]/g, '').replace(/[^\d-]/g, '')) || 0;
+      };
+
+      const sales = salesColIdx >= 0 && salesColIdx < cells.length
+        ? parseCurrency($(cells[salesColIdx]).text())
+        : 0;
+      const customers = customersColIdx >= 0 && customersColIdx < cells.length
+        ? parseInt($(cells[customersColIdx]).text().replace(/[,\s]/g, '')) || 0
+        : 0;
+
+      if (!storeData[storeName]) {
+        storeData[storeName] = { sales: 0, customers: 0 };
+      }
+      storeData[storeName].sales += sales;
+      storeData[storeName].customers += customers;
+
+      console.log(`[Historical TV] ${storeName}: sales=${sales}, customers=${customers}`);
+    }
+  });
+
+  // N3M1が空の場合、N3D1Servletで日別に取得して合算するフォールバック
+  if (Object.keys(storeData).length === 0) {
+    console.log('[Historical TV] N3M1 empty, trying daily aggregation via N3D1');
+    return await fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month);
+  }
+
+  return storeData;
+}
+
+// N3D1Servletで日別データを取得して月間合算するフォールバック
+async function fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month) {
+  const storeData = {};
+  const lastDay = new Date(year, month, 0).getDate();
+  const monthStr = String(month).padStart(2, '0');
+
+  // 各日のデータを取得（並列で5日ずつ）
+  for (let dayStart = 1; dayStart <= lastDay; dayStart += 5) {
+    const dayEnd = Math.min(dayStart + 4, lastDay);
+    const dayPromises = [];
+
+    for (let day = dayStart; day <= dayEnd; day++) {
+      const dayStr = String(day).padStart(2, '0');
+      const dateStr = `${year}/${monthStr}/${dayStr}`;
+      dayPromises.push(fetchSingleDayData(cookies, repBaseUrl, dateStr));
+    }
+
+    const results = await Promise.allSettled(dayPromises);
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue;
+      for (const [storeName, data] of Object.entries(result.value)) {
+        if (!storeData[storeName]) {
+          storeData[storeName] = { sales: 0, customers: 0 };
+        }
+        storeData[storeName].sales += data.sales || 0;
+        storeData[storeName].customers += data.customers || 0;
+      }
+    }
+  }
+
+  return storeData;
+}
+
+async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
+  const hourlyUrl = `${repBaseUrl}N3D1Servlet`;
+  const formBody = new URLSearchParams({
+    dateFrom: dateStr,
+    dateTo: dateStr,
+    storeCode: '',
+    submit: '実行',
+  }).toString();
+
+  const res = await fetch(hourlyUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Cookie': cookies,
+      'Referer': repBaseUrl,
+    },
+    body: formBody,
+  });
+
+  const html = await res.text();
+  const $ = cheerio.load(html);
+  const dayData = {};
+
+  $('table').each((tableIdx, table) => {
+    const rows = $(table).find('tr').toArray();
+    if (rows.length < 2) return;
+
+    const headerCells = $(rows[0]).find('td,th').toArray();
+    if (headerCells.length < 3) return;
+
+    // 時間別売上テーブルの合計列を探す
+    let totalColIdx = -1;
+    for (let c = 0; c < headerCells.length; c++) {
+      const text = $(headerCells[c]).text().trim();
+      if (text === '合計') {
+        totalColIdx = c;
+        break;
+      }
+    }
+    if (totalColIdx === -1) totalColIdx = headerCells.length - 1;
+
+    for (let r = 1; r < rows.length; r++) {
+      const cells = $(rows[r]).find('td,th').toArray();
+      if (cells.length < 3) continue;
+
+      let storeName = $(cells[0]).text().trim();
+      if (!storeName || storeName === '合計') continue;
+
+      if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
+      if (!TEMPOVISOR_STORE_CODES[storeName]) continue;
+
+      const totalText = $(cells[totalColIdx]).text().trim();
+      const sales = parseInt(totalText.replace(/[¥\\,\s円]/g, '').replace(/[^\d-]/g, '')) || 0;
+
+      if (!dayData[storeName]) {
+        dayData[storeName] = { sales: 0, customers: 0 };
+      }
+      dayData[storeName].sales += sales;
+    }
+  });
+
+  return dayData;
+}
+
+// ===== ジョブカン月間勤務時間取得 =====
+async function fetchJobcanMonthlyHours(companyId, loginId, password, year, month) {
+  // ジョブカンにログイン
+  const loginUrl = 'https://ssl.jobcan.jp/login/client/';
+
+  const getRes = await fetch(loginUrl, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+  });
+  const initialCookies = extractCookies(getRes);
+  const loginHtml = await getRes.text();
+
+  const $login = cheerio.load(loginHtml);
+  const csrfToken = $login('input[name="token"]').val() || '';
+
+  const loginBody = new URLSearchParams({
+    token: csrfToken,
+    client_login_id: companyId,
+    client_manager_login_id: loginId,
+    client_login_password: password,
+    url: '/client',
+    login_type: '2',
+  }).toString();
+
+  const loginRes = await fetch(loginUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Cookie': initialCookies,
+      'Referer': loginUrl,
+    },
+    body: loginBody,
+    redirect: 'manual',
+  });
+
+  const loginCookies = extractCookies(loginRes);
+  const allCookies = mergeCookies(initialCookies, loginCookies);
+
+  // 勤怠集計ページから月間勤務時間を取得
+  const monthStr = String(month).padStart(2, '0');
+  const summaryUrl = `https://ssl.jobcan.jp/client/summary/data?search_type=dep&search_key=all&year=${year}&month=${monthStr}&number_par_page=300`;
+
+  console.log(`[Historical JC] Fetching monthly hours: ${year}/${monthStr}`);
+
+  const summaryRes = await fetch(summaryUrl, {
+    headers: {
+      'Cookie': allCookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://ssl.jobcan.jp/client/summary',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+  });
+
+  const storeHours = {};
+
+  try {
+    const data = await summaryRes.json();
+    console.log(`[Historical JC] Summary response type: ${typeof data}`);
+
+    if (data && data.data) {
+      for (const employee of data.data) {
+        const groupName = employee.group_name || '';
+        const workTimeMinutes = parseFloat(employee.work_time || 0);
+
+        const storeName = mapJobcanGroupToStore(groupName);
+        if (storeName) {
+          if (!storeHours[storeName]) storeHours[storeName] = 0;
+          storeHours[storeName] += workTimeMinutes / 60; // 分→時間
+        }
+      }
+    }
+  } catch (jsonErr) {
+    console.warn(`[Historical JC] JSON parse error, trying HTML:`, jsonErr.message);
+
+    // HTMLページの場合
+    try {
+      // summaryResは既に消費されているので、再取得
+      const summaryPageUrl = `https://ssl.jobcan.jp/client/summary?search_type=dep&search_key=all&year=${year}&month=${monthStr}&number_par_page=300`;
+      const pageRes = await fetch(summaryPageUrl, {
+        headers: {
+          'Cookie': allCookies,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://ssl.jobcan.jp/client/',
+        },
+      });
+      const htmlText = await pageRes.text();
+      const $ = cheerio.load(htmlText);
+
+      $('table tbody tr').each((i, row) => {
+        const cells = $(row).find('td').toArray();
+        if (cells.length < 5) return;
+
+        const group = $(cells[1]).text().trim();
+        const workTimeText = $(cells[3]).text().trim();
+
+        const storeName = mapJobcanGroupToStore(group);
+        if (storeName) {
+          const hours = parseWorkTime(workTimeText);
+          if (!storeHours[storeName]) storeHours[storeName] = 0;
+          storeHours[storeName] += hours;
+        }
+      });
+    } catch (htmlErr) {
+      console.warn(`[Historical JC] HTML parse error:`, htmlErr.message);
+    }
+  }
+
+  console.log(`[Historical JC] Monthly hours:`, JSON.stringify(storeHours));
+  return storeHours;
+}
+
+// ===== ユーティリティ =====
+function mapJobcanGroupToStore(groupName) {
+  if (!groupName) return null;
+  for (const [key, storeName] of Object.entries(JOBCAN_GROUP_MAP)) {
+    if (groupName.includes(key)) return storeName;
+  }
+  return null;
+}
+
+function parseWorkTime(timeText) {
+  if (!timeText || timeText === '-') return 0;
+  // "HH:MM" 形式
+  const match = timeText.match(/(\d+):(\d+)/);
+  if (match) {
+    return parseInt(match[1]) + parseInt(match[2]) / 60;
+  }
+  // "X時間Y分" 形式
+  const hoursMatch = timeText.match(/(\d+)時間/);
+  const minutesMatch = timeText.match(/(\d+)分/);
+  const hours = hoursMatch ? parseInt(hoursMatch[1]) : 0;
+  const minutes = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+  return hours + minutes / 60;
+}
+
+async function loginTempoVisor(username, password) {
+  const loginUrl = 'https://www.tenpovisor.jp/alioth/servlet/LoginServlet';
+  const repBaseUrl = 'https://www.tenpovisor.jp/alioth/rep/';
+
+  const getRes = await fetch(loginUrl, {
+    method: 'GET',
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    redirect: 'manual',
+  });
+
+  const initialCookies = extractCookies(getRes);
+
+  const loginBody = new URLSearchParams({
+    id: username,
+    pass: password,
+  }).toString();
+
+  const loginRes = await fetch(loginUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Cookie': initialCookies,
+      'Referer': loginUrl,
+    },
+    body: loginBody,
+    redirect: 'manual',
+  });
+
+  const loginCookies = extractCookies(loginRes);
+  const allCookies = mergeCookies(initialCookies, loginCookies);
+
+  return { cookies: allCookies, repBaseUrl };
+}
+
+function extractCookies(response) {
+  try {
+    if (response.headers.getSetCookie) {
+      const setCookies = response.headers.getSetCookie();
+      if (setCookies && setCookies.length > 0) {
+        return setCookies.map(c => c.split(';')[0].trim()).filter(c => c.includes('=')).join('; ');
+      }
+    }
+  } catch (e) {}
+
+  const raw = response.headers.get('set-cookie') || '';
+  if (!raw) return '';
+
+  const cookies = [];
+  const parts = raw.split(/,(?=[^;]+=)/);
+  parts.forEach(part => {
+    const cookiePart = part.trim().split(';')[0].trim();
+    if (cookiePart.includes('=')) {
+      cookies.push(cookiePart);
+    }
+  });
+  return cookies.join('; ');
+}
+
+function mergeCookies(existing, newCookies) {
+  if (!existing && !newCookies) return '';
+  if (!existing) return newCookies;
+  if (!newCookies) return existing;
+
+  const cookieMap = {};
+  const parseCookieStr = (str) => {
+    str.split(';').forEach(c => {
+      const idx = c.indexOf('=');
+      if (idx > 0) {
+        const key = c.substring(0, idx).trim();
+        const val = c.substring(idx + 1).trim();
+        if (key) cookieMap[key] = val;
       }
     });
+  };
 
-    // 日次サマリーを計算
-    const totalSales = sales.total_sales;
-    const totalEmployees = attendance.total_employees;
-    const totalHours = attendance.total_hours;
-
-    const salesPerPerson = totalEmployees > 0 
-      ? Math.round(totalSales / totalEmployees)
-      : 0;
-
-    const salesPerHour = totalHours > 0 
-      ? Math.round(totalSales / totalHours)
-      : 0;
-
-    // 曜日を取得
-    const dayweek = getDayOfWeek(date);
-
-    result.push({
-      tenpo_name: sales.store_name,
-      wk_date: date,
-      dayweek: dayweek,
-      kingaku: totalSales.toString(),
-      wk_cnt: totalEmployees,
-      wk_tm: totalHours.toFixed(1),
-      spm: salesPerPerson.toString(), // 1人あたり生産性
-      spd: salesPerHour.toString(), // 1時間あたり生産性
-      code: sales.store_code,
-      day_key: `${date}_${sales.store_code}`,
-      detail: hourlyDetails,
-    });
-  });
-
-  return result;
-}
-
-/**
- * 日付範囲のリストを生成
- */
-function getDateRange(startDate, endDate) {
-  const dates = [];
-  const current = new Date(startDate);
-  const end = new Date(endDate);
-
-  while (current <= end) {
-    dates.push(current.toISOString().split('T')[0]);
-    current.setDate(current.getDate() + 1);
-  }
-
-  return dates;
-}
-
-/**
- * 日付間の日数差を計算
- */
-function getDaysDifference(startDate, endDate) {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  const diffTime = Math.abs(end - start);
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return diffDays;
-}
-
-/**
- * 曜日を取得
- */
-function getDayOfWeek(dateStr) {
-  const days = ['日', '月', '火', '水', '木', '金', '土'];
-  const date = new Date(dateStr);
-  return days[date.getDay()];
-}
-
-/**
- * ダミー売上データ生成
- */
-function generateDummySalesData(date) {
-  const stores = [
-    { code: '10110', name: '田辺店' },
-    { code: '10120', name: '大正店' },
-    { code: '10130', name: '天下茶屋店' },
-    { code: '10140', name: '天王寺店' },
-    { code: '10800', name: 'アベノ店' },
-    { code: '10150', name: '心斎橋店' },
-    { code: '10160', name: 'かがや店' },
-    { code: '10170', name: '駅丸' },
-    { code: '10180', name: '北摂店' },
-    { code: '10190', name: '堺東店' },
-    { code: '10200', name: 'イオン松原店' },
-    { code: '10210', name: 'イオン守口店' },
-    { code: '10220', name: '美和堂福島店' },
-  ];
-
-  return stores.map(store => {
-    const hourlyData = [];
-    for (let hour = 9; hour <= 21; hour++) {
-      const timeStr = `${hour.toString().padStart(2, '0')}:00`;
-      const baseSales = Math.random() * 50000 + 10000;
-      
-      hourlyData.push({
-        time: timeStr,
-        sales: Math.round(baseSales),
-      });
-    }
-
-    const totalSales = hourlyData.reduce((sum, h) => sum + h.sales, 0);
-
-    return {
-      store_code: store.code,
-      store_name: store.name,
-      date: date,
-      total_sales: totalSales,
-      hourly_sales: hourlyData,
-    };
-  });
-}
-
-/**
- * ダミー勤怠データ生成
- */
-function generateDummyAttendanceData(date) {
-  const stores = [
-    { code: '10110', name: '田辺店' },
-    { code: '10120', name: '大正店' },
-    { code: '10130', name: '天下茶屋店' },
-    { code: '10140', name: '天王寺店' },
-    { code: '10800', name: 'アベノ店' },
-    { code: '10150', name: '心斎橋店' },
-    { code: '10160', name: 'かがや店' },
-    { code: '10170', name: '駅丸' },
-    { code: '10180', name: '北摂店' },
-    { code: '10190', name: '堺東店' },
-    { code: '10200', name: 'イオン松原店' },
-    { code: '10210', name: 'イオン守口店' },
-    { code: '10220', name: '美和堂福島店' },
-  ];
-
-  return stores.map(store => {
-    const hourlyData = [];
-    for (let hour = 9; hour <= 21; hour++) {
-      const timeStr = `${hour.toString().padStart(2, '0')}:00`;
-      const employeeCount = Math.floor(Math.random() * 5) + 1;
-      const workHours = 1.0;
-
-      hourlyData.push({
-        time: timeStr,
-        employee_count: employeeCount,
-        work_hours: workHours,
-        total_hours: employeeCount * workHours,
-      });
-    }
-
-    const totalEmployees = Math.max(...hourlyData.map(h => h.employee_count));
-    const totalHours = hourlyData.reduce((sum, h) => sum + h.total_hours, 0);
-
-    return {
-      store_code: store.code,
-      store_name: store.name,
-      date: date,
-      total_employees: totalEmployees,
-      total_hours: totalHours,
-      hourly_attendance: hourlyData,
-    };
-  });
+  parseCookieStr(existing);
+  parseCookieStr(newCookies);
+  return Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
 export const config = {
-  maxDuration: 60, // 最大60秒
+  maxDuration: 60,
 };
