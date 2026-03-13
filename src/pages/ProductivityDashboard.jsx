@@ -13,7 +13,7 @@ import {
   Settings, Calendar, MapPin, ArrowUpRight, ArrowDownRight, Minus,
   Store, BanknoteIcon, Briefcase, ArrowRight, ShoppingCart, Factory,
   Package, Truck, FlaskConical, Layers, Save, Edit3, Plus,
-  ClipboardList, Trash2, History
+  ClipboardList, Trash2, History, Search
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -2390,6 +2390,11 @@ export default function ProductivityDashboard() {
   const [showStoreSettings, setShowStoreSettings] = useState(false);
   const [showStaffSettings, setShowStaffSettings] = useState(false);
   const [showOperationLog, setShowOperationLog] = useState(false);
+  const [showHistorical, setShowHistorical] = useState(false);
+  const [historicalData, setHistoricalData] = useState(null);
+  const [historicalLoading, setHistoricalLoading] = useState(false);
+  const [historicalMonth1, setHistoricalMonth1] = useState('');
+  const [historicalMonth2, setHistoricalMonth2] = useState('');
   const [activeCategory, setActiveCategory] = useState('store'); // 'store' | 'online' | 'manufacturing'
   const [storeSettings, setStoreSettings] = useState(() => loadStoreSettings());
   const [storeSort, setStoreSort] = useState('default'); // 'default' | 'productivity' | 'sales' | 'person_hours'
@@ -2419,54 +2424,8 @@ export default function ProductivityDashboard() {
         localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
         console.log('[Migration] 店舗名を新名称に更新しました');
       }
-      // 日次自動リセット：除外・移動先設定を翌日以降に自動解除
-      const todayJaStr = new Date().toLocaleDateString('ja-JP');
-      let autoReleased = false;
-      for (const [id, setting] of Object.entries(migratedSettings)) {
-        // settings_dateがある場合はそれを使用、ない場合はexcluded_atから日付を取得
-        let settingDateStr = setting.settings_date;
-        if (!settingDateStr && setting.excluded_at) {
-          settingDateStr = setting.excluded_at.split(' ')[0];
-        }
-        const hasExcluded = setting.excluded === true;
-        const hasOverride = !!setting.override_store;
-        
-        if ((hasExcluded || hasOverride) && settingDateStr) {
-          // 日付比較
-          const settingDate = new Date(settingDateStr.replace(/\//g, '-'));
-          const today = new Date(todayJaStr.replace(/\//g, '-'));
-          settingDate.setHours(0, 0, 0, 0);
-          today.setHours(0, 0, 0, 0);
-          if (today > settingDate) {
-            // 翌日以降なので全設定を自動リセット
-            const resetFields = {};
-            if (hasExcluded) {
-              resetFields.excluded = false;
-              resetFields.excluded_at = null;
-              resetFields.excluded_from_store = null;
-              resetFields.exclude_reason = null;
-              addOperationLog('自動リセット', setting.staff_name || id, `除外設定を自動解除（設定日: ${settingDateStr}）`);
-            }
-            if (hasOverride) {
-              resetFields.override_store = null;
-              addOperationLog('自動リセット', setting.staff_name || id, `移動先「${setting.override_store}」を自動解除（設定日: ${settingDateStr}）`);
-            }
-            migratedSettings[id] = {
-              ...setting,
-              ...resetFields,
-              settings_date: null,
-              auto_released: true,
-              auto_released_at: new Date().toLocaleString('ja-JP'),
-            };
-            autoReleased = true;
-            console.log(`[日次自動リセット] ${setting.staff_name || id}: 設定日=${settingDateStr}, 今日=${todayJaStr}`);
-          }
-        }
-      }
-      if (autoReleased) {
-        localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
-        console.log('[日次自動リセット] 翌日以降の除外・移動先設定を自動解除しました');
-      }
+      // 日次自動リセットは初期化時には行わない（APIデータ取得後に出勤者確認でリセット）
+      // ※翌日その所属場所に初めて誰かが出勤するまでは設定を維持する
       return migratedSettings;
     } catch { return {}; }
   });
@@ -2639,6 +2598,74 @@ export default function ProductivityDashboard() {
   const departmentData = queryData?.departmentData || {};
   const sources = queryData?.sources || {};
   const employeeProductivity = queryData?.employeeProductivity || [];
+
+  // 翌日初出勤リセット：APIデータ取得後、各店舗に出勤者がいる場合のみ設定をリセット
+  useEffect(() => {
+    if (!stores || stores.length === 0) return;
+    const todayJaStr = new Date().toLocaleDateString('ja-JP');
+    const currentSettings = { ...clientStaffSettings };
+    let autoReleased = false;
+
+    // 各店舗の出勤者数をマップ化
+    const storeAttendanceMap = {};
+    stores.forEach(s => {
+      storeAttendanceMap[s.store_name] = s.attended_employees || 0;
+    });
+
+    for (const [id, setting] of Object.entries(currentSettings)) {
+      let settingDateStr = setting.settings_date;
+      if (!settingDateStr && setting.excluded_at) {
+        settingDateStr = setting.excluded_at.split(' ')[0];
+      }
+      const hasExcluded = setting.excluded === true;
+      const hasOverride = !!setting.override_store;
+
+      if ((hasExcluded || hasOverride) && settingDateStr) {
+        // 日付比較
+        const settingDate = new Date(settingDateStr.replace(/\//g, '-'));
+        const today = new Date(todayJaStr.replace(/\//g, '-'));
+        settingDate.setHours(0, 0, 0, 0);
+        today.setHours(0, 0, 0, 0);
+        if (today > settingDate) {
+          // 翌日以降：その所属場所に出勤者がいるか確認
+          const targetStore = setting.excluded_from_store || setting.override_store || setting.original_store;
+          const hasAttendance = targetStore ? (storeAttendanceMap[targetStore] || 0) > 0 : true;
+
+          if (hasAttendance) {
+            // 出勤者がいるのでリセット
+            const resetFields = {};
+            if (hasExcluded) {
+              resetFields.excluded = false;
+              resetFields.excluded_at = null;
+              resetFields.excluded_from_store = null;
+              resetFields.exclude_reason = null;
+              addOperationLog('自動リセット', setting.staff_name || id, `初出勤検知により除外設定を自動解除（設定日: ${settingDateStr}, 店舗: ${targetStore}）`);
+            }
+            if (hasOverride) {
+              resetFields.override_store = null;
+              addOperationLog('自動リセット', setting.staff_name || id, `初出勤検知により移動先「${setting.override_store}」を自動解除（設定日: ${settingDateStr}, 店舗: ${targetStore}）`);
+            }
+            currentSettings[id] = {
+              ...setting,
+              ...resetFields,
+              settings_date: null,
+              auto_released: true,
+              auto_released_at: new Date().toLocaleString('ja-JP'),
+            };
+            autoReleased = true;
+            console.log(`[初出勤リセット] ${setting.staff_name || id}: 設定日=${settingDateStr}, 店舗=${targetStore}, 出勤者=${storeAttendanceMap[targetStore] || 0}人`);
+          } else {
+            console.log(`[初出勤リセット] ${setting.staff_name || id}: 設定維持（店舗=${targetStore}, 出勤者なし）`);
+          }
+        }
+      }
+    }
+    if (autoReleased) {
+      setClientStaffSettings(currentSettings);
+      localStorage.setItem(STAFF_SETTINGS_KEY, JSON.stringify(currentSettings));
+      console.log('[初出勤リセット] 出勤者検知により除外・移動先設定を自動解除しました');
+    }
+  }, [stores]);  // storesが更新されるたびにチェック
   // APIから取得したJST現在時刻（直近の人時生産性フィルタリング用）
   const currentJstHour = queryData?.currentJstHour ?? new Date().getHours();
   const currentJstMinutes = queryData?.currentJstMinutes ?? (new Date().getHours() * 60 + new Date().getMinutes());
@@ -2772,6 +2799,24 @@ export default function ProductivityDashboard() {
           >
             <ClipboardList className="h-3.5 w-3.5" />
             <span className="hidden md:inline">操作履歴</span>
+          </button>
+
+          {/* 過去実績比較 */}
+          <button
+            onClick={() => {
+              setShowHistorical(true);
+              // デフォルト月を設定（今月と前年同月）
+              const now = new Date();
+              const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+              const lastYearMonth = `${now.getFullYear() - 1}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+              if (!historicalMonth1) setHistoricalMonth1(thisMonth);
+              if (!historicalMonth2) setHistoricalMonth2(lastYearMonth);
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-green-50 dark:hover:bg-green-900/20 hover:text-green-700 dark:hover:text-green-400 transition-all text-xs font-semibold"
+            title="過去実績比較"
+          >
+            <TrendingUp className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">過去実績</span>
           </button>
 
           {/* ダークモード */}
@@ -2979,8 +3024,8 @@ export default function ProductivityDashboard() {
           {(() => {
             const onlineDept = departmentData?.online || {};
             const realtimeHours = onlineDept.total_hours || 0;
-            const realtimeWorking = onlineDept.working_now || 0;
-            const realtimeAttended = onlineDept.attended || 0;
+            const realtimeWorking = onlineDept.working_employees || 0;
+            const realtimeAttended = onlineDept.attended_employees || 0;
             // 勤務時間：ジョブカンリアルタイム優先、なければ手入力
             const effectiveHours = realtimeHours > 0 ? realtimeHours : (onlineData?.total_hours || 0);
             const effectiveSales = onlineData?.total_sales || 0;
@@ -3156,8 +3201,8 @@ export default function ProductivityDashboard() {
             // ジョブカンリアルタイム勤務データ
             const mfgDeptHokusetsu = departmentData?.manufacturing_hokusetsu || {};
             const mfgDeptKagaya = departmentData?.manufacturing_kagaya || {};
-            const realtimeMfgWorking = (mfgDeptHokusetsu.working_now || 0) + (mfgDeptKagaya.working_now || 0);
-            const realtimeMfgAttended = (mfgDeptHokusetsu.attended || 0) + (mfgDeptKagaya.attended || 0);
+            const realtimeMfgWorking = (mfgDeptHokusetsu.working_employees || 0) + (mfgDeptKagaya.working_employees || 0);
+            const realtimeMfgAttended = (mfgDeptHokusetsu.attended_employees || 0) + (mfgDeptKagaya.attended_employees || 0);
             const realtimeMfgHours = (mfgDeptHokusetsu.total_hours || 0) + (mfgDeptKagaya.total_hours || 0);
             const effectiveMfgHours = realtimeMfgHours > 0 ? realtimeMfgHours : totalHours;
             const productivity = effectiveMfgHours > 0 && totalSales > 0 ? Math.round(totalSales / effectiveMfgHours) : 0;
@@ -3214,9 +3259,9 @@ export default function ProductivityDashboard() {
                       <Factory className={`h-4 w-4 text-${color}-600 dark:text-${color}-400`} />
                       <h3 className="font-bold text-sm">{name}</h3>
                     </div>
-                    {factoryDept.working_now > 0 && (
+                    {factoryDept.working_employees > 0 && (
                       <span className={`text-xs px-2 py-0.5 rounded-full bg-${color}-100 dark:bg-${color}-900/30 text-${color}-700 dark:text-${color}-300 font-semibold`}>
-                        勤務中 {factoryDept.working_now}人 / 出勤 {factoryDept.attended}人
+                        勤務中 {factoryDept.working_employees}人 / 出勤 {factoryDept.attended_employees}人
                       </span>
                     )}
                   </div>
@@ -3348,10 +3393,10 @@ export default function ProductivityDashboard() {
               </div>
               {(() => {
                 const planningDept = departmentData?.planning || {};
-                return planningDept.working_now > 0 ? (
+                return planningDept.working_employees > 0 ? (
                   <div className="text-right">
-                    <div className="text-3xl font-black">{planningDept.working_now}</div>
-                    <div className="text-purple-200 text-xs">勤務中 / 出勤{planningDept.attended}人</div>
+                    <div className="text-3xl font-black">{planningDept.working_employees}</div>
+                    <div className="text-purple-200 text-xs">勤務中 / 出勤{planningDept.attended_employees}人</div>
                   </div>
                 ) : null;
               })()}
@@ -3395,11 +3440,11 @@ export default function ProductivityDashboard() {
                 </div>
                 <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700 grid grid-cols-3 gap-3">
                   <div className="text-center">
-                    <div className="text-xl font-black text-purple-600">{planningDept.attended || 0}</div>
+                    <div className="text-xl font-black text-purple-600">{planningDept.attended_employees || 0}</div>
                     <div className="text-[10px] text-muted-foreground">本日出勤</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-xl font-black text-emerald-600">{planningDept.working_now || 0}</div>
+                    <div className="text-xl font-black text-emerald-600">{planningDept.working_employees || 0}</div>
                     <div className="text-[10px] text-muted-foreground">現在勤務中</div>
                   </div>
                   <div className="text-center">
@@ -3638,6 +3683,21 @@ export default function ProductivityDashboard() {
         <OperationLogModal onClose={() => setShowOperationLog(false)} />
       )}
 
+      {/* 過去実績比較モーダル */}
+      {showHistorical && (
+        <HistoricalComparisonModal
+          onClose={() => setShowHistorical(false)}
+          month1={historicalMonth1}
+          month2={historicalMonth2}
+          setMonth1={setHistoricalMonth1}
+          setMonth2={setHistoricalMonth2}
+          data={historicalData}
+          setData={setHistoricalData}
+          loading={historicalLoading}
+          setLoading={setHistoricalLoading}
+        />
+      )}
+
     </div>
   );
 }
@@ -3768,6 +3828,275 @@ function OperationLogModal({ onClose }) {
                     </div>
                     {pastLogs.map((log, i) => renderLogItem(log, `past-${i}`))}
                   </div>
+                )}
+              </>
+            )}
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+// ===== 過去実績比較モーダル =====
+function HistoricalComparisonModal({ onClose, month1, month2, setMonth1, setMonth2, data, setData, loading, setLoading }) {
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+
+  const fetchData = async () => {
+    if (!month1) return;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ month1 });
+      if (month2) params.append('month2', month2);
+      const res = await fetch(`${API_BASE}/api/productivity/historical?${params}`);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      setData(json);
+    } catch (err) {
+      console.error('Historical fetch error:', err);
+      alert('過去実績データの取得に失敗しました: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatNum = (n) => n != null ? n.toLocaleString() : '-';
+  const calcDiff = (v1, v2) => {
+    if (!v1 || !v2 || v2 === 0) return null;
+    return ((v1 - v2) / v2 * 100).toFixed(1);
+  };
+  const DiffBadge = ({ diff }) => {
+    if (diff == null) return null;
+    const num = parseFloat(diff);
+    const color = num > 0 ? 'text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-950/30' :
+                  num < 0 ? 'text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-950/30' :
+                  'text-gray-500 bg-gray-50 dark:text-gray-400 dark:bg-gray-800';
+    return (
+      <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${color}`}>
+        {num > 0 ? <ArrowUpRight className="h-2.5 w-2.5" /> : num < 0 ? <ArrowDownRight className="h-2.5 w-2.5" /> : <Minus className="h-2.5 w-2.5" />}
+        {Math.abs(num)}%
+      </span>
+    );
+  };
+
+  const ALL_STORES = [
+    '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
+    '心斎橋店', 'かがや店', '駅丸', '北摂店', '堺東店',
+    'イオン松原店', 'イオン守口店', '美和堂福島店'
+  ];
+
+  const month1Data = data?.comparison?.find(d => d.month === month1);
+  const month2Data = data?.comparison?.find(d => d.month === month2);
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.95, opacity: 0 }}
+          className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+          onClick={e => e.stopPropagation()}
+        >
+          {/* ヘッダー */}
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-green-600" />
+                <h2 className="text-lg font-bold">過去実績比較</h2>
+              </div>
+              <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {/* 月選択 */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">比較月1</label>
+                <input
+                  type="month"
+                  value={month1}
+                  onChange={e => setMonth1(e.target.value)}
+                  className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground mb-1">比較月2（前年同月など）</label>
+                <input
+                  type="month"
+                  value={month2}
+                  onChange={e => setMonth2(e.target.value)}
+                  className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                />
+              </div>
+              <button
+                onClick={fetchData}
+                disabled={loading || !month1}
+                className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-bold transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {loading ? '取得中...' : 'データ取得'}
+              </button>
+            </div>
+          </div>
+
+          {/* コンテンツ */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-16">
+                <RefreshCw className="h-10 w-10 animate-spin text-green-500 mb-3" />
+                <p className="text-sm font-semibold">TempoVisor・ジョブカンからデータを取得中...</p>
+                <p className="text-xs text-muted-foreground mt-1">初回取得には30秒程度かかります</p>
+              </div>
+            ) : !data ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                <BarChart3 className="h-12 w-12 mb-3 opacity-30" />
+                <p className="text-sm font-semibold">比較する月を選択してデータを取得してください</p>
+                <p className="text-xs mt-1">売上・客数・客単価・人員稼働時間・人時生産性を比較できます</p>
+              </div>
+            ) : (
+              <>
+                {/* 全店舗合計サマリー */}
+                {month1Data && (
+                  <div className="mb-6">
+                    <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
+                      <Building2 className="h-4 w-4" />
+                      全店舗合計
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      {[
+                        { label: '売上', key: 'sales', unit: '円', icon: DollarSign, color: 'blue' },
+                        { label: '客数', key: 'customers', unit: '人', icon: Users, color: 'emerald' },
+                        { label: '客単価', key: 'unit_price', unit: '円', icon: Target, color: 'amber' },
+                        { label: '稼働時間', key: 'work_hours', unit: 'h', icon: Clock, color: 'purple' },
+                        { label: '人時生産性', key: 'productivity', unit: '円/h', icon: Zap, color: 'red' },
+                      ].map(({ label, key, unit, icon: Icon, color }) => (
+                        <div key={key} className={`p-3 rounded-xl bg-${color}-50 dark:bg-${color}-950/20 border border-${color}-200 dark:border-${color}-800`}>
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <Icon className={`h-3.5 w-3.5 text-${color}-600 dark:text-${color}-400`} />
+                            <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+                          </div>
+                          <div className="text-lg font-bold">{formatNum(month1Data.total[key])}<span className="text-xs font-normal ml-1">{unit}</span></div>
+                          {month2Data && (
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-xs text-muted-foreground">{formatNum(month2Data.total[key])}</span>
+                              <DiffBadge diff={calcDiff(month1Data.total[key], month2Data.total[key])} />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 店舗別比較テーブル */}
+                <div className="overflow-x-auto">
+                  <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
+                    <MapPin className="h-4 w-4" />
+                    店舗別比較
+                  </h3>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-gray-100 dark:bg-gray-800">
+                        <th className="px-3 py-2 text-left font-bold border-b border-gray-200 dark:border-gray-700 sticky left-0 bg-gray-100 dark:bg-gray-800 z-10">店舗</th>
+                        <th className="px-2 py-2 text-right font-bold border-b border-gray-200 dark:border-gray-700" colSpan={month2Data ? 3 : 1}>売上</th>
+                        <th className="px-2 py-2 text-right font-bold border-b border-gray-200 dark:border-gray-700" colSpan={month2Data ? 3 : 1}>客数</th>
+                        <th className="px-2 py-2 text-right font-bold border-b border-gray-200 dark:border-gray-700" colSpan={month2Data ? 3 : 1}>客単価</th>
+                        <th className="px-2 py-2 text-right font-bold border-b border-gray-200 dark:border-gray-700" colSpan={month2Data ? 3 : 1}>稼働時間</th>
+                        <th className="px-2 py-2 text-right font-bold border-b border-gray-200 dark:border-gray-700" colSpan={month2Data ? 3 : 1}>人時生産性</th>
+                      </tr>
+                      {month2Data && (
+                        <tr className="bg-gray-50 dark:bg-gray-800/50">
+                          <th className="px-3 py-1 text-left text-[10px] border-b border-gray-200 dark:border-gray-700 sticky left-0 bg-gray-50 dark:bg-gray-800/50 z-10"></th>
+                          {Array(5).fill(null).map((_, i) => (
+                            <React.Fragment key={i}>
+                              <th className="px-2 py-1 text-right text-[10px] border-b border-gray-200 dark:border-gray-700 text-blue-600">{month1?.slice(0, 7)}</th>
+                              <th className="px-2 py-1 text-right text-[10px] border-b border-gray-200 dark:border-gray-700 text-gray-500">{month2?.slice(0, 7)}</th>
+                              <th className="px-2 py-1 text-right text-[10px] border-b border-gray-200 dark:border-gray-700">前年比</th>
+                            </React.Fragment>
+                          ))}
+                        </tr>
+                      )}
+                    </thead>
+                    <tbody>
+                      {ALL_STORES.map((storeName, idx) => {
+                        const s1 = month1Data?.stores?.[storeName] || {};
+                        const s2 = month2Data?.stores?.[storeName] || {};
+                        return (
+                          <tr key={storeName} className={idx % 2 === 0 ? 'bg-white dark:bg-gray-900' : 'bg-gray-50 dark:bg-gray-800/30'}>
+                            <td className={`px-3 py-2 font-bold border-b border-gray-100 dark:border-gray-800 sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-white dark:bg-gray-900' : 'bg-gray-50 dark:bg-gray-800/30'}`}>{storeName}</td>
+                            {['sales', 'customers', 'unit_price', 'work_hours', 'productivity'].map(key => (
+                              month2Data ? (
+                                <React.Fragment key={key}>
+                                  <td className="px-2 py-2 text-right border-b border-gray-100 dark:border-gray-800 font-semibold">{formatNum(s1[key])}</td>
+                                  <td className="px-2 py-2 text-right border-b border-gray-100 dark:border-gray-800 text-muted-foreground">{formatNum(s2[key])}</td>
+                                  <td className="px-2 py-2 text-right border-b border-gray-100 dark:border-gray-800"><DiffBadge diff={calcDiff(s1[key], s2[key])} /></td>
+                                </React.Fragment>
+                              ) : (
+                                <td key={key} className="px-2 py-2 text-right border-b border-gray-100 dark:border-gray-800 font-semibold">{formatNum(s1[key])}</td>
+                              )
+                            ))}
+                          </tr>
+                        );
+                      })}
+                      {/* 合計行 */}
+                      {month1Data && (
+                        <tr className="bg-red-50 dark:bg-red-950/20 font-bold">
+                          <td className="px-3 py-2 border-t-2 border-red-300 dark:border-red-800 sticky left-0 bg-red-50 dark:bg-red-950/20 z-10">全店舗合計</td>
+                          {['sales', 'customers', 'unit_price', 'work_hours', 'productivity'].map(key => (
+                            month2Data ? (
+                              <React.Fragment key={key}>
+                                <td className="px-2 py-2 text-right border-t-2 border-red-300 dark:border-red-800">{formatNum(month1Data.total[key])}</td>
+                                <td className="px-2 py-2 text-right border-t-2 border-red-300 dark:border-red-800 text-muted-foreground">{formatNum(month2Data.total[key])}</td>
+                                <td className="px-2 py-2 text-right border-t-2 border-red-300 dark:border-red-800"><DiffBadge diff={calcDiff(month1Data.total[key], month2Data.total[key])} /></td>
+                              </React.Fragment>
+                            ) : (
+                              <td key={key} className="px-2 py-2 text-right border-t-2 border-red-300 dark:border-red-800">{formatNum(month1Data.total[key])}</td>
+                            )
+                          ))}
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 視覚的比較チャート */}
+                {month1Data && month2Data && (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-bold mb-3 flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4" />
+                      売上比較グラフ
+                    </h3>
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={ALL_STORES.map(name => ({
+                          name: name.replace('店', '').replace('イオン', 'ｲｵﾝ'),
+                          [month1]: month1Data.stores[name]?.sales || 0,
+                          [month2]: month2Data.stores[name]?.sales || 0,
+                        }))}>
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                          <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `${(v / 10000).toFixed(0)}万`} />
+                          <Tooltip formatter={(value) => [`¥${value.toLocaleString()}`, '']} />
+                          <Bar dataKey={month1} fill="#3b82f6" name={month1} radius={[4, 4, 0, 0]} />
+                          <Bar dataKey={month2} fill="#9ca3af" name={month2} radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
+                {data?.timestamp && (
+                  <p className="text-[10px] text-muted-foreground mt-4 text-right">
+                    取得時刻: {new Date(data.timestamp).toLocaleString('ja-JP')}
+                    {data.cached && ' (キャッシュ)'}
+                  </p>
                 )}
               </>
             )}
