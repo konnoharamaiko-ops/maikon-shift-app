@@ -172,41 +172,112 @@ function MetricCard({ title, value, unit, icon: Icon, color, subtitle, index }) 
 /**
  * 部署別勤怠サマリーカード
  */
-function DeptCard({ name, category, totalHours, totalWorkers, days, icon: Icon, color, bgColor }) {
+function DeptCard({ name, category, totalHours, totalWorkers, days, icon: Icon, color, bgColor, deptDetails, onToggle, isExpanded }) {
   const avgHoursPerDay = days > 0 ? (totalHours / days).toFixed(1) : '0.0';
   const avgWorkersPerDay = days > 0 ? Math.round(totalWorkers / days) : 0;
+
+  // 日別データをグラフ用に整形
+  const dailyChartData = useMemo(() => {
+    if (!deptDetails || !deptDetails.dates) return [];
+    return Object.entries(deptDetails.dates)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, d]) => ({
+        date,
+        label: format(parseISO(date), 'M/d', { locale: ja }),
+        hours: d.total_hours || 0,
+        workers: d.attended_employees || 0,
+      }));
+  }, [deptDetails]);
 
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3 }}
-      className={`rounded-xl border p-4 shadow-sm ${bgColor}`}
+      className={`rounded-xl border shadow-sm ${bgColor} cursor-pointer transition-all hover:shadow-md`}
+      onClick={onToggle}
     >
-      <div className="flex items-center gap-2 mb-3">
-        <div className={`p-2 rounded-lg ${color}`}>
-          <Icon className="h-4 w-4 text-white" />
+      <div className="p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className={`p-2 rounded-lg ${color}`}>
+              <Icon className="h-4 w-4 text-white" />
+            </div>
+            <h4 className="font-bold text-sm">{name}</h4>
+          </div>
+          <span className="text-xs text-muted-foreground">{isExpanded ? '閉じる' : 'タップで詳細'}</span>
         </div>
-        <h4 className="font-bold text-sm">{name}</h4>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs text-muted-foreground">期間合計時間</p>
+            <p className="text-lg font-bold">{totalHours.toFixed(1)}<span className="text-xs font-normal ml-0.5">h</span></p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">延べ出勤人数</p>
+            <p className="text-lg font-bold">{totalWorkers}<span className="text-xs font-normal ml-0.5">人</span></p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">日平均時間</p>
+            <p className="text-sm font-semibold">{avgHoursPerDay}h/日</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">日平均人数</p>
+            <p className="text-sm font-semibold">{avgWorkersPerDay}人/日</p>
+          </div>
+        </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <p className="text-xs text-muted-foreground">期間合計時間</p>
-          <p className="text-lg font-bold">{totalHours.toFixed(1)}<span className="text-xs font-normal ml-0.5">h</span></p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">延べ出勤人数</p>
-          <p className="text-lg font-bold">{totalWorkers}<span className="text-xs font-normal ml-0.5">人</span></p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">日平均時間</p>
-          <p className="text-sm font-semibold">{avgHoursPerDay}h/日</p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">日平均人数</p>
-          <p className="text-sm font-semibold">{avgWorkersPerDay}人/日</p>
-        </div>
-      </div>
+
+      {/* 展開詳細 */}
+      <AnimatePresence>
+        {isExpanded && dailyChartData.length > 0 && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 border-t border-gray-200 dark:border-gray-700 pt-3">
+              <h5 className="text-xs font-bold text-muted-foreground mb-2">日別勤務時間推移</h5>
+              <ResponsiveContainer width="100%" height={150}>
+                <ComposedChart data={dailyChartData} margin={{ top: 5, right: 5, left: -15, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} />
+                  <YAxis tick={{ fontSize: 9 }} tickFormatter={v => `${v}h`} />
+                  <Tooltip
+                    formatter={(v, n) => [n === '勤務時間' ? `${Number(v).toFixed(1)}h` : `${v}人`, n]}
+                    contentStyle={{ fontSize: 11 }}
+                  />
+                  <Area type="monotone" dataKey="hours" name="勤務時間" fill="#3b82f680" stroke="#3b82f6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="workers" name="出勤人数" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+
+              {/* 日別テーブル */}
+              <div className="mt-3 max-h-48 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-gray-700">
+                      <th className="text-left py-1 px-2 font-semibold">日付</th>
+                      <th className="text-right py-1 px-2 font-semibold">勤務時間</th>
+                      <th className="text-right py-1 px-2 font-semibold">出勤人数</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dailyChartData.map(d => (
+                      <tr key={d.date} className="border-b border-gray-100 dark:border-gray-800">
+                        <td className="py-1 px-2">{d.label}</td>
+                        <td className="py-1 px-2 text-right font-medium">{d.hours.toFixed(1)}h</td>
+                        <td className="py-1 px-2 text-right font-medium">{d.workers}人</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -222,6 +293,7 @@ export default function ProductivityHistory() {
   const [chartType, setChartType] = useState('productivity');
   const [viewMode, setViewMode] = useState('trend');
   const [activeTab, setActiveTab] = useState('store'); // 'store' | 'department'
+  const [expandedDept, setExpandedDept] = useState(null); // タップ詳細展開用
 
   // データ取得
   const { data: apiResult, isLoading, error, refetch } = useQuery({
@@ -749,6 +821,20 @@ export default function ProductivityHistory() {
                     icon={ShoppingCart}
                     color="bg-orange-500"
                     bgColor="bg-orange-50 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800"
+                    deptDetails={(() => {
+                      const onlineDepts = categorySummary.online.depts || [];
+                      const mergedDates = {};
+                      onlineDepts.forEach(d => {
+                        Object.entries(d.dates || {}).forEach(([date, val]) => {
+                          if (!mergedDates[date]) mergedDates[date] = { total_hours: 0, attended_employees: 0 };
+                          mergedDates[date].total_hours += val.total_hours || 0;
+                          mergedDates[date].attended_employees += val.attended_employees || 0;
+                        });
+                      });
+                      return { dates: mergedDates };
+                    })()}
+                    onToggle={() => setExpandedDept(expandedDept === 'online' ? null : 'online')}
+                    isExpanded={expandedDept === 'online'}
                   />
                   <DeptCard
                     name="製造部（工房）"
@@ -759,6 +845,20 @@ export default function ProductivityHistory() {
                     icon={Factory}
                     color="bg-teal-500"
                     bgColor="bg-teal-50 dark:bg-teal-950/20 border-teal-200 dark:border-teal-800"
+                    deptDetails={(() => {
+                      const mfgDepts = categorySummary.manufacturing.depts || [];
+                      const mergedDates = {};
+                      mfgDepts.forEach(d => {
+                        Object.entries(d.dates || {}).forEach(([date, val]) => {
+                          if (!mergedDates[date]) mergedDates[date] = { total_hours: 0, attended_employees: 0 };
+                          mergedDates[date].total_hours += val.total_hours || 0;
+                          mergedDates[date].attended_employees += val.attended_employees || 0;
+                        });
+                      });
+                      return { dates: mergedDates };
+                    })()}
+                    onToggle={() => setExpandedDept(expandedDept === 'manufacturing' ? null : 'manufacturing')}
+                    isExpanded={expandedDept === 'manufacturing'}
                   />
                   <DeptCard
                     name="企画部"
@@ -769,6 +869,20 @@ export default function ProductivityHistory() {
                     icon={Lightbulb}
                     color="bg-violet-500"
                     bgColor="bg-violet-50 dark:bg-violet-950/20 border-violet-200 dark:border-violet-800"
+                    deptDetails={(() => {
+                      const planDepts = categorySummary.planning.depts || [];
+                      const mergedDates = {};
+                      planDepts.forEach(d => {
+                        Object.entries(d.dates || {}).forEach(([date, val]) => {
+                          if (!mergedDates[date]) mergedDates[date] = { total_hours: 0, attended_employees: 0 };
+                          mergedDates[date].total_hours += val.total_hours || 0;
+                          mergedDates[date].attended_employees += val.attended_employees || 0;
+                        });
+                      });
+                      return { dates: mergedDates };
+                    })()}
+                    onToggle={() => setExpandedDept(expandedDept === 'planning' ? null : 'planning')}
+                    isExpanded={expandedDept === 'planning'}
                   />
                 </div>
 

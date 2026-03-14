@@ -3064,7 +3064,7 @@ export default function ProductivityDashboard() {
                   ))}
                 </div>
                 {/* 通販スタッフ一覧 */}
-                {onlineDept.employees && onlineDept.employees.length > 0 && (
+                {((onlineDept.employees && onlineDept.employees.length > 0) || onlineDept.attended_employees > 0) && (
                   <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
                     <div className="flex items-center gap-2 mb-3">
                       <Users className="h-4 w-4 text-blue-600" />
@@ -3075,22 +3075,22 @@ export default function ProductivityDashboard() {
                         <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
                           <div className="flex items-center gap-2">
                             <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white ${
-                              emp.status === 'working' ? 'bg-emerald-500' : emp.status === 'break' ? 'bg-amber-500' : 'bg-gray-400'
+                              ['勤務中','休憩中'].includes(emp.status) ? 'bg-emerald-500' : emp.status === '休憩中' ? 'bg-amber-500' : emp.status === '退勤済み' ? 'bg-gray-400' : 'bg-gray-400'
                             }`}>
                               {emp.name?.charAt(0) || '?'}
                             </div>
                             <div>
                               <div className="text-sm font-semibold">{emp.name}</div>
-                              <div className="text-xs text-muted-foreground">出勤 {emp.clock_in}</div>
+                              <div className="text-xs text-muted-foreground">出勤 {emp.clock_in || '-'}</div>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                              emp.status === 'working' ? 'bg-emerald-100 text-emerald-700' : emp.status === 'break' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                              emp.status === '勤務中' ? 'bg-emerald-100 text-emerald-700' : emp.status === '休憩中' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
                             }`}>
-                              {emp.status === 'working' ? '勤務中' : emp.status === 'break' ? '休憩中' : '退勤済'}
+                              {emp.status || '退勤済'}
                             </span>
-                            <span className="text-sm font-bold">{emp.work_hours?.toFixed(1)}h</span>
+                            <span className="text-sm font-bold">{emp.work_hours?.toFixed(1) || '0.0'}h</span>
                           </div>
                         </div>
                       ))}
@@ -3331,7 +3331,7 @@ export default function ProductivityDashboard() {
                           <div key={i} className="flex items-center justify-between">
                             <div className="flex items-center gap-1.5">
                               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${
-                                emp.status === 'working' ? 'bg-emerald-500' : emp.status === 'break' ? 'bg-amber-500' : 'bg-gray-400'
+                                emp.status === '勤務中' ? 'bg-emerald-500' : emp.status === '休憩中' ? 'bg-amber-500' : 'bg-gray-400'
                               }`}>
                                 {emp.name?.charAt(0) || '?'}
                               </div>
@@ -3339,9 +3339,9 @@ export default function ProductivityDashboard() {
                             </div>
                             <div className="flex items-center gap-1.5">
                               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
-                                emp.status === 'working' ? 'bg-emerald-100 text-emerald-700' : emp.status === 'break' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                                emp.status === '勤務中' ? 'bg-emerald-100 text-emerald-700' : emp.status === '休憩中' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
                               }`}>
-                                {emp.status === 'working' ? '勤務中' : emp.status === 'break' ? '休憩' : '退勤'}
+                                {emp.status || '退勤'}
                               </span>
                               <span className="text-xs font-bold">{emp.work_hours?.toFixed(1)}h</span>
                             </div>
@@ -3406,7 +3406,7 @@ export default function ProductivityDashboard() {
           {/* ジョブカン連携スタッフ一覧 */}
           {(() => {
             const planningDept = departmentData?.planning || {};
-            return planningDept.employees && planningDept.employees.length > 0 ? (
+            return (planningDept.employees && planningDept.employees.length > 0) || planningDept.attended_employees > 0 ? (
               <div className="bg-white dark:bg-gray-800 rounded-2xl border border-purple-200 dark:border-purple-800 p-5 shadow-sm">
                 <div className="flex items-center gap-2 mb-3">
                   <Users className="h-4 w-4 text-purple-600" />
@@ -3418,20 +3418,20 @@ export default function ProductivityDashboard() {
                     <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-700 last:border-0">
                       <div className="flex items-center gap-2">
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${
-                          emp.status === 'working' ? 'bg-purple-500' : emp.status === 'break' ? 'bg-amber-500' : 'bg-gray-400'
+                          emp.status === '勤務中' ? 'bg-purple-500' : emp.status === '休憩中' ? 'bg-amber-500' : 'bg-gray-400'
                         }`}>
                           {emp.name?.charAt(0) || '?'}
                         </div>
                         <div>
                           <div className="text-sm font-semibold">{emp.name}</div>
-                          <div className="text-xs text-muted-foreground">出勤 {emp.clock_in}</div>
+                          <div className="text-xs text-muted-foreground">出勤 {emp.clock_in || '-'}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                          emp.status === 'working' ? 'bg-purple-100 text-purple-700' : emp.status === 'break' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                          emp.status === '勤務中' ? 'bg-purple-100 text-purple-700' : emp.status === '休憩中' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
                         }`}>
-                          {emp.status === 'working' ? '勤務中' : emp.status === 'break' ? '休憩中' : '退勤済'}
+                          {emp.status || '退勤済'}
                         </span>
                         <span className="text-sm font-bold">{emp.work_hours?.toFixed(1)}h</span>
                       </div>

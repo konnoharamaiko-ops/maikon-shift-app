@@ -799,23 +799,59 @@ function buildDepartmentData(storeEmployees) {
     };
   });
 
+  // ジョブカンの部署コード → 部署キーのマッピング（フォールバック用）
+  const DEPT_CODE_TO_KEY = {
+    '11022': 'online',                    // 通販部
+    '11021': 'planning',                  // 企画部
+    '11025': 'tokuhan',                   // 特販部
+    '12010': 'manufacturing_hokusetsu',   // 北摂工場
+    '11012': 'manufacturing_kagaya',      // かがや工場
+    '10210': 'manufacturing_minamitanabe', // 南田辺工房
+    '11700': 'manufacturing_kagaya',      // 都島工場 → かがや工場扱い
+    '11900': 'manufacturing_kagaya',      // 鶴橋工房 → かがや工場扱い
+  };
+
+  // 打刻場所名 → 部署キーのマッピング（フォールバック用）
+  const STORE_NAME_TO_DEPT_KEY = {
+    '通販部': 'online',
+    '企画部': 'planning',
+    '特販部': 'tokuhan',
+    '北摂工場': 'manufacturing_hokusetsu',
+    'かがや工場': 'manufacturing_kagaya',
+    '南田辺工房': 'manufacturing_minamitanabe',
+    '都島工場': 'manufacturing_kagaya',
+    '鶴橋工房': 'manufacturing_kagaya',
+  };
+
   storeEmployees.forEach(emp => {
+    let deptKey = null;
+
+    // 優先1: アプリ内所属設定（app_affiliation）
     const affiliation = emp.app_affiliation;
     const affiliationStore = emp.app_affiliation_store;
-    if (!affiliation) return;
-
-    let deptKey = null;
-    if (affiliation === 'tokuhan') deptKey = 'tokuhan';
-    else if (affiliation === 'online') deptKey = 'online';
-    else if (affiliation === 'planning') deptKey = 'planning';
-    else if (affiliation === 'manufacturing') {
-      // 工場名で判別
-      if (affiliationStore === '北摂工場') deptKey = 'manufacturing_hokusetsu';
-      else if (affiliationStore === '加賀屋工場' || affiliationStore === 'かがや工場') deptKey = 'manufacturing_kagaya';
-      else if (affiliationStore === '南田辺工房') deptKey = 'manufacturing_minamitanabe';
-      else deptKey = 'manufacturing_hokusetsu'; // デフォルト
+    if (affiliation) {
+      if (affiliation === 'tokuhan') deptKey = 'tokuhan';
+      else if (affiliation === 'online') deptKey = 'online';
+      else if (affiliation === 'planning') deptKey = 'planning';
+      else if (affiliation === 'manufacturing') {
+        if (affiliationStore === '北摂工場') deptKey = 'manufacturing_hokusetsu';
+        else if (affiliationStore === '加賀屋工場' || affiliationStore === 'かがや工場') deptKey = 'manufacturing_kagaya';
+        else if (affiliationStore === '南田辺工房') deptKey = 'manufacturing_minamitanabe';
+        else deptKey = 'manufacturing_hokusetsu';
+      }
     }
 
+    // 優先2: ジョブカンの部署コード（dept_code）からフォールバック
+    if (!deptKey && emp.dept_code) {
+      deptKey = DEPT_CODE_TO_KEY[emp.dept_code] || null;
+    }
+
+    // 優先3: 打刻場所・store_nameからフォールバック
+    if (!deptKey && emp.store_name) {
+      deptKey = STORE_NAME_TO_DEPT_KEY[emp.store_name] || null;
+    }
+
+    // 店舗所属の場合はスキップ（部署データに含めない）
     if (!deptKey || !result[deptKey]) return;
 
     const dept = result[deptKey];
