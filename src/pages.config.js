@@ -21,6 +21,7 @@ const UserManagement = lazy(() => import('./pages/UserManagement'));
 const EventManagement = lazy(() => import('./pages/EventManagement'));
 const ProductivityDashboard = lazy(() => import('./pages/ProductivityDashboard'));
 const ProductivityHistory = lazy(() => import('./pages/ProductivityHistory'));
+const ComparisonAnalysis = lazy(() => import('./pages/ComparisonAnalysis'));
 
 import __Layout from './Layout.jsx';
 
@@ -44,6 +45,7 @@ export const PAGES = {
     "EventManagement": EventManagement,
     "productivity-dashboard": ProductivityDashboard,
     "productivity-history": ProductivityHistory,
+    "comparison-analysis": ComparisonAnalysis,
 }
 
 export const pagesConfig = {

@@ -6,6 +6,7 @@
  * Query params:
  *   month1: 比較月1 (YYYY-MM形式, 必須)
  *   month2: 比較月2 (YYYY-MM形式, 任意 - 前年同月など)
+ *   action: 'comparison' の場合、昨対比較データを返す（month1のみ指定で自動的に前年同月を比較）
  */
 import cheerio from 'cheerio';
 
@@ -27,13 +28,37 @@ const TEMPOVISOR_NAME_MAP = {
   'エキマル': '駅丸',
 };
 
+// ジョブカングループ名 → 店舗名マッピング
 const JOBCAN_GROUP_MAP = {
   '田辺': '田辺店', '大正': '大正店', '天下茶屋': '天下茶屋店',
   '天王寺': '天王寺店', 'アベノ': 'アベノ店', '心斎橋': '心斎橋店',
-  'かがや': 'かがや店', '駅丸': '駅丸', 'エキマル': '駅丸',
-  'エキマルシェ': '駅丸', '北摂店': '北摂店', '北摂': '北摂店',
+  'かがや店': 'かがや店', '駅丸': '駅丸', 'エキマル': '駅丸',
+  'エキマルシェ': '駅丸', '北摂店': '北摂店',
   '堺東': '堺東店', 'イオン松原': 'イオン松原店',
   'イオン守口': 'イオン守口店', '美和堂': '美和堂福島店',
+};
+
+// ジョブカングループ名 → 部署名マッピング（店舗以外）
+const JOBCAN_DEPT_MAP = {
+  '通販': '通販部',
+  '企画': '企画部',
+  '特販': '特販部',
+  'かがや工場': 'かがや工場',
+  '北摂工場': '北摂工場',
+  '鶴橋': '鶴橋工房',
+  '都島': '都島工場',
+  '工房': '製造部',
+};
+
+// 部署カテゴリ（比較分析用）
+const DEPT_CATEGORIES = {
+  '通販部': { label: '通販部', type: 'department' },
+  '企画部': { label: '企画部', type: 'department' },
+  '特販部': { label: '特販部', type: 'department' },
+  'かがや工場': { label: 'かがや工場', type: 'factory' },
+  '北摂工場': { label: '北摂工場', type: 'factory' },
+  '鶴橋工房': { label: '鶴橋工房', type: 'factory' },
+  '都島工場': { label: '都島工場', type: 'factory' },
 };
 
 // ===== キャッシュ =====
@@ -47,13 +72,24 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
-    const { month1, month2 } = req.query;
+    const { month1, month2, action } = req.query;
     if (!month1) {
       return res.status(400).json({ error: 'month1 is required (YYYY-MM format)' });
     }
 
+    // action=comparison の場合、自動的に前年同月を比較対象にする
     const months = [month1];
-    if (month2) months.push(month2);
+    if (action === 'comparison') {
+      const [y, m] = month1.split('-').map(Number);
+      const lastYearMonth = `${y - 1}-${String(m).padStart(2, '0')}`;
+      if (!month2) {
+        months.push(lastYearMonth);
+      } else {
+        months.push(month2);
+      }
+    } else if (month2) {
+      months.push(month2);
+    }
 
     const tempovisorUser = process.env.TEMPOVISOR_USERNAME || 'manu';
     const tempovisorPass = process.env.TEMPOVISOR_PASSWORD || 'manus';
@@ -64,7 +100,7 @@ export default async function handler(req, res) {
     // 各月のデータを取得
     const comparison = [];
     for (const month of months) {
-      const cacheKey = `historical_${month}`;
+      const cacheKey = `historical_v2_${month}`;
       const cached = historicalCache[cacheKey];
       if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
         console.log(`[Historical] Using cache for ${month}`);
@@ -78,17 +114,19 @@ export default async function handler(req, res) {
       // TempoVisor月別売上 + ジョブカン月間勤務時間を並行取得
       const [salesResult, hoursResult] = await Promise.allSettled([
         fetchTempoVisorMonthly(tempovisorUser, tempovisorPass, year, monthNum),
-        fetchJobcanMonthlyHours(jobcanCompany, jobcanUser, jobcanPass, year, monthNum),
+        fetchJobcanMonthlyHoursAll(jobcanCompany, jobcanUser, jobcanPass, year, monthNum),
       ]);
 
       const salesData = salesResult.status === 'fulfilled' ? salesResult.value : {};
-      const hoursData = hoursResult.status === 'fulfilled' ? hoursResult.value : {};
+      const hoursResultData = hoursResult.status === 'fulfilled' ? hoursResult.value : { stores: {}, departments: {} };
 
       console.log(`[Historical] TempoVisor: ${salesResult.status}, Jobcan: ${hoursResult.status}`);
 
+      const storeHoursData = hoursResultData.stores || {};
+      const deptHoursData = hoursResultData.departments || {};
+
       // 店舗別データを構築
       const stores = {};
-      const total = { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0 };
       let totalCustomers = 0;
       let totalSales = 0;
       let totalHours = 0;
@@ -98,7 +136,7 @@ export default async function handler(req, res) {
         const sales = sd.sales || 0;
         const customers = sd.customers || 0;
         const unitPrice = customers > 0 ? Math.round(sales / customers) : 0;
-        const workHours = hoursData[storeName] || 0;
+        const workHours = storeHoursData[storeName] || 0;
         const productivity = workHours > 0 ? Math.round(sales / workHours) : 0;
 
         stores[storeName] = {
@@ -114,13 +152,30 @@ export default async function handler(req, res) {
         totalHours += workHours;
       }
 
-      total.sales = totalSales;
-      total.customers = totalCustomers;
-      total.unit_price = totalCustomers > 0 ? Math.round(totalSales / totalCustomers) : 0;
-      total.work_hours = Math.round(totalHours * 10) / 10;
-      total.productivity = totalHours > 0 ? Math.round(totalSales / totalHours) : 0;
+      const total = {
+        sales: totalSales,
+        customers: totalCustomers,
+        unit_price: totalCustomers > 0 ? Math.round(totalSales / totalCustomers) : 0,
+        work_hours: Math.round(totalHours * 10) / 10,
+        productivity: totalHours > 0 ? Math.round(totalSales / totalHours) : 0,
+      };
 
-      const monthData = { month, stores, total };
+      // 部署別データを構築
+      const departments = {};
+      for (const [deptName, info] of Object.entries(DEPT_CATEGORIES)) {
+        const workHours = deptHoursData[deptName] || 0;
+        departments[deptName] = {
+          label: info.label,
+          type: info.type,
+          work_hours: Math.round(workHours * 10) / 10,
+          // 売上は手入力対応（TempoVisorには通販・企画・製造の売上データなし）
+          sales: 0,
+          customers: 0,
+          productivity: 0,
+        };
+      }
+
+      const monthData = { month, stores, total, departments };
       comparison.push(monthData);
 
       // キャッシュに保存
@@ -129,6 +184,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       comparison,
+      action: action || 'default',
       timestamp: new Date().toISOString(),
       cached: false,
     });
@@ -142,18 +198,13 @@ export default async function handler(req, res) {
 async function fetchTempoVisorMonthly(username, password, year, month) {
   const { cookies, repBaseUrl } = await loginTempoVisor(username, password);
 
-  // TempoVisorのN3M1Servlet（月別集計）を使用
-  // N3M1Servletは月別の売上・客数を店舗別に返す
   const monthStr = String(month).padStart(2, '0');
   const dateFrom = `${year}/${monthStr}/01`;
-  
-  // 月末日を計算
   const lastDay = new Date(year, month, 0).getDate();
   const dateTo = `${year}/${monthStr}/${String(lastDay).padStart(2, '0')}`;
 
   console.log(`[Historical TV] Fetching monthly data: ${dateFrom} - ${dateTo}`);
 
-  // N3M1Servlet: 月別売上集計
   const monthlyUrl = `${repBaseUrl}N3M1Servlet`;
   const formBody = new URLSearchParams({
     dateFrom: dateFrom,
@@ -178,20 +229,16 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
 
   const storeData = {};
 
-  // テーブルから店舗別売上・客数を抽出
   $('table').each((tableIdx, table) => {
     const rows = $(table).find('tr').toArray();
     if (rows.length < 2) return;
 
-    // ヘッダー行を解析して列インデックスを特定
     const headerCells = $(rows[0]).find('td,th').toArray();
     if (headerCells.length < 3) return;
 
     const firstHeaderText = $(headerCells[0]).text().trim();
     
-    // 店舗名列があるテーブルを探す
     if (!firstHeaderText.includes('店舗') && firstHeaderText !== '店舗名') {
-      // 最初のセルが店舗名っぽいかチェック
       let isStoreTable = false;
       for (let r = 1; r < Math.min(rows.length, 3); r++) {
         const cells = $(rows[r]).find('td,th').toArray();
@@ -208,7 +255,6 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
       if (!isStoreTable) return;
     }
 
-    // ヘッダーから売上・客数の列インデックスを検出
     let salesColIdx = -1;
     let customersColIdx = -1;
     for (let c = 0; c < headerCells.length; c++) {
@@ -221,12 +267,10 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
       }
     }
 
-    // ヘッダーで見つからない場合、最後の列を売上とする
     if (salesColIdx === -1 && headerCells.length >= 3) {
       salesColIdx = headerCells.length - 1;
     }
 
-    // データ行を解析
     for (let r = 1; r < rows.length; r++) {
       const cells = $(rows[r]).find('td,th').toArray();
       if (cells.length < 2) continue;
@@ -234,10 +278,8 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
       let storeName = $(cells[0]).text().trim();
       if (!storeName || storeName === '合計' || storeName === '全店') continue;
 
-      // 店舗名マッピング
       if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
       if (!TEMPOVISOR_STORE_CODES[storeName]) {
-        // 部分一致を試みる
         let matched = false;
         for (const [key, mappedName] of Object.entries(TEMPOVISOR_NAME_MAP)) {
           if (storeName.includes(key)) {
@@ -295,7 +337,6 @@ async function fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month)
   const lastDay = new Date(year, month, 0).getDate();
   const monthStr = String(month).padStart(2, '0');
 
-  // 各日のデータを取得（並列で5日ずつ）
   for (let dayStart = 1; dayStart <= lastDay; dayStart += 5) {
     const dayEnd = Math.min(dayStart + 4, lastDay);
     const dayPromises = [];
@@ -353,7 +394,6 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
     const headerCells = $(rows[0]).find('td,th').toArray();
     if (headerCells.length < 3) return;
 
-    // 時間別売上テーブルの合計列を探す
     let totalColIdx = -1;
     for (let c = 0; c < headerCells.length; c++) {
       const text = $(headerCells[c]).text().trim();
@@ -387,9 +427,8 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
   return dayData;
 }
 
-// ===== ジョブカン月間勤務時間取得 =====
-async function fetchJobcanMonthlyHours(companyId, loginId, password, year, month) {
-  // ジョブカンにログイン
+// ===== ジョブカン月間勤務時間取得（店舗＋部署） =====
+async function fetchJobcanMonthlyHoursAll(companyId, loginId, password, year, month) {
   const loginUrl = 'https://ssl.jobcan.jp/login/client/';
 
   const getRes = await fetch(loginUrl, {
@@ -425,7 +464,6 @@ async function fetchJobcanMonthlyHours(companyId, loginId, password, year, month
   const loginCookies = extractCookies(loginRes);
   const allCookies = mergeCookies(initialCookies, loginCookies);
 
-  // 勤怠集計ページから月間勤務時間を取得
   const monthStr = String(month).padStart(2, '0');
   const summaryUrl = `https://ssl.jobcan.jp/client/summary/data?search_type=dep&search_key=all&year=${year}&month=${monthStr}&number_par_page=300`;
 
@@ -441,6 +479,7 @@ async function fetchJobcanMonthlyHours(companyId, loginId, password, year, month
   });
 
   const storeHours = {};
+  const deptHours = {};
 
   try {
     const data = await summaryRes.json();
@@ -450,20 +489,27 @@ async function fetchJobcanMonthlyHours(companyId, loginId, password, year, month
       for (const employee of data.data) {
         const groupName = employee.group_name || '';
         const workTimeMinutes = parseFloat(employee.work_time || 0);
+        const hours = workTimeMinutes / 60;
 
+        // 店舗マッピング
         const storeName = mapJobcanGroupToStore(groupName);
         if (storeName) {
           if (!storeHours[storeName]) storeHours[storeName] = 0;
-          storeHours[storeName] += workTimeMinutes / 60; // 分→時間
+          storeHours[storeName] += hours;
+        }
+
+        // 部署マッピング
+        const deptName = mapJobcanGroupToDept(groupName);
+        if (deptName) {
+          if (!deptHours[deptName]) deptHours[deptName] = 0;
+          deptHours[deptName] += hours;
         }
       }
     }
   } catch (jsonErr) {
     console.warn(`[Historical JC] JSON parse error, trying HTML:`, jsonErr.message);
 
-    // HTMLページの場合
     try {
-      // summaryResは既に消費されているので、再取得
       const summaryPageUrl = `https://ssl.jobcan.jp/client/summary?search_type=dep&search_key=all&year=${year}&month=${monthStr}&number_par_page=300`;
       const pageRes = await fetch(summaryPageUrl, {
         headers: {
@@ -481,12 +527,18 @@ async function fetchJobcanMonthlyHours(companyId, loginId, password, year, month
 
         const group = $(cells[1]).text().trim();
         const workTimeText = $(cells[3]).text().trim();
+        const hours = parseWorkTime(workTimeText);
 
         const storeName = mapJobcanGroupToStore(group);
         if (storeName) {
-          const hours = parseWorkTime(workTimeText);
           if (!storeHours[storeName]) storeHours[storeName] = 0;
           storeHours[storeName] += hours;
+        }
+
+        const deptName = mapJobcanGroupToDept(group);
+        if (deptName) {
+          if (!deptHours[deptName]) deptHours[deptName] = 0;
+          deptHours[deptName] += hours;
         }
       });
     } catch (htmlErr) {
@@ -494,8 +546,9 @@ async function fetchJobcanMonthlyHours(companyId, loginId, password, year, month
     }
   }
 
-  console.log(`[Historical JC] Monthly hours:`, JSON.stringify(storeHours));
-  return storeHours;
+  console.log(`[Historical JC] Store hours:`, JSON.stringify(storeHours));
+  console.log(`[Historical JC] Dept hours:`, JSON.stringify(deptHours));
+  return { stores: storeHours, departments: deptHours };
 }
 
 // ===== ユーティリティ =====
@@ -507,14 +560,20 @@ function mapJobcanGroupToStore(groupName) {
   return null;
 }
 
+function mapJobcanGroupToDept(groupName) {
+  if (!groupName) return null;
+  for (const [key, deptName] of Object.entries(JOBCAN_DEPT_MAP)) {
+    if (groupName.includes(key)) return deptName;
+  }
+  return null;
+}
+
 function parseWorkTime(timeText) {
   if (!timeText || timeText === '-') return 0;
-  // "HH:MM" 形式
   const match = timeText.match(/(\d+):(\d+)/);
   if (match) {
     return parseInt(match[1]) + parseInt(match[2]) / 60;
   }
-  // "X時間Y分" 形式
   const hoursMatch = timeText.match(/(\d+)時間/);
   const minutesMatch = timeText.match(/(\d+)分/);
   const hours = hoursMatch ? parseInt(hoursMatch[1]) : 0;

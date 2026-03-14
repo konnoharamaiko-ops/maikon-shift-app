@@ -766,24 +766,50 @@ export default function Home() {
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
 
-        {/* クイックアクセス: 人時生産性ダッシュボード */}
-        <div className="mb-4 sm:mb-6">
-          <a
-            href="/productivity-dashboard"
-            className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl shadow-lg hover:shadow-xl hover:from-indigo-600 hover:to-purple-700 transition-all group text-white"
-          >
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
-              <Activity className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm sm:text-base font-bold">リアルタイム人時生産性</p>
-              <p className="text-xs sm:text-sm text-white/80 truncate">各店舗の売上・稼働状況をリアルタイム監視</p>
-            </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
-              <TrendingUp className="w-4 h-4 text-white/70" />
-              <ChevronRight className="w-4 h-4 text-white/70 group-hover:translate-x-1 transition-transform" />
-            </div>
-          </a>
+        {/* 生産性管理メニュー */}
+        <div className="mb-4 sm:mb-6 space-y-2">
+          <h3 className="text-xs font-bold text-muted-foreground px-1 mb-2">生産性管理</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <a
+              href="/productivity-dashboard"
+              className="flex items-center gap-3 p-3 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl shadow-md hover:shadow-lg hover:from-indigo-600 hover:to-purple-700 transition-all group text-white"
+            >
+              <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+                <Activity className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold">リアルタイム</p>
+                <p className="text-xs text-white/80 truncate">売上・稼働をリアルタイム監視</p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-white/70 group-hover:translate-x-1 transition-transform flex-shrink-0" />
+            </a>
+            <a
+              href="/productivity-history"
+              className="flex items-center gap-3 p-3 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl shadow-md hover:shadow-lg hover:from-emerald-600 hover:to-teal-700 transition-all group text-white"
+            >
+              <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+                <Calendar className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold">過去実績</p>
+                <p className="text-xs text-white/80 truncate">日別・店舗別の過去データ</p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-white/70 group-hover:translate-x-1 transition-transform flex-shrink-0" />
+            </a>
+            <a
+              href="/comparison-analysis"
+              className="flex items-center gap-3 p-3 bg-gradient-to-r from-amber-500 to-orange-600 rounded-xl shadow-md hover:shadow-lg hover:from-amber-600 hover:to-orange-700 transition-all group text-white"
+            >
+              <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+                <TrendingUp className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold">比較分析</p>
+                <p className="text-xs text-white/80 truncate">昨対比較・売上分析</p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-white/70 group-hover:translate-x-1 transition-transform flex-shrink-0" />
+            </a>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
