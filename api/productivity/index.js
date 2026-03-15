@@ -244,6 +244,20 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
 
   const storeData = {};
 
+  // デバッグ: 全テーブルのヘッダーを出力
+  const allTables = $('table').toArray();
+  console.log(`[Historical TV] Found ${allTables.length} tables in N3M1 response`);
+  allTables.forEach((table, idx) => {
+    const firstRow = $(table).find('tr').first();
+    const cells = firstRow.find('td,th').toArray().map(c => $(c).text().trim());
+    console.log(`[Historical TV] Table ${idx} headers: ${cells.join(' | ')}`);
+    const rows = $(table).find('tr').toArray();
+    if (rows.length > 1) {
+      const row1Cells = $(rows[1]).find('td,th').toArray().map(c => $(c).text().trim());
+      console.log(`[Historical TV] Table ${idx} row1: ${row1Cells.join(' | ')}`);
+    }
+  });
+
   $('table').each((tableIdx, table) => {
     const rows = $(table).find('tr').toArray();
     if (rows.length < 2) return;
@@ -553,10 +567,25 @@ async function fetchJobcanMonthlyHoursAll(companyId, loginId, password, year, mo
     console.log(`[Historical JC] Summary response type: ${typeof data}`);
 
     if (data && data.data) {
+      // 最初の3件のデータをデバッグ出力
+      if (data.data.length > 0) {
+        console.log(`[Historical JC] Sample data[0]:`, JSON.stringify(data.data[0]).substring(0, 500));
+        if (data.data.length > 1) console.log(`[Historical JC] Sample data[1]:`, JSON.stringify(data.data[1]).substring(0, 500));
+      }
       for (const employee of data.data) {
         const groupName = employee.group_name || '';
-        const workTimeMinutes = parseFloat(employee.work_time || 0);
-        const hours = workTimeMinutes / 60;
+        // work_timeの形式を柔軟に解析（分単位の数値、"HH:MM"形式、または時間単位の数値）
+        const rawWorkTime = employee.work_time || employee.total_work_time || employee.working_time || 0;
+        let hours = 0;
+        if (typeof rawWorkTime === 'string' && rawWorkTime.includes(':')) {
+          // "HH:MM" 形式
+          const parts = rawWorkTime.split(':');
+          hours = parseInt(parts[0]) + parseInt(parts[1] || 0) / 60;
+        } else {
+          const numVal = parseFloat(rawWorkTime);
+          // 300以上なら分単位と判断、それ以下なら時間単位
+          hours = numVal > 300 ? numVal / 60 : numVal;
+        }
 
         // 店舗マッピング
         const storeName = mapJobcanGroupToStore(groupName);
