@@ -216,7 +216,7 @@ export default function Dashboard() {
   ];
 
   const allCards = [
-    { id: 'productivity-mgmt', label: '生産性管理', icon: BarChart3, path: null, color: 'from-teal-500 to-emerald-600', desc: '人時生産性・売上・勤務分析', show: isAdminOrManager, isProductivityGroup: true },
+    { id: 'productivity-mgmt', label: '生産性管理', icon: Activity, path: null, color: 'from-fuchsia-500 to-pink-600', desc: '人時生産性・売上・勤務分析', show: isAdminOrManager, isProductivityGroup: true },
     { id: 'shift-submit', label: 'シフト希望提出', icon: Calendar, path: 'Home', color: 'from-indigo-500 to-purple-600', desc: 'シフト希望を入力・管理', show: true },
     { id: 'shift-overview', label: 'シフト一覧表', icon: Eye, path: 'ShiftOverview', color: 'from-cyan-500 to-blue-600', desc: '所属先のシフト希望一覧', show: true },
     { id: 'analytics', label: '有給管理・勤務分析', icon: CalendarHeart, path: 'Analytics', color: 'from-orange-400 to-amber-500', desc: '有給休暇管理・労働時間の可視化', show: true },
