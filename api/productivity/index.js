@@ -142,6 +142,10 @@ export default async function handler(req, res) {
 
       const storeHoursData = hoursResultData.stores || {};
       const deptHoursData = hoursResultData.departments || {};
+      
+      // _tableDebugをsalesDataから除外（店舗データのみ使用）
+      const tableDebugData = salesData._tableDebug;
+      delete salesData._tableDebug;
 
       // 店舗別データを構築
       const stores = {};
@@ -199,7 +203,8 @@ export default async function handler(req, res) {
         month,
         salesStatus: salesResult.status,
         salesError: salesResult.status === 'rejected' ? salesResult.reason?.message : null,
-        salesSample: Object.entries(salesData).slice(0, 2).map(([k, v]) => ({ store: k, ...v })),
+        salesSample: Object.entries(salesData).filter(([k]) => k !== '_tableDebug').slice(0, 2).map(([k, v]) => ({ store: k, ...(typeof v === 'object' ? v : {}) })),
+        tableDebug: salesData._tableDebug || [],
         hoursStatus: hoursResult.status,
         hoursError: hoursResult.status === 'rejected' ? hoursResult.reason?.message : null,
         storeHoursSample: Object.entries(storeHoursData).slice(0, 3).map(([k, v]) => ({ store: k, hours: v })),
@@ -273,6 +278,7 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
   const $ = cheerio.load(monthlyHtml);
 
   const storeData = {};
+  const _tableDebug = [];
 
   // デバッグ: 全テーブルのヘッダーを出力
   const allTables = $('table').toArray();
@@ -280,12 +286,14 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
   allTables.forEach((table, idx) => {
     const firstRow = $(table).find('tr').first();
     const cells = firstRow.find('td,th').toArray().map(c => $(c).text().trim());
-    console.log(`[Historical TV] Table ${idx} headers: ${cells.join(' | ')}`);
     const rows = $(table).find('tr').toArray();
-    if (rows.length > 1) {
-      const row1Cells = $(rows[1]).find('td,th').toArray().map(c => $(c).text().trim());
-      console.log(`[Historical TV] Table ${idx} row1: ${row1Cells.join(' | ')}`);
+    const tableInfo = { idx, headers: cells, rowCount: rows.length, rows: [] };
+    for (let r = 1; r < Math.min(rows.length, 4); r++) {
+      const rowCells = $(rows[r]).find('td,th').toArray().map(c => $(c).text().trim());
+      tableInfo.rows.push(rowCells);
     }
+    _tableDebug.push(tableInfo);
+    console.log(`[Historical TV] Table ${idx} headers: ${cells.join(' | ')}`);
   });
 
   $('table').each((tableIdx, table) => {
@@ -382,11 +390,12 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
   });
 
   // N3M1が空の場合、N3D1Servletで日別に取得して合算するフォールバック
-  if (Object.keys(storeData).length === 0) {
+  if (Object.keys(storeData).length === 0 || !Object.values(storeData).some(v => typeof v === 'object')) {
     console.log('[Historical TV] N3M1 empty, trying daily aggregation via N3D1');
     return await fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month);
   }
 
+  storeData._tableDebug = _tableDebug;
   return storeData;
 }
 
