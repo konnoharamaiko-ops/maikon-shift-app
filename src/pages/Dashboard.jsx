@@ -3,7 +3,7 @@ import { supabase } from '@/api/supabaseClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { Calendar, Shield, Users, Settings, LogOut, ClipboardList, BarChart3, Wrench, Clock, Edit2, Eye, CalendarDays, CheckCircle, XCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, CalendarHeart, FileEdit, ArrowRight, Sparkles, Bell, Activity } from 'lucide-react';
+import { Calendar, Shield, Users, Settings, LogOut, ClipboardList, BarChart3, Wrench, Clock, Edit2, Eye, CalendarDays, CheckCircle, XCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, CalendarHeart, FileEdit, ArrowRight, Sparkles, Bell, Activity, TrendingUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -212,7 +212,7 @@ export default function Dashboard() {
     { id: 'shift-submit', label: 'シフト希望提出', icon: Calendar, path: 'Home', color: 'from-indigo-500 to-purple-600', desc: 'シフト希望を入力・管理', show: true },
     { id: 'shift-overview', label: 'シフト一覧表', icon: Eye, path: 'ShiftOverview', color: 'from-cyan-500 to-blue-600', desc: '所属先のシフト希望一覧', show: true },
     { id: 'analytics', label: '有給管理・勤務分析', icon: CalendarHeart, path: 'Analytics', color: 'from-orange-400 to-amber-500', desc: '有給休暇管理・労働時間の可視化', show: true },
-    { id: 'productivity', label: '人時生産性', icon: Activity, path: 'productivity-dashboard', color: 'from-violet-500 to-indigo-600', desc: '各店舗の売上・稼働状況をリアルタイム監視', show: isAdminOrManager },
+
     { id: 'admin-view', label: 'シフト提出状況', icon: ClipboardList, path: 'Admin', color: 'from-purple-500 to-pink-600', desc: '全員のシフト希望を確認・管理', show: isAdminOrManager },
     { id: 'shift-creation', label: 'シフト作成', icon: FileEdit, path: 'ShiftCreation', color: 'from-emerald-500 to-teal-600', desc: '確定シフトの作成・編集', show: isAdminOrManager },
     { id: 'event-mgmt', label: 'イベント管理', icon: CalendarDays, path: 'EventManagement', color: 'from-rose-500 to-orange-600', desc: '店舗イベント・催事の管理', show: isAdminOrManager },
@@ -311,6 +311,60 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-3 sm:px-4 pt-4 sm:pt-6">
+
+        {/* 生産性管理セクション */}
+        {isAdminOrManager && (
+          <div className="mb-4 sm:mb-5">
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 px-1">生産性管理</h3>
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              <Link to="/productivity-dashboard" className="block">
+                <div className="relative overflow-hidden rounded-xl p-3 sm:p-4 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 transition-all shadow-md hover:shadow-lg active:scale-[0.97] group">
+                  <div className="absolute -top-4 -right-4 w-16 h-16 bg-white/10 rounded-full blur-xl" />
+                  <div className="relative flex items-center gap-2 sm:gap-3">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+                      <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs sm:text-sm font-bold text-white truncate">リアルタイム</h4>
+                      <p className="text-[8px] sm:text-[10px] text-white/70 truncate">売上・稼働をリアルタイム監視</p>
+                    </div>
+                    <ArrowRight className="w-3.5 h-3.5 text-white/50 group-hover:text-white/80 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+                  </div>
+                </div>
+              </Link>
+              <Link to="/productivity-history" className="block">
+                <div className="relative overflow-hidden rounded-xl p-3 sm:p-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 transition-all shadow-md hover:shadow-lg active:scale-[0.97] group">
+                  <div className="absolute -top-4 -right-4 w-16 h-16 bg-white/10 rounded-full blur-xl" />
+                  <div className="relative flex items-center gap-2 sm:gap-3">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+                      <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs sm:text-sm font-bold text-white truncate">過去実績</h4>
+                      <p className="text-[8px] sm:text-[10px] text-white/70 truncate">日別・店舗別の過去データ</p>
+                    </div>
+                    <ArrowRight className="w-3.5 h-3.5 text-white/50 group-hover:text-white/80 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+                  </div>
+                </div>
+              </Link>
+              <Link to="/comparison-analysis" className="block">
+                <div className="relative overflow-hidden rounded-xl p-3 sm:p-4 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 transition-all shadow-md hover:shadow-lg active:scale-[0.97] group">
+                  <div className="absolute -top-4 -right-4 w-16 h-16 bg-white/10 rounded-full blur-xl" />
+                  <div className="relative flex items-center gap-2 sm:gap-3">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+                      <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs sm:text-sm font-bold text-white truncate">比較分析</h4>
+                      <p className="text-[8px] sm:text-[10px] text-white/70 truncate">昨対比較・売上分析</p>
+                    </div>
+                    <ArrowRight className="w-3.5 h-3.5 text-white/50 group-hover:text-white/80 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+                  </div>
+                </div>
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Menu Grid */}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
