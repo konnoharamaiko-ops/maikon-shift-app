@@ -9,6 +9,7 @@
  *   action: 'comparison' の場合、昨対比較データを返す（month1のみ指定で自動的に前年同月を比較）
  */
 import * as cheerio from 'cheerio';
+import iconv from 'iconv-lite';
 
 // ===== 定数 =====
 const TEMPOVISOR_STORE_CODES = {
@@ -224,7 +225,9 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
     body: formBody,
   });
 
-  const monthlyHtml = await monthlyRes.text();
+  // TempoVisorのHTMLはShift-JIS（cp932）エンコーディング
+  const monthlyBuffer = await monthlyRes.arrayBuffer();
+  const monthlyHtml = iconv.decode(Buffer.from(monthlyBuffer), 'cp932');
   const $ = cheerio.load(monthlyHtml);
 
   const storeData = {};
@@ -383,7 +386,9 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
     body: formBody,
   });
 
-  const html = await res.text();
+  // TempoVisorのHTMLはShift-JIS（cp932）エンコーディング
+  const buffer = await res.arrayBuffer();
+  const html = iconv.decode(Buffer.from(buffer), 'cp932');
   const $ = cheerio.load(html);
   const dayData = {};
 
