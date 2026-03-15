@@ -100,6 +100,7 @@ export default async function handler(req, res) {
 
     // 各月のデータを取得
     const comparison = [];
+    const _debugInfo = [];
     for (const month of months) {
       const cacheKey = `historical_v2_${month}`;
       const cached = historicalCache[cacheKey];
@@ -178,6 +179,16 @@ export default async function handler(req, res) {
 
       const monthData = { month, stores, total, departments };
       comparison.push(monthData);
+      _debugInfo.push({
+        month,
+        salesStatus: salesResult.status,
+        salesError: salesResult.status === 'rejected' ? salesResult.reason?.message : null,
+        salesSample: Object.entries(salesData).slice(0, 2).map(([k, v]) => ({ store: k, ...v })),
+        hoursStatus: hoursResult.status,
+        hoursError: hoursResult.status === 'rejected' ? hoursResult.reason?.message : null,
+        storeHoursSample: Object.entries(storeHoursData).slice(0, 3).map(([k, v]) => ({ store: k, hours: v })),
+        deptHoursSample: Object.entries(deptHoursData).slice(0, 3).map(([k, v]) => ({ dept: k, hours: v })),
+      });
 
       // キャッシュに保存
       historicalCache[cacheKey] = { data: monthData, timestamp: Date.now() };
@@ -188,6 +199,7 @@ export default async function handler(req, res) {
       action: action || 'default',
       timestamp: new Date().toISOString(),
       cached: false,
+      _debug: _debugInfo,
     });
   } catch (err) {
     console.error('[Historical] Error:', err);
