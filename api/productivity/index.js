@@ -205,8 +205,9 @@ export default async function handler(req, res) {
         salesError: salesResult.status === 'rejected' ? salesResult.reason?.message : null,
         salesSample: Object.entries(salesData).filter(([k]) => k !== '_tableDebug').slice(0, 2).map(([k, v]) => ({ store: k, ...(typeof v === 'object' ? v : {}) })),
         tableDebug: tableDebugData || [],
-        htmlSnippet: salesData._htmlSnippet || '(N3D1 fallback used)',
+        htmlSnippet: (tableDebugData && salesData._htmlSnippet) || salesData._htmlSnippet || '(not available)',
         htmlLength: salesData._htmlLength || 0,
+        source: salesData._source || 'N3M1',
         hoursStatus: hoursResult.status,
         hoursError: hoursResult.status === 'rejected' ? hoursResult.reason?.message : null,
         storeHoursSample: Object.entries(storeHoursData).slice(0, 3).map(([k, v]) => ({ store: k, hours: v })),
@@ -282,6 +283,8 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
   const storeData = {};
   const _tableDebug = [];
   const _htmlSnippet = monthlyHtml.substring(0, 3000);
+  console.log(`[Historical TV] N3M1 response status: ${monthlyRes.status}, HTML length: ${monthlyHtml.length}`);
+  console.log(`[Historical TV] N3M1 HTML first 200: ${monthlyHtml.substring(0, 200)}`);
 
   // デバッグ: 全テーブルのヘッダーを出力
   const allTables = $('table').toArray();
@@ -395,7 +398,12 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
   // N3M1が空の場合、N3D1Servletで日別に取得して合算するフォールバック
   if (Object.keys(storeData).length === 0 || !Object.values(storeData).some(v => typeof v === 'object')) {
     console.log('[Historical TV] N3M1 empty, trying daily aggregation via N3D1');
-    return await fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month);
+    const fallbackData = await fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month);
+    fallbackData._tableDebug = _tableDebug;
+    fallbackData._htmlSnippet = _htmlSnippet;
+    fallbackData._htmlLength = monthlyHtml.length;
+    fallbackData._source = 'N3D1_fallback';
+    return fallbackData;
   }
 
   storeData._tableDebug = _tableDebug;
