@@ -446,7 +446,7 @@ async function fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month)
 
 async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
   const hourlyUrl = `${repBaseUrl}N3D1Servlet`;
-  const formBody = new URLSearchParams({
+  const baseParams = {
     chkcsv: 'false',
     chkcustom: '',
     shopcode: '',
@@ -463,8 +463,6 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
     scode2: '2000',
     which_time_type: '1',
     time_type: '1',
-    which_tani: '1',
-    tani: '1',
     time_slot1: '8',
     time_slot2: '23',
     which_zeinuki: '1',
@@ -472,24 +470,51 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
     pan2_flag: '1',
     which1: '1',
     radio1: '1',
-  }).toString();
+  };
+  // 売上金額モード(tani=1)と客数モード(tani=2)を並行取得
+  const salesFormBody = new URLSearchParams({ ...baseParams, which_tani: '1', tani: '1' }).toString();
+  const customersFormBody = new URLSearchParams({ ...baseParams, which_tani: '2', tani: '2' }).toString();
 
-  const res = await fetch(hourlyUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Cookie': cookies,
-      'Referer': repBaseUrl,
-    },
-    body: formBody,
-  });
+  const fetchHeaders = {
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Cookie': cookies,
+    'Referer': repBaseUrl,
+  };
 
-  // TempoVisorのHTMLはShift-JIS（cp932）エンコーディング
-  const buffer = await res.arrayBuffer();
-  const html = iconv.decode(Buffer.from(buffer), 'cp932');
-  const $ = cheerio.load(html);
+  // 売上と客数を並行取得
+  const [salesRes, custRes] = await Promise.all([
+    fetch(hourlyUrl, { method: 'POST', headers: fetchHeaders, body: salesFormBody }),
+    fetch(hourlyUrl, { method: 'POST', headers: fetchHeaders, body: customersFormBody }),
+  ]);
+
   const dayData = {};
+
+  // 売上データ解析
+  const salesBuffer = await salesRes.arrayBuffer();
+  const salesHtml = iconv.decode(Buffer.from(salesBuffer), 'cp932');
+  const parsedSales = parseN3D1Table(salesHtml);
+  for (const [storeName, value] of Object.entries(parsedSales)) {
+    if (!dayData[storeName]) dayData[storeName] = { sales: 0, customers: 0 };
+    dayData[storeName].sales = value;
+  }
+
+  // 客数データ解析
+  const custBuffer = await custRes.arrayBuffer();
+  const custHtml = iconv.decode(Buffer.from(custBuffer), 'cp932');
+  const parsedCust = parseN3D1Table(custHtml);
+  for (const [storeName, value] of Object.entries(parsedCust)) {
+    if (!dayData[storeName]) dayData[storeName] = { sales: 0, customers: 0 };
+    dayData[storeName].customers = value;
+  }
+
+  return dayData;
+}
+
+// N3D1Servletの時間帯テーブルを解析して店舗別合計値を返す
+function parseN3D1Table(html) {
+  const $ = cheerio.load(html);
+  const result = {};
 
   $('table').each((tableIdx, table) => {
     const rows = $(table).find('tr').toArray();
@@ -501,13 +526,10 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
     const firstHeaderText = $(headerCells[0]).text().trim();
     const secondHeaderText = headerCells.length > 1 ? $(headerCells[1]).text().trim() : '';
 
-    // 店舗名ヘッダーを持つテーブルのみ処理
     const isHourlyTable = firstHeaderText === '店舗名' ||
       (firstHeaderText.length > 0 && firstHeaderText !== '合計' && secondHeaderText.match(/\d{1,2}:00/));
-
     if (!isHourlyTable) return;
 
-    // ヘッダーから合計列を特定
     let totalColIndex = -1;
     const hourColumns = [];
     headerCells.forEach((cell, idx) => {
@@ -520,10 +542,8 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
         totalColIndex = idx;
       }
     });
-
     if (hourColumns.length === 0) return;
 
-    // データ行を解析
     for (let r = 1; r < rows.length; r++) {
       const cells = $(rows[r]).find('td,th').toArray();
       if (cells.length < 2) continue;
@@ -532,32 +552,27 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
       if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
       if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
 
-      // 合計（日次売上）を取得
-      let todaySales = 0;
+      let total = 0;
       if (totalColIndex >= 0 && totalColIndex < cells.length) {
         const totalText = $(cells[totalColIndex]).text().trim()
           .replace(/[\\¥,]/g, '')
           .replace(/[^\d-]/g, '');
-        todaySales = Math.max(0, parseInt(totalText) || 0);
+        total = Math.max(0, parseInt(totalText) || 0);
       } else {
-        // 合計列がない場合は時間別売上の合計を計算
         hourColumns.forEach(({ colIndex }) => {
           if (colIndex >= cells.length) return;
-          const salesText = $(cells[colIndex]).text().trim()
+          const text = $(cells[colIndex]).text().trim()
             .replace(/[\\¥,]/g, '')
             .replace(/[^\d-]/g, '');
-          todaySales += Math.max(0, parseInt(salesText) || 0);
+          total += Math.max(0, parseInt(text) || 0);
         });
       }
 
-      if (!dayData[storeName]) {
-        dayData[storeName] = { sales: 0, customers: 0 };
-      }
-      dayData[storeName].sales += todaySales;
+      result[storeName] = (result[storeName] || 0) + total;
     }
   });
 
-  return dayData;
+  return result;
 }
 
 // ===== ジョブカン月間勤務時間取得（店舗＋部署） =====
