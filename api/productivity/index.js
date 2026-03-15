@@ -8,7 +8,7 @@
  *   month2: 比較月2 (YYYY-MM形式, 任意 - 前年同月など)
  *   action: 'comparison' の場合、昨対比較データを返す（month1のみ指定で自動的に前年同月を比較）
  */
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio';
 
 // ===== 定数 =====
 const TEMPOVISOR_STORE_CODES = {

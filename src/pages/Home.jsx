@@ -771,7 +771,7 @@ export default function Home() {
           <h3 className="text-xs font-bold text-muted-foreground px-1 mb-2">生産性管理</h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <a
-              href="#/productivity-dashboard"
+              href="/productivity-dashboard"
               className="flex items-center gap-3 p-3 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl shadow-md hover:shadow-lg hover:from-indigo-600 hover:to-purple-700 transition-all group text-white"
             >
               <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
@@ -784,7 +784,7 @@ export default function Home() {
               <ChevronRight className="w-4 h-4 text-white/70 group-hover:translate-x-1 transition-transform flex-shrink-0" />
             </a>
             <a
-              href="#/productivity-history"
+              href="/productivity-history"
               className="flex items-center gap-3 p-3 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-xl shadow-md hover:shadow-lg hover:from-emerald-600 hover:to-teal-700 transition-all group text-white"
             >
               <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
@@ -797,7 +797,7 @@ export default function Home() {
               <ChevronRight className="w-4 h-4 text-white/70 group-hover:translate-x-1 transition-transform flex-shrink-0" />
             </a>
             <a
-              href="#/comparison-analysis"
+              href="/comparison-analysis"
               className="flex items-center gap-3 p-3 bg-gradient-to-r from-amber-500 to-orange-600 rounded-xl shadow-md hover:shadow-lg hover:from-amber-600 hover:to-orange-700 transition-all group text-white"
             >
               <div className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
