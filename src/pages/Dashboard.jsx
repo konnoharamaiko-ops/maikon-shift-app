@@ -200,6 +200,13 @@ export default function Dashboard() {
   );
 
   const [adminSettingsOpen, setAdminSettingsOpen] = useState(false);
+  const [productivityOpen, setProductivityOpen] = useState(false);
+
+  const productivitySubItems = [
+    { id: 'prod-realtime', label: 'リアルタイム', icon: Activity, rawPath: '/productivity-dashboard', color: 'from-violet-500 to-indigo-600', desc: '売上・稼働をリアルタイム監視' },
+    { id: 'prod-history', label: '過去実績', icon: BarChart3, rawPath: '/productivity-history', color: 'from-emerald-500 to-teal-600', desc: '日別・店舗別の過去データ' },
+    { id: 'prod-comparison', label: '比較分析', icon: TrendingUp, rawPath: '/comparison-analysis', color: 'from-amber-500 to-orange-600', desc: '昨対比較・売上分析' },
+  ];
 
   const adminSubItems = [
     { id: 'store-settings', label: '所属先設定', icon: Shield, path: 'StoreSettings', color: 'from-orange-500 to-red-600', desc: '店舗・工房・部署の設定' },
@@ -209,6 +216,7 @@ export default function Dashboard() {
   ];
 
   const allCards = [
+    { id: 'productivity-mgmt', label: '生産性管理', icon: BarChart3, path: null, color: 'from-teal-500 to-emerald-600', desc: '人時生産性・売上・勤務分析', show: isAdminOrManager, isProductivityGroup: true },
     { id: 'shift-submit', label: 'シフト希望提出', icon: Calendar, path: 'Home', color: 'from-indigo-500 to-purple-600', desc: 'シフト希望を入力・管理', show: true },
     { id: 'shift-overview', label: 'シフト一覧表', icon: Eye, path: 'ShiftOverview', color: 'from-cyan-500 to-blue-600', desc: '所属先のシフト希望一覧', show: true },
     { id: 'analytics', label: '有給管理・勤務分析', icon: CalendarHeart, path: 'Analytics', color: 'from-orange-400 to-amber-500', desc: '有給休暇管理・労働時間の可視化', show: true },
@@ -312,60 +320,6 @@ export default function Dashboard() {
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-3 sm:px-4 pt-4 sm:pt-6">
 
-        {/* 生産性管理セクション */}
-        {isAdminOrManager && (
-          <div className="mb-4 sm:mb-5">
-            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 px-1">生産性管理</h3>
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
-              <Link to="/productivity-dashboard" className="block">
-                <div className="relative overflow-hidden rounded-xl p-3 sm:p-4 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 transition-all shadow-md hover:shadow-lg active:scale-[0.97] group">
-                  <div className="absolute -top-4 -right-4 w-16 h-16 bg-white/10 rounded-full blur-xl" />
-                  <div className="relative flex items-center gap-2 sm:gap-3">
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
-                      <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs sm:text-sm font-bold text-white truncate">リアルタイム</h4>
-                      <p className="text-[8px] sm:text-[10px] text-white/70 truncate">売上・稼働をリアルタイム監視</p>
-                    </div>
-                    <ArrowRight className="w-3.5 h-3.5 text-white/50 group-hover:text-white/80 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
-                  </div>
-                </div>
-              </Link>
-              <Link to="/productivity-history" className="block">
-                <div className="relative overflow-hidden rounded-xl p-3 sm:p-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 transition-all shadow-md hover:shadow-lg active:scale-[0.97] group">
-                  <div className="absolute -top-4 -right-4 w-16 h-16 bg-white/10 rounded-full blur-xl" />
-                  <div className="relative flex items-center gap-2 sm:gap-3">
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
-                      <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs sm:text-sm font-bold text-white truncate">過去実績</h4>
-                      <p className="text-[8px] sm:text-[10px] text-white/70 truncate">日別・店舗別の過去データ</p>
-                    </div>
-                    <ArrowRight className="w-3.5 h-3.5 text-white/50 group-hover:text-white/80 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
-                  </div>
-                </div>
-              </Link>
-              <Link to="/comparison-analysis" className="block">
-                <div className="relative overflow-hidden rounded-xl p-3 sm:p-4 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 transition-all shadow-md hover:shadow-lg active:scale-[0.97] group">
-                  <div className="absolute -top-4 -right-4 w-16 h-16 bg-white/10 rounded-full blur-xl" />
-                  <div className="relative flex items-center gap-2 sm:gap-3">
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
-                      <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs sm:text-sm font-bold text-white truncate">比較分析</h4>
-                      <p className="text-[8px] sm:text-[10px] text-white/70 truncate">昨対比較・売上分析</p>
-                    </div>
-                    <ArrowRight className="w-3.5 h-3.5 text-white/50 group-hover:text-white/80 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
-                  </div>
-                </div>
-              </Link>
-            </div>
-          </div>
-        )}
-
         {/* Menu Grid */}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={cardOrder} strategy={rectSortingStrategy}>
@@ -374,6 +328,54 @@ export default function Dashboard() {
                 const card = visibleCards.find(c => c.id === cardId);
                 if (!card) return null;
                 const Icon = card.icon;
+
+                // 生産性管理グループカード
+                if (card.isProductivityGroup) {
+                  return (
+                    <SortableCard key={cardId} id={cardId}>
+                      <div className="col-span-1">
+                        <div
+                          className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-5 hover:shadow-md transition-all cursor-pointer group active:scale-[0.98]"
+                          onClick={() => setProductivityOpen(prev => !prev)}
+                        >
+                          <div className="flex items-start justify-between mb-2.5">
+                            <div className={`w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center shadow-md group-hover:scale-105 transition-transform`}>
+                              <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+                            </div>
+                            <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center">
+                              {productivityOpen ? (
+                                <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
+                              ) : (
+                                <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                              )}
+                            </div>
+                          </div>
+                          <h2 className="text-sm sm:text-base font-bold text-slate-800 mb-0.5">{card.label}</h2>
+                          <p className="text-[10px] sm:text-xs text-slate-400 leading-relaxed">{card.desc}</p>
+                        </div>
+
+                        {productivityOpen && (
+                          <div className="mt-2 grid grid-cols-3 gap-2 animate-in slide-in-from-top-2 duration-200">
+                            {productivitySubItems.map(subItem => {
+                              const SubIcon = subItem.icon;
+                              return (
+                                <Link key={subItem.id} to={subItem.rawPath}>
+                                  <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-2.5 hover:shadow-md transition-all cursor-pointer group active:scale-[0.97]">
+                                    <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${subItem.color} flex items-center justify-center mb-1.5 group-hover:scale-105 transition-transform`}>
+                                      <SubIcon className="w-3.5 h-3.5 text-white" />
+                                    </div>
+                                    <h3 className="text-[10px] sm:text-xs font-bold text-slate-800 mb-0.5">{subItem.label}</h3>
+                                    <p className="text-[8px] sm:text-[10px] text-slate-400 leading-relaxed line-clamp-2">{subItem.desc}</p>
+                                  </div>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </SortableCard>
+                  );
+                }
 
                 // 管理者設定グループカード
                 if (card.isGroup) {
