@@ -191,12 +191,18 @@ async function fetchFromSupabase(supabaseUrl, supabaseKey, tableName, query) {
 
 function getDateRange(startDate, endDate) {
   const dates = [];
-  const current = new Date(startDate + 'T00:00:00+09:00');
-  const end = new Date(endDate + 'T00:00:00+09:00');
+  // タイムゾーンに依存しない日付計算（YYYY-MM-DD文字列で処理）
+  let [y, m, d] = startDate.split('-').map(Number);
+  const endParts = endDate.split('-').map(Number);
+  const endVal = endParts[0] * 10000 + endParts[1] * 100 + endParts[2];
 
-  while (current <= end) {
-    dates.push(current.toISOString().split('T')[0]);
-    current.setDate(current.getDate() + 1);
+  while (y * 10000 + m * 100 + d <= endVal) {
+    dates.push(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    // 次の日に進める
+    const next = new Date(Date.UTC(y, m - 1, d + 1));
+    y = next.getUTCFullYear();
+    m = next.getUTCMonth() + 1;
+    d = next.getUTCDate();
   }
 
   return dates;
@@ -211,6 +217,7 @@ function getDaysDifference(startDate, endDate) {
 
 function getDayOfWeek(dateStr) {
   const days = ['日', '月', '火', '水', '木', '金', '土'];
-  const date = new Date(dateStr + 'T00:00:00+09:00');
-  return days[date.getDay()];
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return days[date.getUTCDay()];
 }
