@@ -64,7 +64,7 @@ export default function UserManagement() {
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [jobcanCode, setJobcanCode] = useState('');
-  const [role, setRole] = useState('user');
+  const [role, setRole] = useState('manager');
   const [storeIds, setStoreIds] = useState([]);
   const [affiliationTab, setAffiliationTab] = useState('store');
   const [belongsFlags, setBelongsFlags] = useState({
@@ -158,9 +158,7 @@ export default function UserManagement() {
   });
 
   // Filter users by selected store / category
-  const filteredUsers = users.filter(u => {
-    const isRegularUser = u.user_role !== 'admin' && u.role !== 'admin';
-    if (!isRegularUser) return false;
+  const applyStoreFilter = (u) => {
     if (selectedStoreFilter === 'all') return true;
     if (selectedStoreFilter === 'tokuhan') return u.belongs_tokuhan === true;
     if (selectedStoreFilter === 'online') return u.belongs_online === true;
@@ -171,6 +169,25 @@ export default function UserManagement() {
     if (selectedStoreFilter === 'manufacturing_minamitanabe') return u.belongs_minamitanabe === true;
     if (selectedStoreFilter === 'ekimaru') return u.belongs_ekimaru === true;
     return u.store_ids?.includes(selectedStoreFilter);
+  };
+
+  const filteredManagers = users.filter(u => {
+    const isManager = (u.user_role === 'manager' || u.role === 'manager') && u.user_role !== 'admin' && u.role !== 'admin';
+    if (!isManager) return false;
+    return applyStoreFilter(u);
+  });
+
+  const filteredStaff = users.filter(u => {
+    const isStaff = u.user_role !== 'admin' && u.role !== 'admin' && u.user_role !== 'manager' && u.role !== 'manager';
+    if (!isStaff) return false;
+    return applyStoreFilter(u);
+  });
+
+  // Keep filteredUsers for backward compatibility (all non-admin users)
+  const filteredUsers = users.filter(u => {
+    const isRegularUser = u.user_role !== 'admin' && u.role !== 'admin';
+    if (!isRegularUser) return false;
+    return applyStoreFilter(u);
   });
 
   const orderedUsers = userOrder
@@ -179,17 +196,33 @@ export default function UserManagement() {
   
   const orderedAdmins = adminOrder.map(id => users.find(u => u.id === id)).filter(Boolean);
 
+  // マネージャーとスタッフの並び順
+  const [managerOrder, setManagerOrder] = useState([]);
+  const [staffOrder, setStaffOrder] = useState([]);
+
+  const orderedManagers = managerOrder
+    .map(id => filteredManagers.find(u => u.id === id))
+    .filter(Boolean);
+  
+  const orderedStaffUsers = staffOrder
+    .map(id => filteredStaff.find(u => u.id === id))
+    .filter(Boolean);
+
   // Initialize user order when users data changes
   useEffect(() => {
     if (users.length > 0) {
       const regularUsers = users.filter(u => u.user_role !== 'admin' && u.role !== 'admin');
       const adminUsers = users.filter(u => u.user_role === 'admin' || u.role === 'admin');
+      const managerUsers = users.filter(u => (u.user_role === 'manager' || u.role === 'manager') && u.user_role !== 'admin' && u.role !== 'admin');
+      const staffUsers = users.filter(u => u.user_role !== 'admin' && u.role !== 'admin' && u.user_role !== 'manager' && u.role !== 'manager');
       
       // Sort by sort_order if available
       const sortByOrder = (a, b) => (a.sort_order || 0) - (b.sort_order || 0);
       
       setUserOrder(regularUsers.sort(sortByOrder).map(u => u.id));
       setAdminOrder(adminUsers.sort(sortByOrder).map(u => u.id));
+      setManagerOrder(managerUsers.sort(sortByOrder).map(u => u.id));
+      setStaffOrder(staffUsers.sort(sortByOrder).map(u => u.id));
     }
   }, [users, selectedStoreFilter]);
 
@@ -240,6 +273,28 @@ export default function UserManagement() {
       const newIndex = adminOrder.indexOf(over.id);
       const newOrder = arrayMove(adminOrder, oldIndex, newIndex);
       setAdminOrder(newOrder);
+      updateSortOrderMutation.mutate(newOrder);
+    }
+  };
+
+  const handleManagerDragEnd = (event) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = managerOrder.indexOf(active.id);
+      const newIndex = managerOrder.indexOf(over.id);
+      const newOrder = arrayMove(managerOrder, oldIndex, newIndex);
+      setManagerOrder(newOrder);
+      updateSortOrderMutation.mutate(newOrder);
+    }
+  };
+
+  const handleStaffDragEnd = (event) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = staffOrder.indexOf(active.id);
+      const newIndex = staffOrder.indexOf(over.id);
+      const newOrder = arrayMove(staffOrder, oldIndex, newIndex);
+      setStaffOrder(newOrder);
       updateSortOrderMutation.mutate(newOrder);
     }
   };
@@ -419,7 +474,7 @@ export default function UserManagement() {
       setEmail('');
       setFullName('');
       setJobcanCode('');
-      setRole('user');
+      setRole('manager');
       setStoreIds([]);
       setBelongsFlags({
         belongs_tokuhan: false,
@@ -712,6 +767,90 @@ export default function UserManagement() {
             <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
               <span className={cn("text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 rounded-full font-semibold", roleColor)}>
                 {roleLabel}
+              </span>
+              {userStores.slice(0, 2).map(s => (
+                <span key={s.id} className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full flex items-center gap-0.5">
+                  <Building2 className="w-2 h-2 sm:w-2.5 sm:h-2.5" />{s.store_name}
+                </span>
+              ))}
+              {userStores.length > 2 && (
+                <span className="text-[9px] sm:text-[10px] text-slate-400">+{userStores.length - 2}</span>
+              )}
+              {user?.belongs_tokuhan && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full flex items-center gap-0.5">
+                  <ShoppingCart className="w-2 h-2 sm:w-2.5 sm:h-2.5" />特販部
+                </span>
+              )}
+              {user?.belongs_online && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full flex items-center gap-0.5">
+                  <ShoppingCart className="w-2 h-2 sm:w-2.5 sm:h-2.5" />通販部
+                </span>
+              )}
+              {user?.belongs_planning && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full flex items-center gap-0.5">
+                  <Briefcase className="w-2 h-2 sm:w-2.5 sm:h-2.5" />企画部
+                </span>
+              )}
+              {user?.belongs_hokusetsu && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
+                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />北摂工場
+                </span>
+              )}
+              {user?.belongs_kagaya && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
+                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />かがや工場
+                </span>
+              )}
+              {user?.belongs_minamitanabe && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-600 rounded-full flex items-center gap-0.5">
+                  <Factory className="w-2 h-2 sm:w-2.5 sm:h-2.5" />南田辺工房
+                </span>
+              )}
+              {user?.belongs_ekimaru && (
+                <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-green-100 text-green-600 rounded-full flex items-center gap-0.5">
+                  <Building2 className="w-2 h-2 sm:w-2.5 sm:h-2.5" />駅催事出張
+                </span>
+              )}
+            </div>
+          </div>
+        </Link>
+        {isAdmin && (
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleDeleteUser(user?.id, user?.metadata?.display_name || user?.full_name || user?.email, user?.email);
+            }}
+            className="absolute top-2 right-2 p-1.5 rounded-full bg-white/90 hover:bg-red-100 text-slate-300 hover:text-red-600 transition-colors shadow-sm z-10 opacity-0 group-hover:opacity-100"
+            title="ユーザーを削除"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderManagerCard = (user) => {
+    const userStores = getUserStores(user);
+    return (
+      <div className="relative group">
+        <Link to={createPageUrl('UserEdit') + `?email=${encodeURIComponent(user?.email)}`}>
+          <div className="w-full p-2.5 sm:p-4 rounded-xl sm:rounded-2xl border border-amber-200 bg-white hover:border-amber-400 hover:shadow-lg transition-all cursor-pointer">
+            <div className="flex items-center gap-2 sm:gap-3 mb-2 sm:mb-3">
+              <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center flex-shrink-0 shadow-md shadow-amber-200">
+                <span className="text-white font-bold text-sm sm:text-lg">
+                  {(user?.metadata?.display_name || user?.full_name)?.charAt(0) || user?.email.charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-slate-800 text-xs sm:text-sm truncate">{user?.metadata?.display_name || user?.full_name || '名前未設定'}</p>
+                <p className="text-[10px] sm:text-xs text-slate-400 truncate">{user?.email}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+              <span className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full font-semibold">
+                マネージャー
               </span>
               {userStores.slice(0, 2).map(s => (
                 <span key={s.id} className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full flex items-center gap-0.5">
@@ -1198,7 +1337,7 @@ export default function UserManagement() {
           </div>
         )}
 
-        {/* Users Section */}
+        {/* Header with filter and tools */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
           <div className="p-3 sm:p-4 border-b border-slate-100">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
@@ -1259,23 +1398,68 @@ export default function UserManagement() {
               </Select>
             </div>
           </div>
+        </div>
+
+        {/* Managers Section */}
+        <div className="bg-white rounded-2xl shadow-sm border border-amber-200 overflow-hidden mt-4 sm:mt-6">
+          <div className="p-3 sm:p-4 border-b border-amber-100 bg-amber-50 flex items-center justify-between">
+            <h3 className="text-base sm:text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Users className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
+              マネージャー一覧
+            </h3>
+            <span className="text-xs sm:text-sm text-amber-600 font-medium">{orderedManagers.length}名</span>
+          </div>
           {isLoading ? (
             <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600 mx-auto"></div>
             </div>
-          ) : orderedUsers.length === 0 ? (
-            <div className="p-8 text-center">
-              <p className="text-slate-400">まだユーザーが登録されていません</p>
+          ) : orderedManagers.length === 0 ? (
+            <div className="p-6 text-center">
+              <p className="text-slate-400 text-sm">マネージャーはいません</p>
             </div>
           ) : (
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
-              onDragEnd={handleUserDragEnd}
+              onDragEnd={handleManagerDragEnd}
             >
-              <SortableContext items={userOrder} strategy={verticalListSortingStrategy}>
+              <SortableContext items={managerOrder} strategy={verticalListSortingStrategy}>
                 <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 p-2 sm:p-4">
-                  {orderedUsers.map((user) => (
+                  {orderedManagers.map((user) => (
+                    <SortableUserCard key={user?.id} id={user?.id} user={user} renderContent={renderManagerCard} />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )}
+        </div>
+
+        {/* Staff (Shift Submitters) Section */}
+        <div className="bg-white rounded-2xl shadow-sm border border-blue-200 overflow-hidden mt-4 sm:mt-6">
+          <div className="p-3 sm:p-4 border-b border-blue-100 bg-blue-50 flex items-center justify-between">
+            <h3 className="text-base sm:text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
+              シフト提出者一覧
+            </h3>
+            <span className="text-xs sm:text-sm text-blue-600 font-medium">{orderedStaffUsers.length}名</span>
+          </div>
+          {isLoading ? (
+            <div className="p-8 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+            </div>
+          ) : orderedStaffUsers.length === 0 ? (
+            <div className="p-6 text-center">
+              <p className="text-slate-400 text-sm">シフト提出者はいません</p>
+            </div>
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleStaffDragEnd}
+            >
+              <SortableContext items={staffOrder} strategy={verticalListSortingStrategy}>
+                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3 p-2 sm:p-4">
+                  {orderedStaffUsers.map((user) => (
                     <SortableUserCard key={user?.id} id={user?.id} user={user} renderContent={renderUserCard} />
                   ))}
                 </div>
@@ -1285,12 +1469,13 @@ export default function UserManagement() {
         </div>
 
         {/* Admins Section */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mt-6">
-          <div className="p-4 border-b border-slate-100 bg-purple-50">
-            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <Shield className="w-5 h-5 text-purple-600" />
+        <div className="bg-white rounded-2xl shadow-sm border border-purple-200 overflow-hidden mt-4 sm:mt-6">
+          <div className="p-3 sm:p-4 border-b border-purple-100 bg-purple-50 flex items-center justify-between">
+            <h3 className="text-base sm:text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Shield className="w-4 h-4 sm:w-5 sm:h-5 text-purple-600" />
               管理者一覧
             </h3>
+            <span className="text-xs sm:text-sm text-purple-600 font-medium">{orderedAdmins.length}名</span>
           </div>
           <DndContext
             sensors={sensors}
