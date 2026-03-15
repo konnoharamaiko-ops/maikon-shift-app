@@ -204,7 +204,7 @@ export default async function handler(req, res) {
         salesStatus: salesResult.status,
         salesError: salesResult.status === 'rejected' ? salesResult.reason?.message : null,
         salesSample: Object.entries(salesData).filter(([k]) => k !== '_tableDebug').slice(0, 2).map(([k, v]) => ({ store: k, ...(typeof v === 'object' ? v : {}) })),
-        tableDebug: salesData._tableDebug || [],
+        tableDebug: tableDebugData || [],
         hoursStatus: hoursResult.status,
         hoursError: hoursResult.status === 'rejected' ? hoursResult.reason?.message : null,
         storeHoursSample: Object.entries(storeHoursData).slice(0, 3).map(([k, v]) => ({ store: k, hours: v })),
