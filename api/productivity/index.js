@@ -208,10 +208,22 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
 
   const monthlyUrl = `${repBaseUrl}N3M1Servlet`;
   const formBody = new URLSearchParams({
-    dateFrom: dateFrom,
-    dateTo: dateTo,
-    storeCode: '',
-    submit: '実行',
+    chkcsv: 'false',
+    chkcustom: '',
+    shopcode: '',
+    searched_yyyymmdd1: dateFrom,
+    searched_yyyymmdd2: dateTo,
+    yyyymmdd1: dateFrom,
+    yyyymmdd2: dateTo,
+    scode1: '0001',
+    scode2: '2000',
+    which_tani: '1',
+    tani: '1',
+    which_zeinuki: '1',
+    zeinuki: '1',
+    pan2_flag: '1',
+    which1: '1',
+    radio1: '1',
   }).toString();
 
   const monthlyRes = await fetch(monthlyUrl, {
@@ -369,10 +381,31 @@ async function fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month)
 async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
   const hourlyUrl = `${repBaseUrl}N3D1Servlet`;
   const formBody = new URLSearchParams({
-    dateFrom: dateStr,
-    dateTo: dateStr,
-    storeCode: '',
-    submit: '実行',
+    chkcsv: 'false',
+    chkcustom: '',
+    shopcode: '',
+    searched_time_slot1: '8',
+    searched_time_slot2: '23',
+    searched_yyyymmdd1: dateStr,
+    searched_yyyymmdd2: dateStr,
+    time_slot1_val: '8',
+    time_slot2_val: '23',
+    interval: '1',
+    yyyymmdd1: dateStr,
+    yyyymmdd2: dateStr,
+    scode1: '0001',
+    scode2: '2000',
+    which_time_type: '1',
+    time_type: '1',
+    which_tani: '1',
+    tani: '1',
+    time_slot1: '8',
+    time_slot2: '23',
+    which_zeinuki: '1',
+    zeinuki: '1',
+    pan2_flag: '1',
+    which1: '1',
+    radio1: '1',
   }).toString();
 
   const res = await fetch(hourlyUrl, {
@@ -399,33 +432,62 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
     const headerCells = $(rows[0]).find('td,th').toArray();
     if (headerCells.length < 3) return;
 
-    let totalColIdx = -1;
-    for (let c = 0; c < headerCells.length; c++) {
-      const text = $(headerCells[c]).text().trim();
-      if (text === '合計') {
-        totalColIdx = c;
-        break;
-      }
-    }
-    if (totalColIdx === -1) totalColIdx = headerCells.length - 1;
+    const firstHeaderText = $(headerCells[0]).text().trim();
+    const secondHeaderText = headerCells.length > 1 ? $(headerCells[1]).text().trim() : '';
 
+    // 店舗名ヘッダーを持つテーブルのみ処理
+    const isHourlyTable = firstHeaderText === '店舗名' ||
+      (firstHeaderText.length > 0 && firstHeaderText !== '合計' && secondHeaderText.match(/\d{1,2}:00/));
+
+    if (!isHourlyTable) return;
+
+    // ヘッダーから合計列を特定
+    let totalColIndex = -1;
+    const hourColumns = [];
+    headerCells.forEach((cell, idx) => {
+      if (idx === 0) return;
+      const cellText = $(cell).text().trim();
+      const hourMatch = cellText.match(/^(\d{1,2})[::：]/);
+      if (hourMatch) {
+        hourColumns.push({ colIndex: idx, hour: parseInt(hourMatch[1]) });
+      } else if (cellText === '合計' || cellText === '計') {
+        totalColIndex = idx;
+      }
+    });
+
+    if (hourColumns.length === 0) return;
+
+    // データ行を解析
     for (let r = 1; r < rows.length; r++) {
       const cells = $(rows[r]).find('td,th').toArray();
-      if (cells.length < 3) continue;
+      if (cells.length < 2) continue;
 
       let storeName = $(cells[0]).text().trim();
-      if (!storeName || storeName === '合計') continue;
-
       if (TEMPOVISOR_NAME_MAP[storeName]) storeName = TEMPOVISOR_NAME_MAP[storeName];
-      if (!TEMPOVISOR_STORE_CODES[storeName]) continue;
+      if (!storeName || !TEMPOVISOR_STORE_CODES[storeName]) continue;
 
-      const totalText = $(cells[totalColIdx]).text().trim();
-      const sales = parseInt(totalText.replace(/[¥\\,\s円]/g, '').replace(/[^\d-]/g, '')) || 0;
+      // 合計（日次売上）を取得
+      let todaySales = 0;
+      if (totalColIndex >= 0 && totalColIndex < cells.length) {
+        const totalText = $(cells[totalColIndex]).text().trim()
+          .replace(/[\\¥,]/g, '')
+          .replace(/[^\d-]/g, '');
+        todaySales = Math.max(0, parseInt(totalText) || 0);
+      } else {
+        // 合計列がない場合は時間別売上の合計を計算
+        hourColumns.forEach(({ colIndex }) => {
+          if (colIndex >= cells.length) return;
+          const salesText = $(cells[colIndex]).text().trim()
+            .replace(/[\\¥,]/g, '')
+            .replace(/[^\d-]/g, '');
+          todaySales += Math.max(0, parseInt(salesText) || 0);
+        });
+      }
 
       if (!dayData[storeName]) {
         dayData[storeName] = { sales: 0, customers: 0 };
       }
-      dayData[storeName].sales += sales;
+      dayData[storeName].sales += todaySales;
     }
   });
 
