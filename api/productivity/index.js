@@ -98,26 +98,42 @@ export default async function handler(req, res) {
     const jobcanUser = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
     const jobcanPass = process.env.JOBCAN_PASSWORD || 'fujita.yog';
 
-    // 各月のデータを取得
+    // 各月のデータを取得（全月分を並行取得）
     const comparison = [];
     const _debugInfo = [];
+    
+    // キャッシュ確認と未キャッシュ月の特定
+    const uncachedMonths = [];
     for (const month of months) {
       const cacheKey = `historical_v2_${month}`;
       const cached = historicalCache[cacheKey];
       if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
         console.log(`[Historical] Using cache for ${month}`);
         comparison.push(cached.data);
-        continue;
+      } else {
+        uncachedMonths.push(month);
       }
+    }
 
-      console.log(`[Historical] Fetching fresh data for ${month}`);
-      const [year, monthNum] = month.split('-').map(Number);
+    // 未キャッシュ月を全て並行取得
+    if (uncachedMonths.length > 0) {
+      // ジョブカンは1回ログインして全月分のcookiesを共有
+      const jobcanCookies = await loginJobcan(jobcanCompany, jobcanUser, jobcanPass);
+      
+      const fetchPromises = uncachedMonths.map(async (month) => {
+        const [year, monthNum] = month.split('-').map(Number);
+        const [salesResult, hoursResult] = await Promise.allSettled([
+          fetchTempoVisorMonthly(tempovisorUser, tempovisorPass, year, monthNum),
+          fetchJobcanMonthlyHoursWithCookies(jobcanCookies, year, monthNum),
+        ]);
+        return { month, salesResult, hoursResult };
+      });
 
-      // TempoVisor月別売上 + ジョブカン月間勤務時間を並行取得
-      const [salesResult, hoursResult] = await Promise.allSettled([
-        fetchTempoVisorMonthly(tempovisorUser, tempovisorPass, year, monthNum),
-        fetchJobcanMonthlyHoursAll(jobcanCompany, jobcanUser, jobcanPass, year, monthNum),
-      ]);
+      const results = await Promise.allSettled(fetchPromises);
+      
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue;
+        const { month, salesResult, hoursResult } = result.value;
 
       const salesData = salesResult.status === 'fulfilled' ? salesResult.value : {};
       const hoursResultData = hoursResult.status === 'fulfilled' ? hoursResult.value : { stores: {}, departments: {} };
@@ -191,7 +207,9 @@ export default async function handler(req, res) {
       });
 
       // キャッシュに保存
+      const cacheKey = `historical_v2_${month}`;
       historicalCache[cacheKey] = { data: monthData, timestamp: Date.now() };
+      }
     }
 
     return res.status(200).json({
@@ -523,8 +541,12 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
 // ===== ジョブカン月間勤務時間取得（店舗＋部署） =====
 // history.jsと同じ日別勤務状況ページ方式を使用
 async function fetchJobcanMonthlyHoursAll(companyId, loginId, password, year, month) {
-  // ジョブカンログイン
   const cookies = await loginJobcan(companyId, loginId, password);
+  return fetchJobcanMonthlyHoursWithCookies(cookies, year, month);
+}
+
+// cookiesを直接受け取る版（複数月分のcookies共有用）
+async function fetchJobcanMonthlyHoursWithCookies(cookies, year, month) {
 
   const monthStr = String(month).padStart(2, '0');
   const lastDay = new Date(year, month, 0).getDate();
@@ -549,9 +571,9 @@ async function fetchJobcanMonthlyHoursAll(companyId, loginId, password, year, mo
     '11012': 'かがや工場', '12010': '北摂工場', '11700': '都島工場', '11900': '鶴橋工房',
   };
 
-  // 5日ずつ並行取得（タイムアウト対策）
-  for (let dayStart = 1; dayStart <= lastDay; dayStart += 5) {
-    const dayEnd = Math.min(dayStart + 4, lastDay);
+  // 15日ずつ並行取得（高速化）
+  for (let dayStart = 1; dayStart <= lastDay; dayStart += 15) {
+    const dayEnd = Math.min(dayStart + 14, lastDay);
     const dayPromises = [];
 
     for (let day = dayStart; day <= dayEnd; day++) {
