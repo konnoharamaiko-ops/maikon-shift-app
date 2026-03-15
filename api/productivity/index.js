@@ -100,7 +100,7 @@ export default async function handler(req, res) {
 
     // 各月のデータを取得（全月分を並行取得）
     const comparison = [];
-    const _debugInfo = [];
+
     
     // キャッシュ確認と未キャッシュ月の特定
     const uncachedMonths = [];
@@ -143,9 +143,11 @@ export default async function handler(req, res) {
       const storeHoursData = hoursResultData.stores || {};
       const deptHoursData = hoursResultData.departments || {};
       
-      // _tableDebugをsalesDataから除外（店舗データのみ使用）
-      const tableDebugData = salesData._tableDebug;
+      // デバッグ用プロパティを除外
       delete salesData._tableDebug;
+      delete salesData._htmlSnippet;
+      delete salesData._htmlLength;
+      delete salesData._source;
 
       // 店舗別データを構築
       const stores = {};
@@ -199,20 +201,7 @@ export default async function handler(req, res) {
 
       const monthData = { month, stores, total, departments };
       comparison.push(monthData);
-      _debugInfo.push({
-        month,
-        salesStatus: salesResult.status,
-        salesError: salesResult.status === 'rejected' ? salesResult.reason?.message : null,
-        salesSample: Object.entries(salesData).filter(([k]) => k !== '_tableDebug').slice(0, 2).map(([k, v]) => ({ store: k, ...(typeof v === 'object' ? v : {}) })),
-        tableDebug: tableDebugData || [],
-        htmlSnippet: (tableDebugData && salesData._htmlSnippet) || salesData._htmlSnippet || '(not available)',
-        htmlLength: salesData._htmlLength || 0,
-        source: salesData._source || 'N3M1',
-        hoursStatus: hoursResult.status,
-        hoursError: hoursResult.status === 'rejected' ? hoursResult.reason?.message : null,
-        storeHoursSample: Object.entries(storeHoursData).slice(0, 3).map(([k, v]) => ({ store: k, hours: v })),
-        deptHoursSample: Object.entries(deptHoursData).slice(0, 3).map(([k, v]) => ({ dept: k, hours: v })),
-      });
+
 
       // キャッシュに保存
       const cacheKey = `historical_v2_${month}`;
@@ -225,7 +214,6 @@ export default async function handler(req, res) {
       action: action || 'default',
       timestamp: new Date().toISOString(),
       cached: false,
-      _debug: _debugInfo,
     });
   } catch (err) {
     console.error('[Historical] Error:', err);
@@ -281,10 +269,7 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
   const $ = cheerio.load(monthlyHtml);
 
   const storeData = {};
-  const _tableDebug = [];
-  const _htmlSnippet = monthlyHtml.substring(0, 3000);
-  console.log(`[Historical TV] N3M1 response status: ${monthlyRes.status}, HTML length: ${monthlyHtml.length}`);
-  console.log(`[Historical TV] N3M1 HTML first 200: ${monthlyHtml.substring(0, 200)}`);
+
 
   // デバッグ: 全テーブルのヘッダーを出力
   const allTables = $('table').toArray();
@@ -298,7 +283,7 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
       const rowCells = $(rows[r]).find('td,th').toArray().map(c => $(c).text().trim());
       tableInfo.rows.push(rowCells);
     }
-    _tableDebug.push(tableInfo);
+
     console.log(`[Historical TV] Table ${idx} headers: ${cells.join(' | ')}`);
   });
 
@@ -399,16 +384,11 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
   if (Object.keys(storeData).length === 0 || !Object.values(storeData).some(v => typeof v === 'object')) {
     console.log('[Historical TV] N3M1 empty, trying daily aggregation via N3D1');
     const fallbackData = await fetchTempoVisorDailyAggregation(cookies, repBaseUrl, year, month);
-    fallbackData._tableDebug = _tableDebug;
-    fallbackData._htmlSnippet = _htmlSnippet;
-    fallbackData._htmlLength = monthlyHtml.length;
-    fallbackData._source = 'N3D1_fallback';
+
     return fallbackData;
   }
 
-  storeData._tableDebug = _tableDebug;
-  storeData._htmlSnippet = _htmlSnippet;
-  storeData._htmlLength = monthlyHtml.length;
+
   return storeData;
 }
 
