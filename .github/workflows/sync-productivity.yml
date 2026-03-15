@@ -1,0 +1,58 @@
+name: Sync Productivity Data
+
+on:
+  schedule:
+    # 毎日 JST 22:30 (UTC 13:30) に実行
+    - cron: '30 13 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '同期する日付 (YYYY-MM-DD形式、空欄で当日)'
+        required: false
+        type: string
+      range_start:
+        description: 'バックフィル開始日 (YYYY-MM-DD形式)'
+        required: false
+        type: string
+      range_end:
+        description: 'バックフィル終了日 (YYYY-MM-DD形式)'
+        required: false
+        type: string
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run sync script
+        env:
+          JOBCAN_COMPANY_ID: ${{ secrets.JOBCAN_COMPANY_ID }}
+          JOBCAN_LOGIN_ID: ${{ secrets.JOBCAN_LOGIN_ID }}
+          JOBCAN_PASSWORD: ${{ secrets.JOBCAN_PASSWORD }}
+          TEMPOVISOR_USERNAME: ${{ secrets.TEMPOVISOR_USERNAME }}
+          TEMPOVISOR_PASSWORD: ${{ secrets.TEMPOVISOR_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -n "${{ inputs.range_start }}" ] && [ -n "${{ inputs.range_end }}" ]; then
+            echo "バックフィルモード: ${{ inputs.range_start }} ～ ${{ inputs.range_end }}"
+            node scripts/sync-productivity.mjs --range ${{ inputs.range_start }} ${{ inputs.range_end }}
+          elif [ -n "${{ inputs.date }}" ]; then
+            echo "指定日モード: ${{ inputs.date }}"
+            node scripts/sync-productivity.mjs --date ${{ inputs.date }}
+          else
+            echo "当日モード"
+            node scripts/sync-productivity.mjs
+          fi
