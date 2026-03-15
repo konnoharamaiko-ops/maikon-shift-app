@@ -205,6 +205,8 @@ export default async function handler(req, res) {
         salesError: salesResult.status === 'rejected' ? salesResult.reason?.message : null,
         salesSample: Object.entries(salesData).filter(([k]) => k !== '_tableDebug').slice(0, 2).map(([k, v]) => ({ store: k, ...(typeof v === 'object' ? v : {}) })),
         tableDebug: tableDebugData || [],
+        htmlSnippet: salesData._htmlSnippet || '(N3D1 fallback used)',
+        htmlLength: salesData._htmlLength || 0,
         hoursStatus: hoursResult.status,
         hoursError: hoursResult.status === 'rejected' ? hoursResult.reason?.message : null,
         storeHoursSample: Object.entries(storeHoursData).slice(0, 3).map(([k, v]) => ({ store: k, hours: v })),
@@ -279,6 +281,7 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
 
   const storeData = {};
   const _tableDebug = [];
+  const _htmlSnippet = monthlyHtml.substring(0, 3000);
 
   // デバッグ: 全テーブルのヘッダーを出力
   const allTables = $('table').toArray();
@@ -396,6 +399,8 @@ async function fetchTempoVisorMonthly(username, password, year, month) {
   }
 
   storeData._tableDebug = _tableDebug;
+  storeData._htmlSnippet = _htmlSnippet;
+  storeData._htmlLength = monthlyHtml.length;
   return storeData;
 }
 
