@@ -521,7 +521,72 @@ async function fetchSingleDayData(cookies, repBaseUrl, dateStr) {
 }
 
 // ===== ジョブカン月間勤務時間取得（店舗＋部署） =====
+// history.jsと同じ日別勤務状況ページ方式を使用
 async function fetchJobcanMonthlyHoursAll(companyId, loginId, password, year, month) {
+  // ジョブカンログイン
+  const cookies = await loginJobcan(companyId, loginId, password);
+
+  const monthStr = String(month).padStart(2, '0');
+  const lastDay = new Date(year, month, 0).getDate();
+  
+  // 今日の日付を取得（未来の日付は取得しない）
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  
+  console.log(`[Historical JC] Fetching daily work hours: ${year}/${monthStr} (${lastDay} days)`);
+
+  const storeHours = {};
+  const deptHours = {};
+
+  // 部署コードマッピング（history.jsと同じ）
+  const STORE_DEPT_MAP = {
+    '10110': '田辺店', '10400': '大正店', '10500': '天下茶屋店',
+    '10600': '天王寺店', '10800': 'アベノ店', '10900': '心斎橋店',
+    '11010': 'かがや店', '11200': '駅丸', '12000': '北摂店',
+    '12200': '堺東店', '12300': 'イオン松原店', '12400': 'イオン守口店',
+    '20000': '美和堂福島店',
+    '11021': '企画部', '11022': '通販部', '11025': '特販部',
+    '11012': 'かがや工場', '12010': '北摂工場', '11700': '都島工場', '11900': '鶴橋工房',
+  };
+
+  // 5日ずつ並行取得（タイムアウト対策）
+  for (let dayStart = 1; dayStart <= lastDay; dayStart += 5) {
+    const dayEnd = Math.min(dayStart + 4, lastDay);
+    const dayPromises = [];
+
+    for (let day = dayStart; day <= dayEnd; day++) {
+      const dayStr = String(day).padStart(2, '0');
+      const dateStr = `${year}-${monthStr}-${dayStr}`;
+      
+      // 未来の日付はスキップ
+      if (dateStr > todayStr) continue;
+      
+      dayPromises.push(fetchJobcanDailyHours(cookies, dateStr, STORE_DEPT_MAP));
+    }
+
+    const results = await Promise.allSettled(dayPromises);
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue;
+      const { stores: dayStores, departments: dayDepts } = result.value;
+      
+      for (const [name, hours] of Object.entries(dayStores)) {
+        if (!storeHours[name]) storeHours[name] = 0;
+        storeHours[name] += hours;
+      }
+      for (const [name, hours] of Object.entries(dayDepts)) {
+        if (!deptHours[name]) deptHours[name] = 0;
+        deptHours[name] += hours;
+      }
+    }
+  }
+
+  console.log(`[Historical JC] Store hours:`, JSON.stringify(storeHours));
+  console.log(`[Historical JC] Dept hours:`, JSON.stringify(deptHours));
+  return { stores: storeHours, departments: deptHours };
+}
+
+// ジョブカンログイン
+async function loginJobcan(companyId, loginId, password) {
   const loginUrl = 'https://ssl.jobcan.jp/login/client/';
 
   const getRes = await fetch(loginUrl, {
@@ -557,106 +622,113 @@ async function fetchJobcanMonthlyHoursAll(companyId, loginId, password, year, mo
   const loginCookies = extractCookies(loginRes);
   const allCookies = mergeCookies(initialCookies, loginCookies);
 
-  const monthStr = String(month).padStart(2, '0');
-  const summaryUrl = `https://ssl.jobcan.jp/client/summary/data?search_type=dep&search_key=all&year=${year}&month=${monthStr}&number_par_page=300`;
+  const location = loginRes.headers.get('location') || '';
+  if (location.includes('error')) {
+    throw new Error(`Jobcan login failed: ${location}`);
+  }
 
-  console.log(`[Historical JC] Fetching monthly hours: ${year}/${monthStr}`);
+  return allCookies;
+}
 
-  const summaryRes = await fetch(summaryUrl, {
+// 指定日のジョブカン勤務状況を取得（history.jsと同じ方式）
+async function fetchJobcanDailyHours(cookies, date, storeDeptMap) {
+  const workUrl = `https://ssl.jobcan.jp/client/work-state/show/?submit_type=day&searching=1&list_type=normal&number_par_page=300&retirement=work&search_date=${date}`;
+
+  const workRes = await fetch(workUrl, {
     headers: {
-      'Cookie': allCookies,
+      'Cookie': cookies,
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': 'https://ssl.jobcan.jp/client/summary',
-      'X-Requested-With': 'XMLHttpRequest',
+      'Referer': 'https://ssl.jobcan.jp/client/',
     },
+    redirect: 'follow',
   });
 
-  const storeHours = {};
-  const deptHours = {};
+  const workHtml = await workRes.text();
+  const $work = cheerio.load(workHtml);
 
-  try {
-    const data = await summaryRes.json();
-    console.log(`[Historical JC] Summary response type: ${typeof data}`);
+  const stores = {};
+  const departments = {};
 
-    if (data && data.data) {
-      // 最初の3件のデータをデバッグ出力
-      if (data.data.length > 0) {
-        console.log(`[Historical JC] Sample data[0]:`, JSON.stringify(data.data[0]).substring(0, 500));
-        if (data.data.length > 1) console.log(`[Historical JC] Sample data[1]:`, JSON.stringify(data.data[1]).substring(0, 500));
-      }
-      for (const employee of data.data) {
-        const groupName = employee.group_name || '';
-        // work_timeの形式を柔軟に解析（分単位の数値、"HH:MM"形式、または時間単位の数値）
-        const rawWorkTime = employee.work_time || employee.total_work_time || employee.working_time || 0;
-        let hours = 0;
-        if (typeof rawWorkTime === 'string' && rawWorkTime.includes(':')) {
-          // "HH:MM" 形式
-          const parts = rawWorkTime.split(':');
-          hours = parseInt(parts[0]) + parseInt(parts[1] || 0) / 60;
-        } else {
-          const numVal = parseFloat(rawWorkTime);
-          // 300以上なら分単位と判断、それ以下なら時間単位
-          hours = numVal > 300 ? numVal / 60 : numVal;
-        }
+  // 部署カテゴリ分類
+  const DEPT_CATEGORY_MAP = {
+    '企画部': '企画部', '通販部': '通販部', '特販部': '特販部',
+    'かがや工場': 'かがや工場', '北摂工場': '北摂工場',
+    '都島工場': '都島工場', '鶴橋工房': '鶴橋工房',
+  };
 
-        // 店舗マッピング
-        const storeName = mapJobcanGroupToStore(groupName);
-        if (storeName) {
-          if (!storeHours[storeName]) storeHours[storeName] = 0;
-          storeHours[storeName] += hours;
-        }
-
-        // 部署マッピング
-        const deptName = mapJobcanGroupToDept(groupName);
-        if (deptName) {
-          if (!deptHours[deptName]) deptHours[deptName] = 0;
-          deptHours[deptName] += hours;
-        }
-      }
+  let targetTable = null;
+  $work('table').each((i, table) => {
+    const headerRow = $work(table).find('tr').first();
+    const headerText = headerRow.text();
+    if (headerText.includes('スタッフ') && headerText.includes('出勤状況') && headerText.includes('労働時間')) {
+      targetTable = table;
     }
-  } catch (jsonErr) {
-    console.warn(`[Historical JC] JSON parse error, trying HTML:`, jsonErr.message);
+  });
 
-    try {
-      const summaryPageUrl = `https://ssl.jobcan.jp/client/summary?search_type=dep&search_key=all&year=${year}&month=${monthStr}&number_par_page=300`;
-      const pageRes = await fetch(summaryPageUrl, {
-        headers: {
-          'Cookie': allCookies,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://ssl.jobcan.jp/client/',
-        },
-      });
-      const htmlText = await pageRes.text();
-      const $ = cheerio.load(htmlText);
+  if (!targetTable) {
+    return { stores, departments };
+  }
 
-      $('table tbody tr').each((i, row) => {
-        const cells = $(row).find('td').toArray();
-        if (cells.length < 5) return;
+  const rows = $work(targetTable).find('tr').toArray();
 
-        const group = $(cells[1]).text().trim();
-        const workTimeText = $(cells[3]).text().trim();
-        const hours = parseWorkTime(workTimeText);
+  for (let i = 1; i < rows.length; i++) {
+    const cells = $work(rows[i]).find('td').toArray();
+    if (cells.length < 10) continue;
 
-        const storeName = mapJobcanGroupToStore(group);
-        if (storeName) {
-          if (!storeHours[storeName]) storeHours[storeName] = 0;
-          storeHours[storeName] += hours;
-        }
+    const staffCell = $work(cells[0]).text().trim();
+    if (!staffCell) continue;
 
-        const deptName = mapJobcanGroupToDept(group);
-        if (deptName) {
-          if (!deptHours[deptName]) deptHours[deptName] = 0;
-          deptHours[deptName] += hours;
-        }
-      });
-    } catch (htmlErr) {
-      console.warn(`[Historical JC] HTML parse error:`, htmlErr.message);
+    // 部署コードを抽出
+    const deptMatch = staffCell.match(/(\d{5})\s/);
+    if (!deptMatch) continue;
+
+    const deptCode = deptMatch[1];
+    const storeName = storeDeptMap[deptCode];
+    if (!storeName) continue;
+
+    const status = $work(cells[2]).text().trim();
+    const workTimeText = $work(cells[8]).text().trim();
+    const breakTimeText = $work(cells[9]).text().trim();
+
+    const workMinutes = parseJapaneseTime(workTimeText);
+    const breakMinutes = parseJapaneseTime(breakTimeText);
+    const netMinutes = Math.max(0, workMinutes - breakMinutes);
+    const netHours = parseFloat((netMinutes / 60).toFixed(2));
+
+    if (status === '勤務中' || status === '退勤済み') {
+      // 店舗に分類
+      if (TEMPOVISOR_STORE_CODES[storeName]) {
+        if (!stores[storeName]) stores[storeName] = 0;
+        stores[storeName] += netHours;
+      }
+      // 部署に分類
+      if (DEPT_CATEGORY_MAP[storeName]) {
+        if (!departments[storeName]) departments[storeName] = 0;
+        departments[storeName] += netHours;
+      }
     }
   }
 
-  console.log(`[Historical JC] Store hours:`, JSON.stringify(storeHours));
-  console.log(`[Historical JC] Dept hours:`, JSON.stringify(deptHours));
-  return { stores: storeHours, departments: deptHours };
+  return { stores, departments };
+}
+
+function parseJapaneseTime(timeText) {
+  if (!timeText || timeText === '-') return 0;
+
+  const hoursMatch = timeText.match(/(\d+)時間/);
+  const minutesMatch = timeText.match(/(\d+)分/);
+
+  const hours = hoursMatch ? parseInt(hoursMatch[1]) : 0;
+  const minutes = minutesMatch ? parseInt(minutesMatch[1]) : 0;
+
+  if (!hoursMatch && !minutesMatch) {
+    const colonMatch = timeText.match(/(\d+):(\d+)/);
+    if (colonMatch) {
+      return parseInt(colonMatch[1]) * 60 + parseInt(colonMatch[2]);
+    }
+  }
+
+  return hours * 60 + minutes;
 }
 
 // ===== ユーティリティ =====
