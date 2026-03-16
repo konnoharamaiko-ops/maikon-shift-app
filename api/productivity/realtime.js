@@ -823,10 +823,17 @@ function buildDepartmentData(storeEmployees) {
     '鶴橋工房': 'manufacturing_kagaya',
   };
 
+  // 店舗名セット（二重表示防止用）
+  const STORE_NAME_SET = new Set([
+    '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
+    '心斎橋店', 'かがや店', '駅丸', '北摂店', '堺東店',
+    'イオン松原店', 'イオン守口店', '美和堂福島店'
+  ]);
+
   storeEmployees.forEach(emp => {
     let deptKey = null;
 
-    // 優先1: アプリ内所属設定（app_affiliation）
+    // 優先1: アプリ内所属設定（app_affiliation）→ 明示的に部署に所属
     const affiliation = emp.app_affiliation;
     const affiliationStore = emp.app_affiliation_store;
     if (affiliation) {
@@ -841,8 +848,13 @@ function buildDepartmentData(storeEmployees) {
       }
     }
 
+    // 打刻場所が店舗の場合、dept_codeフォールバックをスキップ（二重表示防止）
+    // アプリ内所属設定がある場合はそちらを優先するので、ここでは未設定時のみ判定
+    const isAtStore = emp.store_name && STORE_NAME_SET.has(emp.store_name);
+
     // 優先2: ジョブカンの部署コード（dept_code）からフォールバック
-    if (!deptKey && emp.dept_code) {
+    // ただし、打刻場所が店舗の場合はスキップ（店舗に出勤しているのに部署にも表示される問題を防止）
+    if (!deptKey && emp.dept_code && !isAtStore) {
       deptKey = DEPT_CODE_TO_KEY[emp.dept_code] || null;
     }
 
