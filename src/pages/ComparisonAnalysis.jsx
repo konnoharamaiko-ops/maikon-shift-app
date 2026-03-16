@@ -360,8 +360,33 @@ function StaffSettingsPanel({ onClose }) {
       .then(data => {
         if (data.staff_master && data.staff_master.length > 0) {
           setStaffList(data.staff_master);
+          setLoading(false);
+        } else {
+          // StaffMasterが空の場合、リアルタイムAPIの通常レスポンスからスタッフリストを構築
+          fetch('/api/productivity/realtime')
+            .then(r => r.json())
+            .then(rtData => {
+              if (rtData.employees && rtData.employees.length > 0) {
+                const uniqueStaff = [];
+                const seen = new Set();
+                rtData.employees.forEach(emp => {
+                  if (!seen.has(emp.name)) {
+                    seen.add(emp.name);
+                    uniqueStaff.push({
+                      id: `rt_${emp.name.replace(/\s/g, '_')}`,
+                      staff_name: emp.name,
+                      dept_code: emp.dept_code || '',
+                      store_name: emp.store_name || '',
+                      staff_type: emp.staff_type || '',
+                    });
+                  }
+                });
+                setStaffList(uniqueStaff);
+              }
+              setLoading(false);
+            })
+            .catch(() => setLoading(false));
         }
-        setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);
