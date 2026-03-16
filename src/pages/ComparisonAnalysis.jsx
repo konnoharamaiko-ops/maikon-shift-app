@@ -381,12 +381,12 @@ function StaffSettingsPanel({ onClose }) {
     let list = staffList;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      list = list.filter(s => s.name?.toLowerCase().includes(q) || s.dept_name?.toLowerCase().includes(q));
+      list = list.filter(s => s.staff_name?.toLowerCase().includes(q) || s.store_name?.toLowerCase().includes(q) || s.dept_code?.toLowerCase().includes(q));
     }
     if (filterType === 'excluded') {
-      list = list.filter(s => staffSettings[s.employee_id]?.excluded);
+      list = list.filter(s => staffSettings[s.id]?.excluded);
     } else if (filterType === 'moved') {
-      list = list.filter(s => staffSettings[s.employee_id]?.override_store);
+      list = list.filter(s => staffSettings[s.id]?.override_store);
     }
     return list;
   }, [staffList, searchQuery, filterType, staffSettings]);
@@ -476,13 +476,13 @@ function StaffSettingsPanel({ onClose }) {
             ) : (
               <div className="space-y-1">
                 {filteredStaff.map(staff => {
-                  const setting = staffSettings[staff.employee_id] || {};
+                  const setting = staffSettings[staff.id] || {};
                   const isExcluded = !!setting.excluded;
                   const overrideStore = setting.override_store || '';
 
                   return (
                     <div
-                      key={staff.employee_id}
+                      key={staff.id}
                       className={`rounded-lg border p-3 transition-colors ${
                         isExcluded
                           ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800'
@@ -493,11 +493,11 @@ function StaffSettingsPanel({ onClose }) {
                     >
                       <div className="flex items-center justify-between">
                         <div>
-                          <span className="text-sm font-bold">{staff.name}</span>
-                          <span className="text-xs text-muted-foreground ml-2">{staff.dept_name || '不明'}</span>
+                          <span className="text-sm font-bold">{staff.staff_name}</span>
+                          <span className="text-xs text-muted-foreground ml-2">{staff.store_name || staff.dept_code || '不明'}</span>
                         </div>
                         <button
-                          onClick={() => updateSetting(staff.employee_id, 'excluded', !isExcluded)}
+                          onClick={() => updateSetting(staff.id, 'excluded', !isExcluded)}
                           className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold transition-colors ${
                             isExcluded
                               ? 'bg-red-500 text-white'
@@ -514,7 +514,7 @@ function StaffSettingsPanel({ onClose }) {
                           <ArrowRightLeft className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                           <select
                             value={overrideStore}
-                            onChange={e => updateSetting(staff.employee_id, 'override_store', e.target.value)}
+                            onChange={e => updateSetting(staff.id, 'override_store', e.target.value)}
                             className="text-xs border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 bg-white dark:bg-gray-800 flex-1"
                           >
                             <option value="">所属のまま</option>
@@ -561,7 +561,7 @@ export default function ComparisonAnalysis() {
   const [comparisonMonth, setComparisonMonth] = useState('');
 
   // 日別比較用
-  const [selectedDate1, setSelectedDate1] = useState(yesterdayStr);
+  const [selectedDate1, setSelectedDate1] = useState(todayStr);
   const [selectedDate2, setSelectedDate2] = useState('');
   const [dailyCompPreset, setDailyCompPreset] = useState('lastYear'); // 'lastYear' | 'lastWeek' | 'custom'
 
@@ -622,20 +622,22 @@ export default function ComparisonAnalysis() {
   const previousData = comparison[1] || null;
 
   // 店舗別比較データ
+  const emptyMetrics = { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0 };
+
   const storeComparisons = useMemo(() => {
-    if (!currentData || !previousData) return [];
+    if (!currentData) return [];
     return ALL_STORES.map(name => ({
       name,
-      current: currentData.stores[name] || { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0 },
-      previous: previousData.stores[name] || { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0 },
+      current: currentData.stores[name] || { ...emptyMetrics },
+      previous: previousData?.stores?.[name] || { ...emptyMetrics },
     }));
   }, [currentData, previousData]);
 
   // 部署別比較データ
   const deptComparisons = useMemo(() => {
-    if (!currentData || !previousData) return [];
+    if (!currentData) return [];
     const currentDepts = currentData.departments || {};
-    const previousDepts = previousData.departments || {};
+    const previousDepts = previousData?.departments || {};
     const allDeptNames = [...new Set([...Object.keys(currentDepts), ...Object.keys(previousDepts)])];
     return allDeptNames.map(name => ({
       name,
@@ -661,7 +663,7 @@ export default function ComparisonAnalysis() {
 
   // 全店合計
   const totalCurrent = currentData?.total || { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0 };
-  const totalPrevious = previousData?.total || { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0 };
+  const totalPrevious = previousData?.total || { ...emptyMetrics };
 
   // 月選択オプション生成
   const monthOptions = useMemo(() => {
@@ -708,6 +710,10 @@ export default function ComparisonAnalysis() {
       previousLabel = `${y2}/${parseInt(m2)}/${parseInt(d2)}(${dow2})`;
     } else {
       previousLabel = '';
+    }
+    // 比較データにデータなしフラグがある場合は注記を追加
+    if (previousData?._noData) {
+      previousLabel = previousLabel ? `${previousLabel}（データなし）` : '比較データなし';
     }
     compLabel = previousLabel;
   }
@@ -896,7 +902,7 @@ export default function ComparisonAnalysis() {
         )}
 
         {/* データ表示 */}
-        {!isLoading && currentData && previousData && (
+        {!isLoading && currentData && (
           <>
             {/* 期間ラベル */}
             <div className="flex items-center gap-2 text-sm">
@@ -1136,7 +1142,7 @@ export default function ComparisonAnalysis() {
         )}
 
         {/* データなし */}
-        {!isLoading && !error && (!currentData || !previousData) && (
+        {!isLoading && !error && !currentData && (
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
             <BarChart3 className="h-16 w-16 text-gray-300 mx-auto mb-4" />
             <p className="text-lg font-bold text-gray-600 dark:text-gray-400">データを取得中...</p>

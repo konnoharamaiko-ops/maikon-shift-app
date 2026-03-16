@@ -41,7 +41,7 @@ const DEPT_CATEGORIES = {
 };
 
 export const config = {
-  maxDuration: 15,
+  maxDuration: 45,
 };
 
 /**
@@ -253,17 +253,63 @@ async function handleDailyComparison(req, res, supabaseUrl, supabaseKey, date1, 
     dates.push(date2);
   }
 
+  // 当日（JST）を判定
+  const today = getTodayJST();
+  const todayStr = today.dateStr;
+
   const comparison = [];
+  let usedRealtime = false;
 
   for (const date of dates) {
-    const dayData = await fetchDayData(supabaseUrl, supabaseKey, date);
+    let dayData = await fetchDayData(supabaseUrl, supabaseKey, date);
+    
+    // 当日かつ稼働時間が0の場合、リアルタイムAPIから稼働時間を取得して補完
+    // 昨日以前のデータはバックフィルで修正されるので、当日のみフォールバック
+    if (date === todayStr && (dayData.total.work_hours === 0 || dayData.total.sales === 0)) {
+      try {
+        const rtData = await fetchRealtimeForComparison();
+        if (rtData) {
+          dayData = mergeRealtimeIntoDayData(dayData, rtData);
+          usedRealtime = true;
+        }
+      } catch (e) {
+        console.error('[DailyComparison] Realtime fallback error:', e.message);
+      }
+    }
+    
     comparison.push(dayData);
+  }
+
+  // 比較データが1件しかない場合（前年同日のデータがない場合）、空のデフォルトデータを追加
+  if (comparison.length === 1 && dates.length >= 2) {
+    const missingDate = dates[1];
+    const days = ['日', '月', '火', '水', '木', '金', '土'];
+    const [y, m, d] = missingDate.split('-').map(Number);
+    const dateObj = new Date(Date.UTC(y, m - 1, d));
+    const dayOfWeek = days[dateObj.getUTCDay()];
+    
+    const emptyStores = {};
+    for (const storeName of Object.keys(TEMPOVISOR_STORE_CODES)) {
+      emptyStores[storeName] = { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0, attended_employees: 0 };
+    }
+    const emptyDepts = {};
+    for (const [deptName, info] of Object.entries(DEPT_CATEGORIES)) {
+      emptyDepts[deptName] = { label: info.label, type: info.type, work_hours: 0, attended_employees: 0, sales: 0, customers: 0, productivity: 0 };
+    }
+    comparison.push({
+      date: missingDate,
+      dayOfWeek,
+      stores: emptyStores,
+      total: { sales: 0, customers: 0, unit_price: 0, work_hours: 0, productivity: 0 },
+      departments: emptyDepts,
+      _noData: true,
+    });
   }
 
   return res.status(200).json({
     comparison,
     mode: 'daily',
-    source: 'supabase_cache',
+    source: usedRealtime ? 'supabase_cache+realtime' : 'supabase_cache',
     timestamp: new Date().toISOString(),
   });
 }
@@ -347,6 +393,168 @@ async function fetchDayData(supabaseUrl, supabaseKey, date) {
   const dayOfWeek = days[dateObj.getUTCDay()];
 
   return { date, dayOfWeek, stores, total, departments };
+}
+
+// ===== リアルタイムフォールバック（当日稼働時間補完） =====
+
+async function fetchRealtimeForComparison() {
+  // 内部APIを直接呼ぶのではなく、ジョブカンの勤務状況ページから稼働時間を取得
+  const jcCompany = process.env.JOBCAN_COMPANY_ID;
+  const jcUser = process.env.JOBCAN_LOGIN_ID;
+  const jcPass = process.env.JOBCAN_PASSWORD;
+
+  if (!jcCompany || !jcUser || !jcPass) return null;
+
+  // ジョブカンログイン
+  const loginUrl = 'https://ssl.jobcan.jp/client/';
+  const loginRes = await fetch(loginUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+    body: new URLSearchParams({
+      client_login_id: jcCompany,
+      client_manager_login_id: jcUser,
+      client_login_password: jcPass,
+      login_type: 'pc',
+      url: 'https://ssl.jobcan.jp/client/',
+    }).toString(),
+    redirect: 'manual',
+  });
+
+  const setCookies = loginRes.headers.getSetCookie ? loginRes.headers.getSetCookie() : [];
+  const rawCookies = loginRes.headers.raw ? loginRes.headers.raw()['set-cookie'] || [] : setCookies;
+  const cookies = rawCookies.map(c => c.split(';')[0]).join('; ');
+
+  if (!cookies) return null;
+
+  // 勤務状況ページ取得
+  const workUrl = 'https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=300&retirement=work';
+  const workRes = await fetch(workUrl, {
+    headers: {
+      'Cookie': cookies,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://ssl.jobcan.jp/client/',
+    },
+    redirect: 'follow',
+  });
+
+  const html = await workRes.text();
+
+  // 部署コードと勤務時間を抽出
+  const storeHours = {};
+  const deptHours = {};
+
+  // 簡易パーサー（テーブルからスタッフ情報を抽出）
+  const deptCodeRegex = /(\d{5})\s/g;
+  const timeRegex = /(\d{1,2}):(\d{2})/g;
+  const rows = html.split('<tr').slice(1);
+
+  for (const row of rows) {
+    const deptMatch = row.match(/(\d{5})\s/);
+    if (!deptMatch) continue;
+
+    const deptCode = deptMatch[1];
+    const storeName = STORE_DEPT_MAP_FULL[deptCode];
+    if (!storeName) continue;
+
+    // 勤務中または退勤済みかチェック
+    if (!row.includes('勤務中') && !row.includes('退勤済み')) continue;
+
+    // 時間を抽出（簡易的に出勤・退勤時刻から計算）
+    const times = [];
+    let m;
+    const tempRow = row.replace(/<[^>]+>/g, ' ');
+    const timeMatches = tempRow.match(/\d{1,2}:\d{2}/g);
+    if (timeMatches && timeMatches.length >= 1) {
+      const clockIn = timeMatches[0];
+      const [inH, inM] = clockIn.split(':').map(Number);
+      const inMinutes = inH * 60 + inM;
+
+      let outMinutes;
+      if (timeMatches.length >= 2 && !row.includes('勤務中')) {
+        const clockOut = timeMatches[1];
+        const [outH, outM] = clockOut.split(':').map(Number);
+        outMinutes = outH * 60 + outM;
+      } else {
+        // 勤務中の場合は現在時刻まで
+        const nowJST = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        outMinutes = nowJST.getUTCHours() * 60 + nowJST.getUTCMinutes();
+      }
+
+      const totalMinutes = Math.max(0, outMinutes - inMinutes);
+      const breakMin = totalMinutes >= 480 ? 60 : (totalMinutes >= 360 ? 45 : 0);
+      const netHours = Math.max(0, (totalMinutes - breakMin)) / 60;
+
+      if (TEMPOVISOR_STORE_CODES[storeName]) {
+        storeHours[storeName] = (storeHours[storeName] || 0) + netHours;
+      }
+      if (DEPT_CATEGORIES[storeName]) {
+        deptHours[storeName] = (deptHours[storeName] || 0) + netHours;
+      }
+    }
+  }
+
+  return { storeHours, deptHours, storeSales: {} };
+}
+
+// 部署コードマッピング（リアルタイムフォールバック用）
+const STORE_DEPT_MAP_FULL = {
+  '10110': '田辺店', '10400': '大正店', '10500': '天下茶屋店',
+  '10600': '天王寺店', '10800': 'アベノ店', '10900': '心斎橋店',
+  '11010': 'かがや店', '11200': '駅丸', '12000': '北摂店',
+  '12200': '堺東店', '12300': 'イオン松原店', '12400': 'イオン守口店',
+  '20000': '美和堂福島店',
+  '11021': '企画部', '11022': '通販部', '11025': '特販部',
+  '11012': 'かがや工場', '12010': '北摂工場', '11700': '都島工場', '11900': '鶴橋工房',
+};
+
+function mergeRealtimeIntoDayData(dayData, rtData) {
+  const { storeHours, deptHours, storeSales } = rtData;
+  let totalHours = 0;
+  let totalSales = 0;
+  let totalCustomers = 0;
+  // 店舗の稼働時間を更新
+  for (const storeName of Object.keys(TEMPOVISOR_STORE_CODES)) {
+    const hours = Math.round((storeHours[storeName] || 0) * 10) / 10;
+    if (hours > 0) {
+      dayData.stores[storeName].work_hours = hours;
+    }
+    // 売上が0の場合、TempoVisorからの売上を使用
+    if (dayData.stores[storeName].sales === 0 && storeSales && storeSales[storeName]) {
+      dayData.stores[storeName].sales = storeSales[storeName].sales || 0;
+      dayData.stores[storeName].customers = storeSales[storeName].customers || 0;
+      if (dayData.stores[storeName].customers > 0) {
+        dayData.stores[storeName].unit_price = Math.round(dayData.stores[storeName].sales / dayData.stores[storeName].customers);
+      }
+    }
+    // 人時生産性を再計算
+    const storeHrs = dayData.stores[storeName].work_hours;
+    const storeSls = dayData.stores[storeName].sales;
+    dayData.stores[storeName].productivity = storeHrs > 0 ? Math.round(storeSls / storeHrs) : 0;
+    totalHours += storeHrs;
+    totalSales += storeSls;
+    totalCustomers += dayData.stores[storeName].customers;
+  }
+  // 合計を再計算
+  dayData.total.work_hours = Math.round(totalHours * 10) / 10;
+  dayData.total.sales = totalSales;
+  dayData.total.customers = totalCustomers;
+  dayData.total.unit_price = totalCustomers > 0 ? Math.round(totalSales / totalCustomers) : 0;
+  dayData.total.productivity = totalHours > 0
+    ? Math.round(totalSales / totalHours)
+    : 0;
+
+  // 部署の稼働時間を更新
+  for (const [deptName, info] of Object.entries(DEPT_CATEGORIES)) {
+    const hours = Math.round((deptHours[deptName] || 0) * 10) / 10;
+    if (hours > 0 && dayData.departments[deptName]) {
+      dayData.departments[deptName].work_hours = hours;
+    }
+  }
+
+  return dayData;
 }
 
 // ===== Supabase読み取り =====

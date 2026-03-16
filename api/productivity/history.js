@@ -142,8 +142,8 @@ export default async function handler(req, res) {
       const todayTotalSales = todayRecords.reduce((s, r) => s + (r.sales || 0), 0);
       const todayTotalHours = todayRecords.reduce((s, r) => s + (parseFloat(r.work_hours) || 0), 0);
 
-      // 当日のキャッシュデータが空または全て0の場合、リアルタイム取得
-      if (todayRecords.length === 0 || (todayTotalSales === 0 && todayTotalHours === 0)) {
+      // 当日のキャッシュデータが空、または稼働時間が0の場合、リアルタイム取得
+      if (todayRecords.length === 0 || todayTotalHours === 0) {
         console.log(`[History] 当日(${todayJST})のキャッシュが空のため、リアルタイム取得を試行`);
         try {
           realtimeData = await fetchRealtimeData(todayJST);
@@ -162,25 +162,32 @@ export default async function handler(req, res) {
         const key = `${date}_${storeName}`;
         const record = storeMap[key];
 
-        // 当日かつリアルタイムデータがある場合はそちらを使用
-        if (date === todayJST && realtimeData && realtimeData.stores[storeName]) {
-          const rt = realtimeData.stores[storeName];
+        // 当日かつリアルタイムデータがある場合、キャッシュ売上とリアルタイム稼働時間をマージ
+        if (date === todayJST && realtimeData) {
+          const rt = realtimeData.stores[storeName] || {};
+          // キャッシュに売上データがあればそちらを優先、なければリアルタイムを使用
+          const cacheSales = record?.sales || 0;
+          const cacheCustomers = record?.customers || 0;
+          const finalSales = cacheSales > 0 ? cacheSales : (rt.sales || 0);
+          const finalCustomers = cacheCustomers > 0 ? cacheCustomers : (rt.customers || 0);
+          const finalHours = rt.workHours || (record ? parseFloat(record.work_hours) : 0) || 0;
+          const finalProductivity = finalHours > 0 ? Math.round(finalSales / finalHours) : 0;
           allData.push({
             tenpo_name: storeName,
             code: TEMPOVISOR_STORE_CODES[storeName] || '',
             wk_date: date,
             dayweek: getDayOfWeek(date),
-            kingaku: String(rt.sales || 0),
-            customers: rt.customers || 0,
+            kingaku: String(finalSales),
+            customers: finalCustomers,
             monthly_sales: 0,
-            wk_cnt: rt.employees || 0,
+            wk_cnt: rt.employees || (record?.attended_employees || 0),
             working_now: 0,
             total_employees: 0,
-            wk_tm: rt.workHours || 0,
-            spd: String(rt.productivity || 0),
+            wk_tm: finalHours,
+            spd: String(finalProductivity),
             update_time: new Date().toISOString(),
             employees: [],
-            source: 'realtime',
+            source: 'realtime+cache',
           });
         } else {
           allData.push({
