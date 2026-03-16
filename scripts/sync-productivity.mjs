@@ -4,6 +4,9 @@
  * GitHub Actionsから毎日実行され、TempoVisor（売上・客数）とジョブカン（勤怠）から
  * データを1日ずつ順次取得し、SupabaseのDailyProductivityテーブルに保存する。
  *
+ * 【重要】ジョブカンの勤務状況ページ（work-state/show）はsearch_dateを無視して
+ * 常に「今日」のデータを返すため、個人出勤簿（/client/adit）から日別労働時間を取得する。
+ *
  * 使用方法:
  *   node scripts/sync-productivity.mjs                    # 当日分を同期
  *   node scripts/sync-productivity.mjs --date 2025-03-01  # 指定日を同期
@@ -54,6 +57,9 @@ const DEPT_CATEGORIES = {
   '都島工場': 'manufacturing', '鶴橋工房': 'manufacturing',
 };
 
+// 並列リクエスト数の制限
+const CONCURRENCY_LIMIT = 5;
+
 // ============================================================
 // メイン処理
 // ============================================================
@@ -103,6 +109,11 @@ async function main() {
   const jcCookies = await loginJobcan(config.jobcanCompany, config.jobcanUser, config.jobcanPass);
   console.log('[Sync] ジョブカンログイン成功');
 
+  // スタッフ一覧を取得（1回だけ - 全日付で共通）
+  console.log('[Sync] スタッフ一覧取得中...');
+  const staffList = await fetchStaffList(jcCookies);
+  console.log(`[Sync] スタッフ ${staffList.length}名 取得`);
+
   console.log('[Sync] TempoVisorにログイン中...');
   const tvSession = await loginTempoVisor(config.tvUser, config.tvPass);
   console.log('[Sync] TempoVisorログイン成功');
@@ -115,9 +126,9 @@ async function main() {
     try {
       console.log(`\n[Sync] === ${date} のデータ取得開始 ===`);
 
-      // ジョブカン勤怠データ取得
-      console.log(`[Sync] ジョブカン勤怠取得中... (${date})`);
-      const attendance = await fetchJobcanAttendance(jcCookies, date);
+      // ジョブカン勤怠データ取得（個人出勤簿から日別労働時間を取得）
+      console.log(`[Sync] ジョブカン勤怠取得中... (${date}, ${staffList.length}名)`);
+      const attendance = await fetchJobcanDailyAttendance(jcCookies, staffList, date);
 
       // TempoVisor売上データ取得（売上 + 客数を順次）
       const tvDate = date.replace(/-/g, '/');
@@ -178,7 +189,7 @@ async function main() {
 
       // レート制限対策: 日付間に少し待つ
       if (dates.length > 1) {
-        await sleep(1000);
+        await sleep(2000);
       }
     } catch (err) {
       console.error(`[Sync] ${date} エラー: ${err.message}`);
@@ -362,8 +373,12 @@ async function loginJobcan(companyId, loginId, password) {
   return allCookies;
 }
 
-async function fetchJobcanAttendance(cookies, date) {
-  const workUrl = `https://ssl.jobcan.jp/client/work-state/show/?submit_type=day&searching=1&list_type=normal&number_par_page=300&retirement=work&search_date=${date}`;
+/**
+ * 勤務状況ページからスタッフ一覧（ID + 部署コード）を取得
+ * ※ このページは日付に関わらず在籍者一覧を返すので、1回だけ呼べばよい
+ */
+async function fetchStaffList(cookies) {
+  const workUrl = 'https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=300&retirement=work';
 
   const workRes = await fetch(workUrl, {
     headers: {
@@ -377,9 +392,6 @@ async function fetchJobcanAttendance(cookies, date) {
   const workHtml = await workRes.text();
   const $work = cheerio.load(workHtml);
 
-  const stores = {};
-  const departments = {};
-
   let targetTable = null;
   $work('table').each((i, table) => {
     const headerText = $work(table).find('tr').first().text();
@@ -389,10 +401,10 @@ async function fetchJobcanAttendance(cookies, date) {
   });
 
   if (!targetTable) {
-    console.warn(`[Sync] ジョブカン: 勤務状況テーブルが見つかりません (${date})`);
-    return { stores, departments };
+    throw new Error('ジョブカン: 勤務状況テーブルが見つかりません');
   }
 
+  const staffList = [];
   const rows = $work(targetTable).find('tr').toArray();
 
   for (let i = 1; i < rows.length; i++) {
@@ -409,27 +421,67 @@ async function fetchJobcanAttendance(cookies, date) {
     const name = STORE_DEPT_MAP[deptCode];
     if (!name) continue;
 
-    const status = $work(cells[2]).text().trim();
-    const workTimeText = $work(cells[8]).text().trim();
-    const breakTimeText = $work(cells[9]).text().trim();
+    // スタッフIDを取得
+    const staffLink = $work(cells[0]).find('a').attr('href') || '';
+    const staffIdMatch = staffLink.match(/employee_id=(\d+)/);
+    if (!staffIdMatch) continue;
 
-    const workMinutes = parseJapaneseTime(workTimeText);
-    const breakMinutes = parseJapaneseTime(breakTimeText);
-    const netHours = Math.max(0, (workMinutes - breakMinutes)) / 60;
+    staffList.push({
+      employeeId: staffIdMatch[1],
+      deptCode,
+      storeName: name,
+      staffName: staffCell.replace(/\s+/g, ' ').substring(0, 30),
+    });
+  }
 
-    if (status === '勤務中' || status === '退勤済み') {
-      // 店舗に分類
-      if (TEMPOVISOR_STORE_CODES[name]) {
-        if (!stores[name]) stores[name] = { hours: 0, employees: 0 };
-        stores[name].hours += netHours;
-        stores[name].employees++;
+  return staffList;
+}
+
+/**
+ * 個人出勤簿（/client/adit）から日別の労働時間を取得
+ * 各スタッフのaditページにアクセスして、その日の労働時間・休憩時間を取得する
+ */
+async function fetchJobcanDailyAttendance(cookies, staffList, date) {
+  const [year, month, day] = date.split('-');
+  const stores = {};
+  const departments = {};
+
+  // 並列リクエスト（CONCURRENCY_LIMIT同時）
+  const results = [];
+  for (let i = 0; i < staffList.length; i += CONCURRENCY_LIMIT) {
+    const batch = staffList.slice(i, i + CONCURRENCY_LIMIT);
+    const batchResults = await Promise.allSettled(
+      batch.map(staff => fetchIndividualAdit(cookies, staff.employeeId, year, parseInt(month), parseInt(day)))
+    );
+
+    for (let j = 0; j < batch.length; j++) {
+      const staff = batch[j];
+      const result = batchResults[j];
+
+      if (result.status === 'fulfilled' && result.value) {
+        const { workMinutes, breakMinutes } = result.value;
+        const netHours = Math.max(0, (workMinutes - breakMinutes)) / 60;
+
+        if (netHours > 0) {
+          // 店舗に分類
+          if (TEMPOVISOR_STORE_CODES[staff.storeName]) {
+            if (!stores[staff.storeName]) stores[staff.storeName] = { hours: 0, employees: 0 };
+            stores[staff.storeName].hours += netHours;
+            stores[staff.storeName].employees++;
+          }
+          // 部署に分類
+          if (DEPT_CATEGORIES[staff.storeName]) {
+            if (!departments[staff.storeName]) departments[staff.storeName] = { hours: 0, employees: 0 };
+            departments[staff.storeName].hours += netHours;
+            departments[staff.storeName].employees++;
+          }
+        }
       }
-      // 部署に分類
-      if (DEPT_CATEGORIES[name]) {
-        if (!departments[name]) departments[name] = { hours: 0, employees: 0 };
-        departments[name].hours += netHours;
-        departments[name].employees++;
-      }
+    }
+
+    // バッチ間に少し待つ（レート制限対策）
+    if (i + CONCURRENCY_LIMIT < staffList.length) {
+      await sleep(300);
     }
   }
 
@@ -441,7 +493,67 @@ async function fetchJobcanAttendance(cookies, date) {
     dept.hours = Math.round(dept.hours * 100) / 100;
   }
 
+  const totalStoreHours = Object.values(stores).reduce((s, v) => s + v.hours, 0);
+  const totalDeptHours = Object.values(departments).reduce((s, v) => s + v.hours, 0);
+  const totalStoreEmps = Object.values(stores).reduce((s, v) => s + v.employees, 0);
+  console.log(`[Sync] ジョブカン ${date}: 店舗 ${totalStoreHours.toFixed(1)}h (${totalStoreEmps}名), 部署 ${totalDeptHours.toFixed(1)}h`);
+
   return { stores, departments };
+}
+
+/**
+ * 個人の出勤簿ページから労働時間・休憩時間を取得
+ */
+async function fetchIndividualAdit(cookies, employeeId, year, month, day) {
+  const aditUrl = `https://ssl.jobcan.jp/client/adit?employee_id=${employeeId}&year=${year}&month=${month}&day=${day}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const res = await fetch(aditUrl, {
+      headers: {
+        'Cookie': cookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://ssl.jobcan.jp/client/',
+      },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    // Table 2: 「承認済み打刻の合計」テーブルから労働時間・休憩時間を取得
+    let workMinutes = 0;
+    let breakMinutes = 0;
+
+    $('table').each((i, table) => {
+      const headerText = $(table).find('tr').first().text();
+      if (headerText.includes('承認済み打刻の合計') || headerText.includes('未承認打刻適用後の合計')) {
+        const rows = $(table).find('tr').toArray();
+        for (const row of rows) {
+          const cells = $(row).find('td').toArray();
+          if (cells.length >= 2) {
+            const label = $(cells[0]).text().trim();
+            const value = $(cells[1]).text().trim();
+            if (label === '労働時間') {
+              workMinutes = parseJapaneseTime(value);
+            } else if (label === '休憩時間') {
+              breakMinutes = parseJapaneseTime(value);
+            }
+          }
+        }
+      }
+    });
+
+    return { workMinutes, breakMinutes };
+  } catch (err) {
+    // タイムアウトやネットワークエラーは無視（0として扱う）
+    return { workMinutes: 0, breakMinutes: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ============================================================
@@ -476,10 +588,16 @@ async function upsertToSupabase(supabaseUrl, supabaseKey, tableName, records) {
 
 function getDateRange(startDate, endDate) {
   const dates = [];
-  const current = new Date(startDate + 'T00:00:00+09:00');
+  // タイムゾーンずれを防ぐためJST固定で日付文字列を生成
+  const start = new Date(startDate + 'T00:00:00+09:00');
   const end = new Date(endDate + 'T00:00:00+09:00');
+  const current = new Date(start);
   while (current <= end) {
-    dates.push(current.toISOString().split('T')[0]);
+    // JSTベースで日付文字列を生成（toISOStringはUTCなので使わない）
+    const y = current.getUTCFullYear() + (current.getUTCMonth() === 11 && current.getTimezoneOffset() < 0 ? 0 : 0);
+    const jstTime = new Date(current.getTime() + 9 * 60 * 60 * 1000);
+    const dateStr = `${jstTime.getUTCFullYear()}-${String(jstTime.getUTCMonth() + 1).padStart(2, '0')}-${String(jstTime.getUTCDate()).padStart(2, '0')}`;
+    dates.push(dateStr);
     current.setDate(current.getDate() + 1);
   }
   return dates;

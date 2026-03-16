@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { format, subYears } from 'date-fns';
+import { format, subYears, subDays } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
@@ -8,7 +8,8 @@ import {
   DollarSign, Clock, Users, ChevronDown, ChevronUp,
   Target, Activity, ArrowUpRight, ArrowDownRight, Minus,
   Store, Package, Factory, Briefcase, Truck, FlaskConical,
-  Calendar, ArrowLeft, Layers, ShoppingCart, Lightbulb
+  Calendar, ArrowLeft, Layers, ShoppingCart, Lightbulb,
+  CalendarDays
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -51,6 +52,14 @@ async function fetchComparisonData(month1, month2) {
   return response.json();
 }
 
+async function fetchDailyComparisonData(date1, date2) {
+  let url = `/api/productivity?mode=daily&date1=${date1}`;
+  if (date2) url += `&date2=${date2}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
+  return response.json();
+}
+
 // ===== ユーティリティ =====
 function calcYoY(current, previous) {
   if (!previous || previous === 0) return current > 0 ? 100 : 0;
@@ -83,6 +92,13 @@ function getYoYIcon(pct) {
   if (pct > 0) return ArrowUpRight;
   if (pct < 0) return ArrowDownRight;
   return Minus;
+}
+
+function getDayOfWeekLabel(dateStr) {
+  const days = ['日', '月', '火', '水', '木', '金', '土'];
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return days[date.getDay()];
 }
 
 // ===== カスタムツールチップ =====
@@ -122,7 +138,7 @@ function SkeletonCard() {
 }
 
 // ===== サマリーカード =====
-function YoYMetricCard({ title, currentValue, previousValue, unit, icon: Icon, color, format: formatFn, index }) {
+function YoYMetricCard({ title, currentValue, previousValue, unit, icon: Icon, color, format: formatFn, index, compLabel }) {
   const yoy = calcYoY(currentValue, previousValue);
   const YoYIcon = getYoYIcon(yoy);
 
@@ -149,7 +165,7 @@ function YoYMetricCard({ title, currentValue, previousValue, unit, icon: Icon, c
           {formatYoY(yoy)}
         </span>
         <span className="text-xs text-muted-foreground">
-          前年: {formatFn ? formatFn(previousValue) : previousValue.toLocaleString()}{unit || ''}
+          {compLabel || '前年'}: {formatFn ? formatFn(previousValue) : previousValue.toLocaleString()}{unit || ''}
         </span>
       </div>
     </motion.div>
@@ -157,7 +173,7 @@ function YoYMetricCard({ title, currentValue, previousValue, unit, icon: Icon, c
 }
 
 // ===== 店舗別比較行 =====
-function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle }) {
+function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle, compLabel }) {
   const salesYoY = calcYoY(current.sales, previous.sales);
   const customersYoY = calcYoY(current.customers, previous.customers);
   const hoursYoY = calcYoY(current.work_hours, previous.work_hours);
@@ -182,12 +198,10 @@ function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle
             <span className="font-bold text-sm">{storeName}</span>
           </div>
           <div className="flex items-center gap-3">
-            {/* 売上昨対 */}
             <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-bold ${getYoYBg(salesYoY)} ${getYoYColor(salesYoY)}`}>
               <SalesIcon className="h-3 w-3" />
               売上{formatYoY(salesYoY)}
             </span>
-            {/* 生産性昨対 */}
             <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-bold ${getYoYBg(prodYoY)} ${getYoYColor(prodYoY)}`}>
               <ProdIcon className="h-3 w-3" />
               生産性{formatYoY(prodYoY)}
@@ -196,10 +210,9 @@ function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle
           </div>
         </div>
 
-        {/* コンパクト表示 */}
         <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
           <div>
-            <span className="text-muted-foreground">今年売上: </span>
+            <span className="text-muted-foreground">売上: </span>
             <span className="font-semibold">¥{current.sales.toLocaleString()}</span>
           </div>
           <div>
@@ -209,7 +222,6 @@ function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle
         </div>
       </div>
 
-      {/* 展開詳細 */}
       <AnimatePresence>
         {isExpanded && (
           <motion.div
@@ -224,9 +236,9 @@ function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-gray-700">
                     <th className="text-left py-1.5 px-1 font-semibold text-muted-foreground">指標</th>
-                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">今年</th>
-                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">前年</th>
-                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">昨対比</th>
+                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">対象</th>
+                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">{compLabel || '比較'}</th>
+                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">比率</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -271,7 +283,7 @@ function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle
 }
 
 // ===== 部署別比較カード =====
-function DeptComparisonCard({ deptName, current, previous }) {
+function DeptComparisonCard({ deptName, current, previous, compLabel }) {
   const hoursYoY = calcYoY(current.work_hours, previous.work_hours);
   const HoursIcon = getYoYIcon(hoursYoY);
   const IconComp = DEPT_ICONS[deptName] || Briefcase;
@@ -298,17 +310,14 @@ function DeptComparisonCard({ deptName, current, previous }) {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <p className="text-xs text-muted-foreground">今年稼働時間</p>
+          <p className="text-xs text-muted-foreground">対象 稼働時間</p>
           <p className="text-lg font-bold">{current.work_hours.toFixed(1)}<span className="text-xs font-normal ml-0.5">h</span></p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">前年稼働時間</p>
+          <p className="text-xs text-muted-foreground">{compLabel || '比較'} 稼働時間</p>
           <p className="text-lg font-bold text-muted-foreground">{previous.work_hours.toFixed(1)}<span className="text-xs font-normal ml-0.5">h</span></p>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground mt-2">
-        ※ 売上データは手入力対応（ジョブカンから勤務時間のみ自動取得）
-      </p>
     </motion.div>
   );
 }
@@ -317,30 +326,73 @@ function DeptComparisonCard({ deptName, current, previous }) {
 export default function ComparisonAnalysis() {
   const now = new Date();
   const currentMonth = format(now, 'yyyy-MM');
-  const lastYearMonth = format(subYears(now, 1), 'yyyy-MM');
+  const todayStr = format(now, 'yyyy-MM-dd');
+  const yesterdayStr = format(subDays(now, 1), 'yyyy-MM-dd');
 
+  // モード: 'monthly' or 'daily'
+  const [compMode, setCompMode] = useState('monthly');
+
+  // 月別比較用
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [comparisonMonth, setComparisonMonth] = useState('');
-  const [activeTab, setActiveTab] = useState('store'); // 'store' | 'department'
-  const [chartMetric, setChartMetric] = useState('sales'); // 'sales' | 'customers' | 'productivity' | 'work_hours'
+
+  // 日別比較用
+  const [selectedDate1, setSelectedDate1] = useState(yesterdayStr);
+  const [selectedDate2, setSelectedDate2] = useState('');
+  const [dailyCompPreset, setDailyCompPreset] = useState('lastYear'); // 'lastYear' | 'lastWeek' | 'custom'
+
+  // 共通
+  const [activeTab, setActiveTab] = useState('store');
+  const [chartMetric, setChartMetric] = useState('sales');
   const [expandedStore, setExpandedStore] = useState(null);
 
-  // 比較対象月の計算
+  // 月別: 比較対象月の計算
   const effectiveCompMonth = useMemo(() => {
     if (comparisonMonth) return comparisonMonth;
     const [y, m] = selectedMonth.split('-').map(Number);
     return `${y - 1}-${String(m).padStart(2, '0')}`;
   }, [selectedMonth, comparisonMonth]);
 
-  // データ取得
-  const { data: apiResult, isLoading, error, refetch } = useQuery({
-    queryKey: ['comparison-analysis', selectedMonth, effectiveCompMonth],
+  // 日別: 比較対象日の計算
+  const effectiveCompDate = useMemo(() => {
+    if (selectedDate2) return selectedDate2;
+    const [y, m, d] = selectedDate1.split('-').map(Number);
+    if (dailyCompPreset === 'lastYear') {
+      return `${y - 1}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+    if (dailyCompPreset === 'lastWeek') {
+      const date = new Date(y, m - 1, d - 7);
+      return format(date, 'yyyy-MM-dd');
+    }
+    return '';
+  }, [selectedDate1, selectedDate2, dailyCompPreset]);
+
+  // 月別データ取得
+  const { data: monthlyResult, isLoading: monthlyLoading, error: monthlyError, refetch: monthlyRefetch } = useQuery({
+    queryKey: ['comparison-monthly', selectedMonth, effectiveCompMonth],
     queryFn: () => fetchComparisonData(selectedMonth, effectiveCompMonth),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    enabled: compMode === 'monthly',
   });
 
-  const comparison = apiResult?.comparison || [];
+  // 日別データ取得
+  const { data: dailyResult, isLoading: dailyLoading, error: dailyError, refetch: dailyRefetch } = useQuery({
+    queryKey: ['comparison-daily', selectedDate1, effectiveCompDate],
+    queryFn: () => fetchDailyComparisonData(selectedDate1, effectiveCompDate),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    enabled: compMode === 'daily',
+  });
+
+  const isLoading = compMode === 'monthly' ? monthlyLoading : dailyLoading;
+  const error = compMode === 'monthly' ? monthlyError : dailyError;
+  const refetch = compMode === 'monthly' ? monthlyRefetch : dailyRefetch;
+
+  // 比較データの取得
+  const comparison = compMode === 'monthly'
+    ? (monthlyResult?.comparison || [])
+    : (dailyResult?.comparison || []);
   const currentData = comparison[0] || null;
   const previousData = comparison[1] || null;
 
@@ -371,11 +423,11 @@ export default function ComparisonAnalysis() {
   const chartData = useMemo(() => {
     return storeComparisons.map(s => ({
       name: s.name.replace('店', '').replace('イオン', 'ｲｵﾝ'),
-      今年: chartMetric === 'sales' ? s.current.sales :
+      対象: chartMetric === 'sales' ? s.current.sales :
             chartMetric === 'customers' ? s.current.customers :
             chartMetric === 'productivity' ? s.current.productivity :
             s.current.work_hours,
-      前年: chartMetric === 'sales' ? s.previous.sales :
+      比較: chartMetric === 'sales' ? s.previous.sales :
             chartMetric === 'customers' ? s.previous.customers :
             chartMetric === 'productivity' ? s.previous.productivity :
             s.previous.work_hours,
@@ -389,7 +441,7 @@ export default function ComparisonAnalysis() {
   // 月選択オプション生成
   const monthOptions = useMemo(() => {
     const options = [];
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 36; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       options.push(format(d, 'yyyy-MM'));
     }
@@ -403,10 +455,37 @@ export default function ComparisonAnalysis() {
     work_hours: { label: '稼働時間', unit: 'h', formatter: v => `${v.toFixed(0)}h` },
   };
 
-  const [y1, m1] = selectedMonth.split('-');
-  const [y2, m2] = effectiveCompMonth.split('-');
-  const currentLabel = `${y1}年${parseInt(m1)}月`;
-  const previousLabel = `${y2}年${parseInt(m2)}月`;
+  // ラベル生成
+  let currentLabel, previousLabel, compLabel;
+  if (compMode === 'monthly') {
+    const [y1, m1] = selectedMonth.split('-');
+    const [y2, m2] = effectiveCompMonth.split('-');
+    currentLabel = `${y1}年${parseInt(m1)}月`;
+    previousLabel = `${y2}年${parseInt(m2)}月`;
+    compLabel = previousLabel;
+  } else {
+    const dow1 = getDayOfWeekLabel(selectedDate1);
+    const dow2 = effectiveCompDate ? getDayOfWeekLabel(effectiveCompDate) : '';
+    const [y1, m1, d1] = selectedDate1.split('-');
+    currentLabel = `${y1}/${parseInt(m1)}/${parseInt(d1)}(${dow1})`;
+    if (effectiveCompDate) {
+      const [y2, m2, d2] = effectiveCompDate.split('-');
+      previousLabel = `${y2}/${parseInt(m2)}/${parseInt(d2)}(${dow2})`;
+    } else {
+      previousLabel = '';
+    }
+    compLabel = previousLabel;
+  }
+
+  // 日別比較用のチャートフォーマッター（日単位は万単位にしない）
+  const dailyChartFormatters = {
+    sales: { label: '売上', unit: '円', formatter: v => `¥${v.toLocaleString()}` },
+    customers: { label: '客数', unit: '人', formatter: v => `${v}人` },
+    productivity: { label: '人時生産性', unit: '円/h', formatter: v => `¥${v.toLocaleString()}` },
+    work_hours: { label: '稼働時間', unit: 'h', formatter: v => `${v.toFixed(1)}h` },
+  };
+
+  const activeFormatters = compMode === 'daily' ? dailyChartFormatters : chartMetricLabels;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-950 dark:to-gray-900">
@@ -423,7 +502,7 @@ export default function ComparisonAnalysis() {
                   <BarChart3 className="h-5 w-5 text-indigo-600" />
                   比較分析
                 </h1>
-                <p className="text-xs text-muted-foreground">昨対比較 - 売上・客数・稼働時間・人時生産性</p>
+                <p className="text-xs text-muted-foreground">月別・日別比較 - 売上・客数・稼働時間・人時生産性</p>
               </div>
             </div>
             <Button
@@ -438,34 +517,107 @@ export default function ComparisonAnalysis() {
             </Button>
           </div>
 
-          {/* 月選択 */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              >
-                {monthOptions.map(m => (
-                  <option key={m} value={m}>{m.replace('-', '年') + '月'}</option>
-                ))}
-              </select>
-            </div>
-            <span className="text-xs text-muted-foreground">vs</span>
-            <div className="flex items-center gap-2">
-              <select
-                value={comparisonMonth}
-                onChange={(e) => setComparisonMonth(e.target.value)}
-                className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              >
-                <option value="">前年同月（自動）</option>
-                {monthOptions.map(m => (
-                  <option key={m} value={m}>{m.replace('-', '年') + '月'}</option>
-                ))}
-              </select>
-            </div>
+          {/* モード切替 */}
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => setCompMode('monthly')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${
+                compMode === 'monthly'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+              }`}
+            >
+              <Calendar className="h-3.5 w-3.5" />
+              月別比較
+            </button>
+            <button
+              onClick={() => setCompMode('daily')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${
+                compMode === 'daily'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+              }`}
+            >
+              <CalendarDays className="h-3.5 w-3.5" />
+              日別比較
+            </button>
           </div>
+
+          {/* 月別: 月選択 */}
+          {compMode === 'monthly' && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                  {monthOptions.map(m => (
+                    <option key={m} value={m}>{m.replace('-', '年') + '月'}</option>
+                  ))}
+                </select>
+              </div>
+              <span className="text-xs text-muted-foreground">vs</span>
+              <div className="flex items-center gap-2">
+                <select
+                  value={comparisonMonth}
+                  onChange={(e) => setComparisonMonth(e.target.value)}
+                  className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                  <option value="">前年同月（自動）</option>
+                  {monthOptions.map(m => (
+                    <option key={m} value={m}>{m.replace('-', '年') + '月'}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* 日別: 日付選択 */}
+          {compMode === 'daily' && (
+            <div className="mt-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                  <input
+                    type="date"
+                    value={selectedDate1}
+                    onChange={(e) => { setSelectedDate1(e.target.value); setSelectedDate2(''); }}
+                    className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+                <span className="text-xs text-muted-foreground">vs</span>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selectedDate2 ? 'custom' : dailyCompPreset}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === 'custom') {
+                        setDailyCompPreset('custom');
+                      } else {
+                        setDailyCompPreset(v);
+                        setSelectedDate2('');
+                      }
+                    }}
+                    className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <option value="lastYear">前年同日</option>
+                    <option value="lastWeek">先週同曜日</option>
+                    <option value="custom">日付指定</option>
+                  </select>
+                </div>
+                {(dailyCompPreset === 'custom' || selectedDate2) && (
+                  <input
+                    type="date"
+                    value={selectedDate2}
+                    onChange={(e) => setSelectedDate2(e.target.value)}
+                    className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -520,8 +672,9 @@ export default function ComparisonAnalysis() {
                 unit=""
                 icon={DollarSign}
                 color="bg-emerald-500"
-                format={v => `¥${(v / 10000).toFixed(0)}万`}
+                format={compMode === 'daily' ? v => `¥${v.toLocaleString()}` : v => `¥${(v / 10000).toFixed(0)}万`}
                 index={0}
+                compLabel={compLabel}
               />
               <YoYMetricCard
                 title="全店客数"
@@ -532,6 +685,7 @@ export default function ComparisonAnalysis() {
                 color="bg-blue-500"
                 format={v => v.toLocaleString()}
                 index={1}
+                compLabel={compLabel}
               />
               <YoYMetricCard
                 title="全店稼働時間"
@@ -542,6 +696,7 @@ export default function ComparisonAnalysis() {
                 color="bg-amber-500"
                 format={v => v.toFixed(1)}
                 index={2}
+                compLabel={compLabel}
               />
               <YoYMetricCard
                 title="全店人時生産性"
@@ -552,6 +707,7 @@ export default function ComparisonAnalysis() {
                 color="bg-red-500"
                 format={v => `¥${v.toLocaleString()}`}
                 index={3}
+                compLabel={compLabel}
               />
             </div>
 
@@ -589,10 +745,10 @@ export default function ComparisonAnalysis() {
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                     <h3 className="text-sm font-bold flex items-center gap-2">
                       <BarChart3 className="h-4 w-4 text-indigo-500" />
-                      店舗別昨対比較
+                      店舗別比較
                     </h3>
                     <div className="flex gap-1">
-                      {Object.entries(chartMetricLabels).map(([key, { label }]) => (
+                      {Object.entries(activeFormatters).map(([key, { label }]) => (
                         <button
                           key={key}
                           onClick={() => setChartMetric(key)}
@@ -620,27 +776,27 @@ export default function ComparisonAnalysis() {
                       />
                       <YAxis
                         tick={{ fontSize: 9 }}
-                        tickFormatter={chartMetricLabels[chartMetric].formatter}
+                        tickFormatter={activeFormatters[chartMetric].formatter}
                       />
                       <Tooltip content={<ComparisonTooltip />} />
                       <Legend
                         wrapperStyle={{ fontSize: 11 }}
                         formatter={(value) => {
-                          if (value === '今年') return currentLabel;
-                          if (value === '前年') return previousLabel;
+                          if (value.startsWith('対象')) return `${currentLabel} ${activeFormatters[chartMetric].label}`;
+                          if (value.startsWith('比較')) return `${previousLabel} ${activeFormatters[chartMetric].label}`;
                           return value;
                         }}
                       />
                       <Bar
-                        dataKey="今年"
-                        name={`今年${chartMetricLabels[chartMetric].label}`}
+                        dataKey="対象"
+                        name={`対象${activeFormatters[chartMetric].label}`}
                         fill="#6366f1"
                         radius={[4, 4, 0, 0]}
                         maxBarSize={24}
                       />
                       <Bar
-                        dataKey="前年"
-                        name={`前年${chartMetricLabels[chartMetric].label}`}
+                        dataKey="比較"
+                        name={`比較${activeFormatters[chartMetric].label}`}
                         fill="#c7d2fe"
                         radius={[4, 4, 0, 0]}
                         maxBarSize={24}
@@ -663,6 +819,7 @@ export default function ComparisonAnalysis() {
                       previous={s.previous}
                       isExpanded={expandedStore === s.name}
                       onToggle={() => setExpandedStore(expandedStore === s.name ? null : s.name)}
+                      compLabel={compLabel}
                     />
                   ))}
                 </div>
@@ -677,14 +834,13 @@ export default function ComparisonAnalysis() {
                   部署別稼働時間比較
                 </h3>
                 <p className="text-xs text-muted-foreground px-1">
-                  通販部・企画部・製造部等の勤務時間をジョブカンから自動取得しています。売上データは手入力対応です。
+                  通販部・企画部・製造部等の勤務時間をジョブカンから自動取得しています。
                 </p>
 
                 {deptComparisons.length === 0 ? (
                   <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
                     <Briefcase className="h-12 w-12 text-gray-300 mx-auto mb-3" />
                     <p className="text-sm text-muted-foreground">部署別データがありません</p>
-                    <p className="text-xs text-muted-foreground mt-1">ジョブカンの勤怠集計データから部署別の勤務時間を取得します</p>
                   </div>
                 ) : (
                   <>
@@ -698,8 +854,8 @@ export default function ComparisonAnalysis() {
                         <BarChart
                           data={deptComparisons.map(d => ({
                             name: d.name,
-                            今年: d.current.work_hours,
-                            前年: d.previous.work_hours,
+                            対象: d.current.work_hours,
+                            比較: d.previous.work_hours,
                           }))}
                           margin={{ top: 5, right: 5, left: -10, bottom: 5 }}
                         >
@@ -708,8 +864,8 @@ export default function ComparisonAnalysis() {
                           <YAxis tick={{ fontSize: 9 }} tickFormatter={v => `${v.toFixed(0)}h`} />
                           <Tooltip content={<ComparisonTooltip />} />
                           <Legend wrapperStyle={{ fontSize: 11 }} />
-                          <Bar dataKey="今年" name={`${currentLabel}稼働時間`} fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={30} />
-                          <Bar dataKey="前年" name={`${previousLabel}稼働時間`} fill="#ddd6fe" radius={[4, 4, 0, 0]} maxBarSize={30} />
+                          <Bar dataKey="対象" name={`${currentLabel} 稼働時間`} fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={30} />
+                          <Bar dataKey="比較" name={`${previousLabel} 稼働時間`} fill="#ddd6fe" radius={[4, 4, 0, 0]} maxBarSize={30} />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
@@ -722,6 +878,7 @@ export default function ComparisonAnalysis() {
                           deptName={d.name}
                           current={d.current}
                           previous={d.previous}
+                          compLabel={compLabel}
                         />
                       ))}
                     </div>
@@ -737,7 +894,9 @@ export default function ComparisonAnalysis() {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-8 text-center">
             <BarChart3 className="h-16 w-16 text-gray-300 mx-auto mb-4" />
             <p className="text-lg font-bold text-gray-600 dark:text-gray-400">データを取得中...</p>
-            <p className="text-sm text-muted-foreground mt-2">月を選択してデータを読み込んでください</p>
+            <p className="text-sm text-muted-foreground mt-2">
+              {compMode === 'monthly' ? '月を選択してデータを読み込んでください' : '日付を選択してデータを読み込んでください'}
+            </p>
           </div>
         )}
       </main>
