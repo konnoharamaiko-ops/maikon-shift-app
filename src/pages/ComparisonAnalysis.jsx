@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { format, subYears, subDays } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -9,7 +9,8 @@ import {
   Target, Activity, ArrowUpRight, ArrowDownRight, Minus,
   Store, Package, Factory, Briefcase, Truck, FlaskConical,
   Calendar, ArrowLeft, Layers, ShoppingCart, Lightbulb,
-  CalendarDays
+  CalendarDays, Settings, UserX, ArrowRightLeft, X, Search,
+  ToggleLeft, ToggleRight, AlertTriangle
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -322,6 +323,229 @@ function DeptComparisonCard({ deptName, current, previous, compLabel }) {
   );
 }
 
+// ===== スタッフ除外設定 =====
+const STAFF_SETTINGS_KEY = 'maikon_staff_settings';
+
+function loadStaffSettings() {
+  try {
+    const saved = localStorage.getItem(STAFF_SETTINGS_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return {};
+}
+
+function saveStaffSettings(settings) {
+  try {
+    localStorage.setItem(STAFF_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (e) {}
+}
+
+const ALL_LOCATIONS = [
+  '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
+  '心斎橋店', 'かがや店', '駅丸', '北摂店', '堺東店',
+  'イオン松原店', 'イオン守口店', '美和堂福島店',
+  '通販部', '企画部', '特販部', 'かがや工場', '北摂工場', '都島工場', '鶴橋工房'
+];
+
+function StaffSettingsPanel({ onClose }) {
+  const [staffSettings, setStaffSettings] = useState(() => loadStaffSettings());
+  const [staffList, setStaffList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterType, setFilterType] = useState('all'); // 'all' | 'excluded' | 'moved'
+
+  useEffect(() => {
+    fetch('/api/productivity/realtime?staff_only=1')
+      .then(r => r.json())
+      .then(data => {
+        if (data.staff_master && data.staff_master.length > 0) {
+          setStaffList(data.staff_master);
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const updateSetting = (staffId, key, value) => {
+    setStaffSettings(prev => {
+      const next = { ...prev, [staffId]: { ...prev[staffId], [key]: value } };
+      saveStaffSettings(next);
+      return next;
+    });
+  };
+
+  const excludedCount = Object.values(staffSettings).filter(s => s?.excluded).length;
+  const movedCount = Object.values(staffSettings).filter(s => s?.override_store).length;
+
+  const filteredStaff = useMemo(() => {
+    let list = staffList;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(s => s.name?.toLowerCase().includes(q) || s.dept_name?.toLowerCase().includes(q));
+    }
+    if (filterType === 'excluded') {
+      list = list.filter(s => staffSettings[s.employee_id]?.excluded);
+    } else if (filterType === 'moved') {
+      list = list.filter(s => staffSettings[s.employee_id]?.override_store);
+    }
+    return list;
+  }, [staffList, searchQuery, filterType, staffSettings]);
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+        onClick={e => e.target === e.currentTarget && onClose()}
+      >
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0, y: 20 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.95, opacity: 0, y: 20 }}
+          className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden"
+        >
+          {/* ヘッダー */}
+          <div className="flex items-center justify-between p-4 border-b dark:border-gray-700 bg-gradient-to-r from-indigo-700 to-indigo-500">
+            <div className="flex items-center gap-2">
+              <Settings className="h-5 w-5 text-white" />
+              <h2 className="text-base font-bold text-white">スタッフ除外・移動設定</h2>
+            </div>
+            <button onClick={onClose} className="text-white/80 hover:text-white transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* サマリー */}
+          <div className="px-4 py-3 bg-indigo-50 dark:bg-indigo-950/30 border-b dark:border-gray-700 flex gap-3 text-xs">
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 font-bold">
+              <UserX className="h-3 w-3" />
+              除外: {excludedCount}名
+            </span>
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">
+              <ArrowRightLeft className="h-3 w-3" />
+              移動: {movedCount}名
+            </span>
+            <span className="text-muted-foreground flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              リアルタイム画面に反映されます
+            </span>
+          </div>
+
+          {/* 検索・フィルター */}
+          <div className="px-4 py-3 border-b dark:border-gray-700 space-y-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="スタッフ名で検索..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div className="flex gap-1">
+              {[['all', '全員'], ['excluded', '除外中'], ['moved', '移動中']].map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setFilterType(key)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    filterType === key
+                      ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300'
+                      : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* スタッフ一覧 */}
+          <div className="flex-1 overflow-y-auto px-4 py-2">
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="h-6 w-6 animate-spin text-indigo-500" />
+                <span className="ml-2 text-sm text-muted-foreground">読み込み中...</span>
+              </div>
+            ) : filteredStaff.length === 0 ? (
+              <div className="text-center py-12 text-sm text-muted-foreground">
+                {searchQuery ? '該当するスタッフが見つかりません' : 'スタッフデータがありません'}
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {filteredStaff.map(staff => {
+                  const setting = staffSettings[staff.employee_id] || {};
+                  const isExcluded = !!setting.excluded;
+                  const overrideStore = setting.override_store || '';
+
+                  return (
+                    <div
+                      key={staff.employee_id}
+                      className={`rounded-lg border p-3 transition-colors ${
+                        isExcluded
+                          ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800'
+                          : overrideStore
+                          ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800'
+                          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-sm font-bold">{staff.name}</span>
+                          <span className="text-xs text-muted-foreground ml-2">{staff.dept_name || '不明'}</span>
+                        </div>
+                        <button
+                          onClick={() => updateSetting(staff.employee_id, 'excluded', !isExcluded)}
+                          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-bold transition-colors ${
+                            isExcluded
+                              ? 'bg-red-500 text-white'
+                              : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30'
+                          }`}
+                        >
+                          <UserX className="h-3 w-3" />
+                          {isExcluded ? '除外中' : '除外'}
+                        </button>
+                      </div>
+
+                      {!isExcluded && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <ArrowRightLeft className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                          <select
+                            value={overrideStore}
+                            onChange={e => updateSetting(staff.employee_id, 'override_store', e.target.value)}
+                            className="text-xs border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 bg-white dark:bg-gray-800 flex-1"
+                          >
+                            <option value="">所属のまま</option>
+                            {ALL_LOCATIONS.map(loc => (
+                              <option key={loc} value={loc}>{loc}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* フッター */}
+          <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+            <button
+              onClick={onClose}
+              className="w-full py-2.5 rounded-lg bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-700 transition-colors"
+            >
+              閉じる
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
 // ===== メインコンポーネント =====
 export default function ComparisonAnalysis() {
   const now = new Date();
@@ -345,6 +569,7 @@ export default function ComparisonAnalysis() {
   const [activeTab, setActiveTab] = useState('store');
   const [chartMetric, setChartMetric] = useState('sales');
   const [expandedStore, setExpandedStore] = useState(null);
+  const [showStaffSettings, setShowStaffSettings] = useState(false);
 
   // 月別: 比較対象月の計算
   const effectiveCompMonth = useMemo(() => {
@@ -515,16 +740,27 @@ export default function ComparisonAnalysis() {
                 <p className="text-xs text-muted-foreground">月別・日別比較 - 売上・客数・稼働時間・人時生産性</p>
               </div>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => refetch()}
-              disabled={isLoading}
-              className="flex items-center gap-1.5"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">更新</span>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowStaffSettings(true)}
+                className="flex items-center gap-1.5"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">スタッフ設定</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refetch()}
+                disabled={isLoading}
+                className="flex items-center gap-1.5"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">更新</span>
+              </Button>
+            </div>
           </div>
 
           {/* モード切替 */}
@@ -910,6 +1146,11 @@ export default function ComparisonAnalysis() {
           </div>
         )}
       </main>
+
+      {/* スタッフ設定モーダル */}
+      {showStaffSettings && (
+        <StaffSettingsPanel onClose={() => setShowStaffSettings(false)} />
+      )}
     </div>
   );
 }

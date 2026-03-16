@@ -459,21 +459,33 @@ async function fetchJobcanDailyAttendance(cookies, staffList, date) {
       const result = batchResults[j];
 
       if (result.status === 'fulfilled' && result.value) {
-        const { workMinutes, breakMinutes } = result.value;
+        const { workMinutes, breakMinutes, clockInPlaceCode } = result.value;
         const netHours = Math.max(0, (workMinutes - breakMinutes)) / 60;
 
         if (netHours > 0) {
+          // ===== 打刻場所コードで振り分け（リアルタイムAPIと同じロジック）=====
+          // 打刻場所コードがある場合はそちらを優先、なければ所属部署コードにフォールバック
+          let actualStoreName = staff.storeName; // デフォルト: 所属部署名
+          if (clockInPlaceCode && STORE_DEPT_MAP[clockInPlaceCode]) {
+            actualStoreName = STORE_DEPT_MAP[clockInPlaceCode];
+          }
+
           // 店舗に分類
-          if (TEMPOVISOR_STORE_CODES[staff.storeName]) {
-            if (!stores[staff.storeName]) stores[staff.storeName] = { hours: 0, employees: 0 };
-            stores[staff.storeName].hours += netHours;
-            stores[staff.storeName].employees++;
+          if (TEMPOVISOR_STORE_CODES[actualStoreName]) {
+            if (!stores[actualStoreName]) stores[actualStoreName] = { hours: 0, employees: 0 };
+            stores[actualStoreName].hours += netHours;
+            stores[actualStoreName].employees++;
           }
           // 部署に分類
-          if (DEPT_CATEGORIES[staff.storeName]) {
-            if (!departments[staff.storeName]) departments[staff.storeName] = { hours: 0, employees: 0 };
-            departments[staff.storeName].hours += netHours;
-            departments[staff.storeName].employees++;
+          if (DEPT_CATEGORIES[actualStoreName]) {
+            if (!departments[actualStoreName]) departments[actualStoreName] = { hours: 0, employees: 0 };
+            departments[actualStoreName].hours += netHours;
+            departments[actualStoreName].employees++;
+          }
+
+          // デバッグ: 所属と打刻場所が異なる場合にログ出力
+          if (actualStoreName !== staff.storeName) {
+            console.log(`[Sync] 打刻場所振替: ${staff.storeName} → ${actualStoreName} (empId=${staff.employeeId}, code=${clockInPlaceCode})`);
           }
         }
       }
@@ -502,7 +514,9 @@ async function fetchJobcanDailyAttendance(cookies, staffList, date) {
 }
 
 /**
- * 個人の出勤簿ページから労働時間・休憩時間を取得
+ * 個人の出勤簿ページから労働時間・休憩時間・打刻場所コードを取得
+ * 打刻場所コード（出勤打刻時の場所）を返すことで、所属と異なる場所で打刻した場合に
+ * 正しい店舗/部署に稼働時間を計上できる
  */
 async function fetchIndividualAdit(cookies, employeeId, year, month, day) {
   const aditUrl = `https://ssl.jobcan.jp/client/adit?employee_id=${employeeId}&year=${year}&month=${month}&day=${day}`;
@@ -524,7 +538,7 @@ async function fetchIndividualAdit(cookies, employeeId, year, month, day) {
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    // Table 2: 「承認済み打刻の合計」テーブルから労働時間・休憩時間を取得
+    // ===== 労働時間・休憩時間を取得 =====
     let workMinutes = 0;
     let breakMinutes = 0;
 
@@ -547,10 +561,104 @@ async function fetchIndividualAdit(cookies, employeeId, year, month, day) {
       }
     });
 
-    return { workMinutes, breakMinutes };
+    // ===== 打刻場所コードを取得（出勤打刻の場所を優先）=====
+    // 出入詳細テーブル: 打刻区分 | 時刻 | 打刻方法 | 打刻場所 | 備考等 | 承認・削除
+    let clockInPlaceCode = null;
+    const stampRows = [];
+
+    $('table').each((ti, tbl) => {
+      const hdr = $(tbl).find('tr').first().text();
+      if (hdr.includes('打刻区分') && hdr.includes('打刻方法')) {
+        $(tbl).find('tr').each((ri, row) => {
+          if (ri === 0) return; // ヘッダースキップ
+          const tds = $(row).find('td');
+          if (tds.length < 4) return;
+
+          // 打刻区分
+          const typeEl = $(tds[0]).find('select option[selected]');
+          const stampType = typeEl.length > 0 ? typeEl.text().trim() : $(tds[0]).text().trim();
+          // 打刻方法
+          const stampMethod = $(tds[2]).text().trim();
+          // 打刻場所コード
+          const placeEl = $(tds[3]).find('select option[selected]');
+          const placeText = placeEl.length > 0 ? placeEl.text().trim() : $(tds[3]).text().trim();
+          const codeMatch = placeText.match(/^(\d{5})/);
+          const placeCode = codeMatch ? codeMatch[1] : null;
+          // 自動退出かどうか
+          const note = tds.length > 4 ? $(tds[4]).text().trim() : '';
+          const isAutoClockOut = stampMethod.includes('自動退出') || note.includes('自動退出');
+
+          stampRows.push({ stampType, placeCode, isAutoClockOut, rowIdx: ri - 1 });
+        });
+      }
+    });
+
+    if (stampRows.length > 0) {
+      const totalRows = stampRows.length;
+      // 出勤打刻の場所コードを探す
+      for (const { stampType, placeCode, isAutoClockOut, rowIdx } of stampRows) {
+        if (isAutoClockOut) continue;
+
+        // 明確な出勤打刻
+        if (stampType === '出勤' || stampType === '1') {
+          if (placeCode) { clockInPlaceCode = placeCode; break; }
+        }
+        // 自動判別の場合、最初の行が出勤
+        if (stampType.includes('(自動判別)') && rowIdx === 0) {
+          if (placeCode) { clockInPlaceCode = placeCode; break; }
+        }
+      }
+
+      // 出勤打刻が見つからない場合、最初の非自動退出行の場所を使用
+      if (!clockInPlaceCode) {
+        for (const { placeCode, isAutoClockOut } of stampRows) {
+          if (!isAutoClockOut && placeCode) {
+            clockInPlaceCode = placeCode;
+            break;
+          }
+        }
+      }
+    }
+
+    // フォールバック: change_group_id / change_type から取得
+    if (!clockInPlaceCode) {
+      const stampCodes = [];
+      const stampTypes = [];
+      $('select[id^="change_group_id"]').each((idx, sel) => {
+        const selectedOption = $(sel).find('option[selected]');
+        const targetOption = selectedOption.length > 0 ? selectedOption : $(sel).find('option').first();
+        if (targetOption.length > 0) {
+          const optText = targetOption.text().trim();
+          const codeMatch = optText.match(/^(\d{5})/);
+          stampCodes.push(codeMatch ? codeMatch[1] : null);
+        }
+      });
+      $('select[id^="change_type"]').each((idx, sel) => {
+        const selectedOption = $(sel).find('option[selected]');
+        const targetOption = selectedOption.length > 0 ? selectedOption : $(sel).find('option').first();
+        stampTypes.push(targetOption.length > 0 ? targetOption.text().trim() : null);
+      });
+      if (stampTypes.length > 0 && stampTypes.length === stampCodes.length) {
+        for (let idx = 0; idx < stampTypes.length; idx++) {
+          const type = stampTypes[idx];
+          const code = stampCodes[idx];
+          if (!type || !code) continue;
+          if (type.includes('出勤') || type === '1') {
+            clockInPlaceCode = code;
+            break;
+          }
+        }
+        // 出勤が見つからなければ最初のコードを使用
+        if (!clockInPlaceCode && stampCodes.length > 0) {
+          clockInPlaceCode = stampCodes[0];
+        }
+      }
+    }
+
+    return { workMinutes, breakMinutes, clockInPlaceCode };
   } catch (err) {
     // タイムアウトやネットワークエラーは無視（0として扱う）
-    return { workMinutes: 0, breakMinutes: 0 };
+    return { workMinutes: 0, breakMinutes: 0, clockInPlaceCode: null };
   } finally {
     clearTimeout(timer);
   }

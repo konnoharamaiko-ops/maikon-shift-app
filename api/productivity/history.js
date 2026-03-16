@@ -48,6 +48,18 @@ const DEPT_CATEGORIES = {
   '鶴橋工房': 'manufacturing',
 };
 
+// 日本語部署名 → リアルタイムAPIと同じ英語キー
+const DEPT_NAME_TO_KEY = {
+  '通販部': 'online',
+  '企画部': 'planning',
+  '特販部': 'tokuhan',
+  'かがや工場': 'manufacturing_kagaya',
+  '北摂工場': 'manufacturing_hokusetsu',
+  '都島工場': 'manufacturing_kagaya',
+  '鶴橋工房': 'manufacturing_kagaya',
+  '南田辺工房': 'manufacturing_minamitanabe',
+};
+
 export const config = {
   maxDuration: 60,
 };
@@ -192,42 +204,52 @@ export default async function handler(req, res) {
       }
     }
 
-    // 部署データを構築
+    // 部署データを構築（英語キーで統一 - リアルタイムAPIと同じキー構造）
     const departmentData = {};
     for (const record of deptData) {
       if (record.work_date === todayJST && realtimeDeptData) continue;
       const deptName = record.dept_name;
-      if (!departmentData[deptName]) {
-        departmentData[deptName] = {
+      const deptKey = DEPT_NAME_TO_KEY[deptName] || deptName;
+      if (!departmentData[deptKey]) {
+        departmentData[deptKey] = {
+          key: deptKey,
           name: deptName,
           category: DEPT_CATEGORIES[deptName] || 'other',
           dates: {},
         };
       }
-      departmentData[deptName].dates[record.work_date] = {
-        wk_date: record.work_date,
-        dayweek: getDayOfWeek(record.work_date),
-        total_hours: parseFloat(record.work_hours),
-        attended_employees: record.attended_employees,
-        employees: [],
-      };
+      // 同じキーに複数の部署がマッピングされる場合（都島工場→manufacturing_kagaya等）は時間を合算
+      const existingDate = departmentData[deptKey].dates[record.work_date];
+      if (existingDate) {
+        existingDate.total_hours += parseFloat(record.work_hours);
+        existingDate.attended_employees += record.attended_employees;
+      } else {
+        departmentData[deptKey].dates[record.work_date] = {
+          wk_date: record.work_date,
+          dayweek: getDayOfWeek(record.work_date),
+          total_hours: parseFloat(record.work_hours),
+          attended_employees: record.attended_employees,
+          employees: [],
+        };
+      }
     }
 
-    // リアルタイム部署データを追加
+    // リアルタイム部署データを追加（既に英語キーで来る）
     if (realtimeDeptData) {
-      for (const [deptName, deptInfo] of Object.entries(realtimeDeptData)) {
-        if (!departmentData[deptName]) {
-          departmentData[deptName] = {
-            name: deptName,
-            category: DEPT_CATEGORIES[deptName] || 'other',
+      for (const [deptKey, deptInfo] of Object.entries(realtimeDeptData)) {
+        if (!departmentData[deptKey]) {
+          departmentData[deptKey] = {
+            key: deptKey,
+            name: deptInfo.name || deptKey,
+            category: deptInfo.type || 'other',
             dates: {},
           };
         }
-        departmentData[deptName].dates[todayJST] = {
+        departmentData[deptKey].dates[todayJST] = {
           wk_date: todayJST,
           dayweek: getDayOfWeek(todayJST),
-          total_hours: deptInfo.hours || 0,
-          attended_employees: deptInfo.employees || 0,
+          total_hours: deptInfo.hours || deptInfo.total_hours || 0,
+          attended_employees: deptInfo.employees || deptInfo.attended_employees || 0,
           employees: [],
         };
       }

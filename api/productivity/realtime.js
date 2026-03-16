@@ -1791,8 +1791,28 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     throw new Error(`Jobcan login failed: ${location}`);
   }
 
+  // ===== 深夜帯判定（JST 0:00〜5:59の場合は前日の勤務データを取得）=====
+  const _nowJst = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+  const _currentHourJst = _nowJst.getUTCHours();
+  const isLateNight = _currentHourJst >= 0 && _currentHourJst < 6;
+  
+  // 深夜帯の場合は前日の日付を使用（営業日ベース）
+  let targetDate = _nowJst;
+  if (isLateNight) {
+    targetDate = new Date(_nowJst.getTime() - 24 * 60 * 60 * 1000);
+    console.log(`[JC] 深夜帯検出 (JST ${_currentHourJst}時) → 前日データを取得`);
+  }
+  const targetYear = targetDate.getUTCFullYear();
+  const targetMonth = targetDate.getUTCMonth() + 1;
+  const targetDay = targetDate.getUTCDate();
+  const targetDateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+  console.log(`[JC] 対象日付: ${targetDateStr} (isLateNight=${isLateNight})`);
+
   // ===== 勤務状況一覧ページを取得（先に取得してスタッフIDリストを作成）=====
-  const workUrl = 'https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=300&retirement=work';
+  // 深夜帯は前日の日付を指定、通常時はsubmit_type=today
+  const workUrl = isLateNight
+    ? `https://ssl.jobcan.jp/client/work-state/show/?submit_type=search&searching=1&list_type=normal&number_par_page=300&retirement=work&searching_date=${targetDateStr}`
+    : 'https://ssl.jobcan.jp/client/work-state/show/?submit_type=today&searching=1&list_type=normal&number_par_page=300&retirement=work';
   const workRes = await fetch(workUrl, {
     headers: {
       'Cookie': allCookies,
@@ -1842,8 +1862,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
   // 構造: { staffId: { clockIn: code, breakStart: code, breakEnd: code, clockOut: code } }
   const stampDetailMap = {};
 
-  const today = new Date();
-  const jstToday = new Date(today.getTime() + 9 * 60 * 60 * 1000);
+  // 出入詳細ページの日付も深夜帯は前日を使用
+  const jstToday = targetDate; // 深夜帯の場合は前日の日付
 
   // 全員同時並行取得（タイムアウト5秒で高速化）
   const fetchWithTimeout = (url, options, timeoutMs = 5000) => {
@@ -1855,10 +1875,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
   const allStampResults = await Promise.allSettled(
     staffIdList.map(async (empId) => {
-      const todayYear = jstToday.getUTCFullYear();
-      const todayMonth = jstToday.getUTCMonth() + 1;
-      const todayDay = jstToday.getUTCDate();
-      const aditUrl = `https://ssl.jobcan.jp/client/adit?employee_id=${empId}&year=${todayYear}&month=${todayMonth}&day=${todayDay}`;
+      const aditUrl = `https://ssl.jobcan.jp/client/adit?employee_id=${empId}&year=${targetYear}&month=${targetMonth}&day=${targetDay}`;
       const aditRes = await fetchWithTimeout(aditUrl, {
         headers: {
           'Cookie': allCookies,
