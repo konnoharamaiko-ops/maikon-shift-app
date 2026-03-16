@@ -715,6 +715,10 @@ export default function ComparisonAnalysis() {
     if (previousData?._noData) {
       previousLabel = previousLabel ? `${previousLabel}（データなし）` : '比較データなし';
     }
+    // 当日データが不完全な場合の注記
+    if (currentData?._dataIncomplete) {
+      currentLabel = `${currentLabel} ※勤怠未反映`;
+    }
     compLabel = previousLabel;
   }
 

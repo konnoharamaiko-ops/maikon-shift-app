@@ -253,9 +253,12 @@ async function handleDailyComparison(req, res, supabaseUrl, supabaseKey, date1, 
     dates.push(date2);
   }
 
-  // 当日（JST）を判定
+  // 当日・昨日（JST）を判定
   const today = getTodayJST();
   const todayStr = today.dateStr;
+  // 昨日のJST日付も計算
+  const yesterdayJST = new Date(Date.now() + 9 * 60 * 60 * 1000 - 24 * 60 * 60 * 1000);
+  const yesterdayStr = `${yesterdayJST.getUTCFullYear()}-${String(yesterdayJST.getUTCMonth() + 1).padStart(2, '0')}-${String(yesterdayJST.getUTCDate()).padStart(2, '0')}`;
 
   const comparison = [];
   let usedRealtime = false;
@@ -263,17 +266,26 @@ async function handleDailyComparison(req, res, supabaseUrl, supabaseKey, date1, 
   for (const date of dates) {
     let dayData = await fetchDayData(supabaseUrl, supabaseKey, date);
     
-    // 当日かつ稼働時間が0の場合、リアルタイムAPIから稼働時間を取得して補完
-    // 昨日以前のデータはバックフィルで修正されるので、当日のみフォールバック
-    if (date === todayStr && (dayData.total.work_hours === 0 || dayData.total.sales === 0)) {
-      try {
-        const rtData = await fetchRealtimeForComparison();
-        if (rtData) {
-          dayData = mergeRealtimeIntoDayData(dayData, rtData);
-          usedRealtime = true;
+    // 当日または昨日のデータで稼働時間が0の場合、リアルタイムAPIから稼働時間を取得して補完
+    // バックフィルはJST 22:30に実行されるため、昨日のデータがまだ反映されていない場合がある
+    // ただしリアルタイムは「今日」のデータのみ取得できるので、当日のみフォールバック対象
+    const isRecentDate = (date === todayStr || date === yesterdayStr);
+    if (isRecentDate && dayData.total.work_hours === 0) {
+      // 当日の場合のみリアルタイムフォールバック（昨日はジョブカンから今日のデータしか取れない）
+      if (date === todayStr) {
+        try {
+          const rtData = await fetchRealtimeForComparison();
+          if (rtData) {
+            dayData = mergeRealtimeIntoDayData(dayData, rtData);
+            usedRealtime = true;
+          }
+        } catch (e) {
+          console.error('[DailyComparison] Realtime fallback error:', e.message);
         }
-      } catch (e) {
-        console.error('[DailyComparison] Realtime fallback error:', e.message);
+      }
+      // 昨日の場合はフラグを立ててユーザーに通知
+      if (date === yesterdayStr) {
+        dayData._dataIncomplete = true;
       }
     }
     
