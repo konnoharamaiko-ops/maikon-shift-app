@@ -14,6 +14,11 @@
  *   [日別比較]
  *   date1: 比較日1 (YYYY-MM-DD形式, 必須)
  *   date2: 比較日2 (YYYY-MM-DD形式, 任意)
+ *
+ * 同日期間比較ロジック:
+ *   month1が当月の場合、今日までの日数で集計し、
+ *   month2も同じ日数分（1日～同じ日）で集計する。
+ *   例: 今日が3/16の場合、month1=2026-03は3/1-3/16、month2=2025-03は3/1-3/16で比較
  */
 
 // ===== 定数 =====
@@ -38,6 +43,21 @@ const DEPT_CATEGORIES = {
 export const config = {
   maxDuration: 15,
 };
+
+/**
+ * 今日の日付をJST（UTC+9）で取得
+ */
+function getTodayJST() {
+  const now = new Date();
+  const jstOffset = 9 * 60 * 60 * 1000;
+  const jst = new Date(now.getTime() + jstOffset);
+  return {
+    year: jst.getUTCFullYear(),
+    month: jst.getUTCMonth() + 1,
+    day: jst.getUTCDate(),
+    dateStr: `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}-${String(jst.getUTCDate()).padStart(2, '0')}`,
+  };
+}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -70,7 +90,7 @@ export default async function handler(req, res) {
 }
 
 // ============================================================
-// 月別比較
+// 月別比較（同日期間比較対応）
 // ============================================================
 
 async function handleMonthlyComparison(req, res, supabaseUrl, supabaseKey, month1, month2, action) {
@@ -87,10 +107,27 @@ async function handleMonthlyComparison(req, res, supabaseUrl, supabaseKey, month
     months.push(month2);
   }
 
+  // 同日期間比較: month1の最終日を決定
+  const today = getTodayJST();
+  const [m1Year, m1Month] = month1.split('-').map(Number);
+
+  // month1が当月かどうか判定
+  const isCurrentMonth = (m1Year === today.year && m1Month === today.month);
+
+  // 同日期間の上限日を決定
+  // 当月の場合: 今日の日付
+  // 過去月の場合: その月の末日
+  let cutoffDay;
+  if (isCurrentMonth) {
+    cutoffDay = today.day;
+  } else {
+    cutoffDay = new Date(m1Year, m1Month, 0).getDate(); // 月末日
+  }
+
   const comparison = [];
 
   for (const month of months) {
-    const monthData = await fetchMonthData(supabaseUrl, supabaseKey, month);
+    const monthData = await fetchMonthData(supabaseUrl, supabaseKey, month, cutoffDay);
     comparison.push(monthData);
   }
 
@@ -99,15 +136,21 @@ async function handleMonthlyComparison(req, res, supabaseUrl, supabaseKey, month
     mode: 'monthly',
     action: action || 'default',
     source: 'supabase_cache',
+    cutoffDay,
+    isCurrentMonth,
     timestamp: new Date().toISOString(),
   });
 }
 
-async function fetchMonthData(supabaseUrl, supabaseKey, month) {
+async function fetchMonthData(supabaseUrl, supabaseKey, month, cutoffDay) {
   const [year, monthNum] = month.split('-').map(Number);
-  const lastDay = new Date(year, monthNum, 0).getDate();
+
+  // cutoffDayがその月の末日を超えないようにする
+  const lastDayOfMonth = new Date(year, monthNum, 0).getDate();
+  const effectiveCutoffDay = Math.min(cutoffDay, lastDayOfMonth);
+
   const dateFrom = `${month}-01`;
-  const dateTo = `${month}-${String(lastDay).padStart(2, '0')}`;
+  const dateTo = `${month}-${String(effectiveCutoffDay).padStart(2, '0')}`;
 
   const storeRecords = await fetchFromSupabase(
     supabaseUrl, supabaseKey,
@@ -185,7 +228,15 @@ async function fetchMonthData(supabaseUrl, supabaseKey, month) {
     };
   }
 
-  return { month, stores, total, departments };
+  return {
+    month,
+    dateFrom,
+    dateTo,
+    days: effectiveCutoffDay,
+    stores,
+    total,
+    departments,
+  };
 }
 
 // ============================================================

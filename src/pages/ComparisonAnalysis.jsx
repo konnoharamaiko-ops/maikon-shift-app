@@ -457,11 +457,21 @@ export default function ComparisonAnalysis() {
 
   // ラベル生成
   let currentLabel, previousLabel, compLabel;
+  // 同日期間比較の情報を取得
+  const cutoffDay = monthlyResult?.cutoffDay;
+  const isCurrentMonth = monthlyResult?.isCurrentMonth;
+
   if (compMode === 'monthly') {
     const [y1, m1] = selectedMonth.split('-');
     const [y2, m2] = effectiveCompMonth.split('-');
-    currentLabel = `${y1}年${parseInt(m1)}月`;
-    previousLabel = `${y2}年${parseInt(m2)}月`;
+    // 当月の場合は期間を明示
+    if (isCurrentMonth && cutoffDay) {
+      currentLabel = `${y1}年${parseInt(m1)}月(1日〜${cutoffDay}日)`;
+      previousLabel = `${y2}年${parseInt(m2)}月(1日〜${cutoffDay}日)`;
+    } else {
+      currentLabel = `${y1}年${parseInt(m1)}月`;
+      previousLabel = `${y2}年${parseInt(m2)}月`;
+    }
     compLabel = previousLabel;
   } else {
     const dow1 = getDayOfWeekLabel(selectedDate1);
