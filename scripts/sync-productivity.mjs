@@ -580,15 +580,24 @@ async function fetchIndividualAdit(cookies, employeeId, year, month, day) {
       if (headerText.includes('承認済み打刻の合計') || headerText.includes('未承認打刻適用後の合計')) {
         const rows = $(table).find('tr').toArray();
         for (const row of rows) {
-          const cells = $(row).find('td').toArray();
-          if (cells.length >= 2) {
-            const label = $(cells[0]).text().trim();
-            const value = $(cells[1]).text().trim();
-            if (label === '労働時間') {
-              workMinutes = parseJapaneseTime(value);
-            } else if (label === '休憩時間') {
-              breakMinutes = parseJapaneseTime(value);
-            }
+          // ラベルはthタグ、値はtdタグの場合がある
+          const thCells = $(row).find('th').toArray();
+          const tdCells = $(row).find('td').toArray();
+          let label = '';
+          let value = '';
+          if (thCells.length >= 1 && tdCells.length >= 1) {
+            // th=ラベル, td[0]=承認済み打刻の合計値
+            label = $(thCells[0]).text().trim();
+            value = $(tdCells[0]).text().trim();
+          } else if (tdCells.length >= 2) {
+            // td[0]=ラベル, td[1]=値（旧フォーマット互換）
+            label = $(tdCells[0]).text().trim();
+            value = $(tdCells[1]).text().trim();
+          }
+          if (label === '労働時間') {
+            workMinutes = parseJapaneseTime(value);
+          } else if (label === '休憩時間') {
+            breakMinutes = parseJapaneseTime(value);
           }
         }
       }
