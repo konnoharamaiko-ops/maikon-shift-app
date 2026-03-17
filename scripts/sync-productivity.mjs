@@ -454,13 +454,36 @@ async function fetchJobcanDailyAttendance(cookies, staffList, date) {
       batch.map(staff => fetchIndividualAdit(cookies, staff.employeeId, year, parseInt(month), parseInt(day)))
     );
 
+    let debugCountFulfilled = 0;
+    let debugCountZero = 0;
+    let debugCountRejected = 0;
+    let debugCountNoMatch = 0;
+
     for (let j = 0; j < batch.length; j++) {
       const staff = batch[j];
       const result = batchResults[j];
 
+      if (result.status === 'rejected') {
+        debugCountRejected++;
+        if (debugCountRejected <= 3) {
+          console.log(`[Debug] rejected: empId=${staff.employeeId}, reason=${result.reason?.message || result.reason}`);
+        }
+        continue;
+      }
+
       if (result.status === 'fulfilled' && result.value) {
+        debugCountFulfilled++;
         const { workMinutes, breakMinutes, clockInPlaceCode } = result.value;
         const netHours = Math.max(0, (workMinutes - breakMinutes)) / 60;
+
+        // デバッグ: 最初の5名の詳細を出力
+        if (debugCountFulfilled <= 5) {
+          console.log(`[Debug] empId=${staff.employeeId}, storeName=${staff.storeName}, workMin=${workMinutes}, breakMin=${breakMinutes}, netH=${netHours.toFixed(2)}, clockInCode=${clockInPlaceCode}`);
+        }
+
+        if (netHours === 0) {
+          debugCountZero++;
+        }
 
         if (netHours > 0) {
           // ===== 打刻場所コードで振り分け（リアルタイムAPIと同じロジック）=====
@@ -487,9 +510,19 @@ async function fetchJobcanDailyAttendance(cookies, staffList, date) {
           if (actualStoreName !== staff.storeName) {
             console.log(`[Sync] 打刻場所振替: ${staff.storeName} → ${actualStoreName} (empId=${staff.employeeId}, code=${clockInPlaceCode})`);
           }
+
+          // 分類されなかった場合のデバッグ
+          if (!TEMPOVISOR_STORE_CODES[actualStoreName] && !DEPT_CATEGORIES[actualStoreName]) {
+            debugCountNoMatch++;
+            if (debugCountNoMatch <= 5) {
+              console.log(`[Debug] 分類不能: actualStoreName=${actualStoreName}, empId=${staff.employeeId}, clockInCode=${clockInPlaceCode}, deptCode=${staff.deptCode}`);
+            }
+          }
         }
       }
     }
+
+    console.log(`[Debug] バッチ結果: fulfilled=${debugCountFulfilled}, zero=${debugCountZero}, rejected=${debugCountRejected}, noMatch=${debugCountNoMatch}`);
 
     // バッチ間に少し待つ（レート制限対策）
     if (i + CONCURRENCY_LIMIT < staffList.length) {
@@ -671,7 +704,17 @@ async function fetchIndividualAdit(cookies, employeeId, year, month, day) {
 async function upsertToSupabase(supabaseUrl, supabaseKey, tableName, records) {
   if (records.length === 0) return;
 
-  const resp = await fetch(`${supabaseUrl}/rest/v1/${tableName}`, {
+  // テーブルごとのon_conflictカラムを指定
+  const conflictColumns = {
+    'DailyProductivity': 'work_date,store_name',
+    'DailyDeptProductivity': 'work_date,dept_name',
+  };
+  const onConflict = conflictColumns[tableName] || '';
+  const url = onConflict
+    ? `${supabaseUrl}/rest/v1/${tableName}?on_conflict=${onConflict}`
+    : `${supabaseUrl}/rest/v1/${tableName}`;
+
+  const resp = await fetch(url, {
     method: 'POST',
     headers: {
       'apikey': supabaseKey,
