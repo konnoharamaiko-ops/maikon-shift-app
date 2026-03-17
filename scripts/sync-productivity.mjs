@@ -32,7 +32,7 @@ const STORE_DEPT_MAP = {
   '12200': '堺東店', '12300': 'イオン松原店', '12400': 'イオン守口店',
   '20000': '美和堂福島店',
   '11021': '企画部', '11022': '通販部', '11025': '特販部',
-  '11012': 'かがや工場', '12010': '北摂工場', '11700': '都島工場', '11900': '鶴橋工房',
+  '11012': 'かがや工場', '12010': '北摂工場', '10210': '南田辺工房',
 };
 
 const TEMPOVISOR_STORE_CODES = {
@@ -54,7 +54,7 @@ const ALL_STORES = Object.keys(TEMPOVISOR_STORE_CODES);
 const DEPT_CATEGORIES = {
   '企画部': 'planning', '通販部': 'online', '特販部': 'online',
   'かがや工場': 'manufacturing', '北摂工場': 'manufacturing',
-  '都島工場': 'manufacturing', '鶴橋工房': 'manufacturing',
+  '南田辺工房': 'manufacturing',
 };
 
 // 並列リクエスト数の制限

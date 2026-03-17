@@ -31,8 +31,7 @@ const DEPT_ICONS = {
   '特販部': ShoppingCart,
   'かがや工場': Factory,
   '北摂工場': Factory,
-  '鶴橋工房': Factory,
-  '都島工場': Factory,
+  '南田辺工房': Factory,
 };
 
 const DEPT_COLORS = {
@@ -41,8 +40,7 @@ const DEPT_COLORS = {
   '特販部': { bg: 'bg-orange-50 dark:bg-orange-950/30', border: 'border-orange-200 dark:border-orange-800', icon: 'bg-orange-500', text: 'text-orange-700 dark:text-orange-300' },
   'かがや工場': { bg: 'bg-emerald-50 dark:bg-emerald-950/30', border: 'border-emerald-200 dark:border-emerald-800', icon: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-300' },
   '北摂工場': { bg: 'bg-teal-50 dark:bg-teal-950/30', border: 'border-teal-200 dark:border-teal-800', icon: 'bg-teal-500', text: 'text-teal-700 dark:text-teal-300' },
-  '鶴橋工房': { bg: 'bg-lime-50 dark:bg-lime-950/30', border: 'border-lime-200 dark:border-lime-800', icon: 'bg-lime-600', text: 'text-lime-700 dark:text-lime-300' },
-  '都島工場': { bg: 'bg-green-50 dark:bg-green-950/30', border: 'border-green-200 dark:border-green-800', icon: 'bg-green-500', text: 'text-green-700 dark:text-green-300' },
+  '南田辺工房': { bg: 'bg-amber-50 dark:bg-amber-950/30', border: 'border-amber-200 dark:border-amber-800', icon: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-300' },
 };
 
 // ===== API取得 =====
@@ -344,7 +342,7 @@ const ALL_LOCATIONS = [
   '田辺店', '大正店', '天下茶屋店', '天王寺店', 'アベノ店',
   '心斎橋店', 'かがや店', '駅丸', '北摂店', '堺東店',
   'イオン松原店', 'イオン守口店', '美和堂福島店',
-  '通販部', '企画部', '特販部', 'かがや工場', '北摂工場', '都島工場', '鶴橋工房'
+  '通販部', '企画部', '特販部', 'かがや工場', '北摂工場', '南田辺工房'
 ];
 
 function StaffSettingsPanel({ onClose }) {

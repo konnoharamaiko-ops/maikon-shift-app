@@ -35,7 +35,7 @@ const STORE_DEPT_MAP = {
   '12200': '堺東店', '12300': 'イオン松原店', '12400': 'イオン守口店',
   '20000': '美和堂福島店',
   '11021': '企画部', '11022': '通販部', '11025': '特販部',
-  '11012': 'かがや工場', '12010': '北摂工場', '11700': '都島工場', '11900': '鶴橋工房',
+  '11012': 'かがや工場', '12010': '北摂工場', '10210': '南田辺工房',
 };
 
 const DEPT_CATEGORIES = {
@@ -44,8 +44,7 @@ const DEPT_CATEGORIES = {
   '特販部': 'online',
   'かがや工場': 'manufacturing',
   '北摂工場': 'manufacturing',
-  '都島工場': 'manufacturing',
-  '鶴橋工房': 'manufacturing',
+  '南田辺工房': 'manufacturing',
 };
 
 // 日本語部署名 → リアルタイムAPIと同じ英語キー
@@ -55,8 +54,6 @@ const DEPT_NAME_TO_KEY = {
   '特販部': 'tokuhan',
   'かがや工場': 'manufacturing_kagaya',
   '北摂工場': 'manufacturing_hokusetsu',
-  '都島工場': 'manufacturing_kagaya',
-  '鶴橋工房': 'manufacturing_kagaya',
   '南田辺工房': 'manufacturing_minamitanabe',
 };
 
@@ -225,7 +222,7 @@ export default async function handler(req, res) {
           dates: {},
         };
       }
-      // 同じキーに複数の部署がマッピングされる場合（都島工場→manufacturing_kagaya等）は時間を合算
+      // 同じキーに複数の部署がマッピングされる場合は時間を合算
       const existingDate = departmentData[deptKey].dates[record.work_date];
       if (existingDate) {
         existingDate.total_hours += parseFloat(record.work_hours);

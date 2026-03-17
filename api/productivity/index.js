@@ -36,8 +36,7 @@ const DEPT_CATEGORIES = {
   '特販部': { label: '特販部', type: 'department' },
   'かがや工場': { label: 'かがや工場', type: 'factory' },
   '北摂工場': { label: '北摂工場', type: 'factory' },
-  '鶴橋工房': { label: '鶴橋工房', type: 'factory' },
-  '都島工場': { label: '都島工場', type: 'factory' },
+  '南田辺工房': { label: '南田辺工房', type: 'factory' },
 };
 
 export const config = {
@@ -519,7 +518,7 @@ const STORE_DEPT_MAP_FULL = {
   '12200': '堺東店', '12300': 'イオン松原店', '12400': 'イオン守口店',
   '20000': '美和堂福島店',
   '11021': '企画部', '11022': '通販部', '11025': '特販部',
-  '11012': 'かがや工場', '12010': '北摂工場', '11700': '都島工場', '11900': '鶴橋工房',
+  '11012': 'かがや工場', '12010': '北摂工場', '10210': '南田辺工房',
 };
 
 function mergeRealtimeIntoDayData(dayData, rtData) {

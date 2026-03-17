@@ -32,9 +32,7 @@ const STORE_DEPT_MAP = {
   '11025': '特販部',
   // ===== 工房・工場グループ（工房0918）=====
   '11012': 'かがや工場',
-  '10210': '南田辺工房',     // 閉店済み
-  '11700': '都島工場',
-  '11900': '鶴橋工房',
+  '10210': '南田辺工房',
   '12010': '北摂工場',
   // ===== 駅催事出張グループ =====
   '11200': '駅丸',
@@ -79,8 +77,6 @@ const LOCATION_TO_STORE_MAP = {
   // ===== 工房・工場 =====
   'かがや工場':         'かがや工場',
   '北摂工場':           '北摂工場',
-  '鶴橋工房':           '鶴橋工房',
-  '都島工場':           '都島工場',
   '南田辺工房':         '南田辺工房',
 };
 
@@ -807,8 +803,6 @@ function buildDepartmentData(storeEmployees) {
     '12010': 'manufacturing_hokusetsu',   // 北摂工場
     '11012': 'manufacturing_kagaya',      // かがや工場
     '10210': 'manufacturing_minamitanabe', // 南田辺工房
-    '11700': 'manufacturing_kagaya',      // 都島工場 → かがや工場扱い
-    '11900': 'manufacturing_kagaya',      // 鶴橋工房 → かがや工場扱い
   };
 
   // 打刻場所名 → 部署キーのマッピング（フォールバック用）
@@ -819,8 +813,6 @@ function buildDepartmentData(storeEmployees) {
     '北摂工場': 'manufacturing_hokusetsu',
     'かがや工場': 'manufacturing_kagaya',
     '南田辺工房': 'manufacturing_minamitanabe',
-    '都島工場': 'manufacturing_kagaya',
-    '鶴橋工房': 'manufacturing_kagaya',
   };
 
   // 店舗名セット（二重表示防止用）
