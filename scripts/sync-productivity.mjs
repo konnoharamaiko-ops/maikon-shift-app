@@ -175,10 +175,24 @@ async function main() {
         });
       }
 
+      // スタッフ個別データを構築
+      const staffRecords = (attendance.staffDetails || []).map(s => ({
+        work_date: date,
+        employee_id: s.employee_id,
+        staff_name: s.staff_name,
+        assigned_store: s.assigned_store,
+        dept_code: s.dept_code,
+        clock_in_place: s.clock_in_place,
+        work_hours: s.work_hours,
+      }));
+
       // Supabaseに保存
-      console.log(`[Sync] Supabaseに保存中... (店舗: ${storeRecords.length}件, 部署: ${deptRecords.length}件)`);
+      console.log(`[Sync] Supabaseに保存中... (店舗: ${storeRecords.length}件, 部署: ${deptRecords.length}件, スタッフ: ${staffRecords.length}件)`);
       await upsertToSupabase(config.supabaseUrl, config.supabaseKey, 'DailyProductivity', storeRecords);
       await upsertToSupabase(config.supabaseUrl, config.supabaseKey, 'DailyDeptProductivity', deptRecords);
+      if (staffRecords.length > 0) {
+        await upsertToSupabase(config.supabaseUrl, config.supabaseKey, 'DailyStaffHours', staffRecords);
+      }
 
       // サマリー出力
       const totalSales = storeRecords.reduce((s, r) => s + r.sales, 0);
@@ -445,6 +459,7 @@ async function fetchJobcanDailyAttendance(cookies, staffList, date) {
   const [year, month, day] = date.split('-');
   const stores = {};
   const departments = {};
+  const staffDetails = []; // 個別スタッフの稼働時間データ
 
   // 並列リクエスト（CONCURRENCY_LIMIT同時）
   const results = [];
@@ -506,6 +521,16 @@ async function fetchJobcanDailyAttendance(cookies, staffList, date) {
             departments[actualStoreName].employees++;
           }
 
+          // 個別スタッフデータを記録
+          staffDetails.push({
+            employee_id: staff.employeeId,
+            staff_name: staff.staffName.replace(/^\d{5}\s*/, '').trim(),
+            assigned_store: actualStoreName,
+            dept_code: staff.deptCode,
+            clock_in_place: clockInPlaceCode || staff.deptCode,
+            work_hours: Math.round(netHours * 100) / 100,
+          });
+
           // デバッグ: 所属と打刻場所が異なる場合にログ出力
           if (actualStoreName !== staff.storeName) {
             console.log(`[Sync] 打刻場所振替: ${staff.storeName} → ${actualStoreName} (empId=${staff.employeeId}, code=${clockInPlaceCode})`);
@@ -543,7 +568,7 @@ async function fetchJobcanDailyAttendance(cookies, staffList, date) {
   const totalStoreEmps = Object.values(stores).reduce((s, v) => s + v.employees, 0);
   console.log(`[Sync] ジョブカン ${date}: 店舗 ${totalStoreHours.toFixed(1)}h (${totalStoreEmps}名), 部署 ${totalDeptHours.toFixed(1)}h`);
 
-  return { stores, departments };
+  return { stores, departments, staffDetails };
 }
 
 /**
@@ -717,6 +742,7 @@ async function upsertToSupabase(supabaseUrl, supabaseKey, tableName, records) {
   const conflictColumns = {
     'DailyProductivity': 'work_date,store_name',
     'DailyDeptProductivity': 'work_date,dept_name',
+    'DailyStaffHours': 'work_date,employee_id',
   };
   const onConflict = conflictColumns[tableName] || '';
   const url = onConflict

@@ -1,12 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Calendar, TrendingUp, TrendingDown, BarChart3, RefreshCw,
-  DollarSign, Clock, Users, ChevronLeft, ChevronRight,
+  DollarSign, Clock, Users, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   AlertTriangle, Target, Activity, Package, ShoppingCart, Lightbulb,
-  Factory, ArrowUpRight, ArrowDownRight, Minus
+  Factory, ArrowUpRight, ArrowDownRight, Minus, UserX, Settings, X, Check
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -26,6 +26,9 @@ const ALL_STORES = [
   '心斎橋店', 'かがや店', '駅丸', '北摂店', '堺東店',
   'イオン松原店', 'イオン守口店', '美和堂福島店'
 ];
+
+// スタッフ除外設定のlocalStorageキー
+const STAFF_EXCLUSION_KEY = 'maikon_staff_exclusions';
 
 function getProductivityColor(prod) {
   if (prod >= PRODUCTIVITY_TARGET) return '#22c55e';
@@ -49,6 +52,21 @@ function getProductivityBg(prod) {
 }
 
 /**
+ * スタッフ除外設定の読み込み
+ * 形式: { "2026-01": ["employee_id1", "employee_id2"], "2026-02": [...] }
+ */
+function loadStaffExclusions() {
+  try {
+    const saved = localStorage.getItem(STAFF_EXCLUSION_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch { return {}; }
+}
+
+function saveStaffExclusions(exclusions) {
+  localStorage.setItem(STAFF_EXCLUSION_KEY, JSON.stringify(exclusions));
+}
+
+/**
  * 過去データをAPIから取得
  */
 async function fetchHistoryData(dateFrom, dateTo) {
@@ -62,6 +80,7 @@ async function fetchHistoryData(dateFrom, dateTo) {
   return {
     data: result.data || [],
     department_data: result.department_data || {},
+    staff_data: result.staff_data || {},
   };
 }
 
@@ -170,13 +189,12 @@ function MetricCard({ title, value, unit, icon: Icon, color, subtitle, index }) 
 }
 
 /**
- * 部署別勤怠サマリーカード
+ * 部署別勤怠サマリーカード（タップ展開付き）
  */
 function DeptCard({ name, category, totalHours, totalWorkers, days, icon: Icon, color, bgColor, deptDetails, onToggle, isExpanded }) {
   const avgHoursPerDay = days > 0 ? (totalHours / days).toFixed(1) : '0.0';
   const avgWorkersPerDay = days > 0 ? Math.round(totalWorkers / days) : 0;
 
-  // 日別データをグラフ用に整形
   const dailyChartData = useMemo(() => {
     if (!deptDetails || !deptDetails.dates) return [];
     return Object.entries(deptDetails.dates)
@@ -205,7 +223,10 @@ function DeptCard({ name, category, totalHours, totalWorkers, days, icon: Icon, 
             </div>
             <h4 className="font-bold text-sm">{name}</h4>
           </div>
-          <span className="text-xs text-muted-foreground">{isExpanded ? '閉じる' : 'タップで詳細'}</span>
+          <span className="text-xs text-muted-foreground flex items-center gap-1">
+            {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            {isExpanded ? '閉じる' : '詳細'}
+          </span>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -227,7 +248,6 @@ function DeptCard({ name, category, totalHours, totalWorkers, days, icon: Icon, 
         </div>
       </div>
 
-      {/* 展開詳細 */}
       <AnimatePresence>
         {isExpanded && dailyChartData.length > 0 && (
           <motion.div
@@ -253,7 +273,6 @@ function DeptCard({ name, category, totalHours, totalWorkers, days, icon: Icon, 
                 </ComposedChart>
               </ResponsiveContainer>
 
-              {/* 日別テーブル */}
               <div className="mt-3 max-h-48 overflow-y-auto">
                 <table className="w-full text-xs">
                   <thead>
@@ -268,7 +287,7 @@ function DeptCard({ name, category, totalHours, totalWorkers, days, icon: Icon, 
                       <tr key={d.date} className="border-b border-gray-100 dark:border-gray-800">
                         <td className="py-1 px-2">{d.label}</td>
                         <td className="py-1 px-2 text-right font-medium">{d.hours.toFixed(1)}h</td>
-                        <td className="py-1 px-2 text-right font-medium">{d.workers}人</td>
+                        <td className="py-1 px-2 text-right">{d.workers}人</td>
                       </tr>
                     ))}
                   </tbody>
@@ -283,6 +302,283 @@ function DeptCard({ name, category, totalHours, totalWorkers, days, icon: Icon, 
 }
 
 /**
+ * 店舗カード（タップ展開付き）
+ */
+function StoreCard({ store, rawData, dateFrom, dateTo, staffByStore, excludedStaffIds, onOpenExclusion }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // この店舗の日別データ
+  const dailyData = useMemo(() => {
+    return rawData
+      .filter(d => d.tenpo_name === store.name)
+      .sort((a, b) => (a.wk_date || '').localeCompare(b.wk_date || ''));
+  }, [rawData, store.name]);
+
+  // この店舗のスタッフデータ
+  const storeStaff = useMemo(() => {
+    return staffByStore[store.name] || [];
+  }, [staffByStore, store.name]);
+
+  // 除外スタッフの合計時間
+  const excludedHours = useMemo(() => {
+    return storeStaff
+      .filter(s => excludedStaffIds.includes(s.employee_id))
+      .reduce((sum, s) => sum + s.work_hours, 0);
+  }, [storeStaff, excludedStaffIds]);
+
+  const adjustedHours = Math.max(0, store.totalHours - excludedHours);
+  const adjustedProductivity = adjustedHours > 0 ? Math.round(store.totalSales / adjustedHours) : 0;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`rounded-xl border shadow-sm transition-all ${getProductivityBg(adjustedProductivity)}`}
+    >
+      <div
+        className="p-4 cursor-pointer"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Package className="h-4 w-4 text-muted-foreground" />
+            <h4 className="font-bold text-sm">{store.name}</h4>
+          </div>
+          <div className="flex items-center gap-2">
+            {excludedHours > 0 && (
+              <span className="text-xs bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 px-1.5 py-0.5 rounded-full">
+                -{excludedHours.toFixed(1)}h除外
+              </span>
+            )}
+            {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div>
+            <p className="text-xs text-muted-foreground">売上</p>
+            <p className="text-sm font-bold">¥{store.totalSales.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">稼働時間</p>
+            <p className="text-sm font-bold">{adjustedHours.toFixed(1)}h</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">人時生産性</p>
+            <p className="text-sm font-bold" style={{ color: getProductivityColor(adjustedProductivity) }}>
+              ¥{adjustedProductivity.toLocaleString()}/h
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 border-t border-gray-200/50 dark:border-gray-700/50 pt-3 space-y-3">
+              {/* 詳細指標 */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+                  <p className="text-muted-foreground">日平均売上</p>
+                  <p className="font-bold">¥{store.avgDailySales.toLocaleString()}</p>
+                </div>
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+                  <p className="text-muted-foreground">延べ出勤人数</p>
+                  <p className="font-bold">{store.totalWorkers}人</p>
+                </div>
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+                  <p className="text-muted-foreground">稼働日数</p>
+                  <p className="font-bold">{store.days}日</p>
+                </div>
+                <div className="bg-white/60 dark:bg-gray-800/60 rounded-lg p-2">
+                  <p className="text-muted-foreground">評価</p>
+                  <p className="font-bold" style={{ color: getProductivityColor(adjustedProductivity) }}>
+                    {getProductivityLabel(adjustedProductivity)}
+                  </p>
+                </div>
+              </div>
+
+              {/* 日別テーブル */}
+              {dailyData.length > 0 && (
+                <div className="max-h-48 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-200 dark:border-gray-700">
+                        <th className="text-left py-1 px-1.5 font-semibold">日付</th>
+                        <th className="text-right py-1 px-1.5 font-semibold">売上</th>
+                        <th className="text-right py-1 px-1.5 font-semibold">時間</th>
+                        <th className="text-right py-1 px-1.5 font-semibold">生産性</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dailyData.map(d => {
+                        const sales = parseInt(d.kingaku || 0);
+                        const hours = parseFloat(d.wk_tm || 0);
+                        const prod = hours > 0 ? Math.round(sales / hours) : 0;
+                        return (
+                          <tr key={d.wk_date} className="border-b border-gray-100 dark:border-gray-800">
+                            <td className="py-1 px-1.5">{d.wk_date ? format(parseISO(d.wk_date), 'M/d(E)', { locale: ja }) : ''}</td>
+                            <td className="py-1 px-1.5 text-right">¥{sales.toLocaleString()}</td>
+                            <td className="py-1 px-1.5 text-right">{hours.toFixed(1)}h</td>
+                            <td className="py-1 px-1.5 text-right font-medium" style={{ color: getProductivityColor(prod) }}>
+                              ¥{prod.toLocaleString()}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* スタッフ除外ボタン */}
+              {storeStaff.length > 0 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onOpenExclusion(store.name); }}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg bg-white/80 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <UserX className="h-3.5 w-3.5" />
+                  スタッフ除外設定 ({storeStaff.length}名)
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+/**
+ * スタッフ除外モーダル
+ */
+function StaffExclusionModal({ isOpen, onClose, storeName, staffList, exclusions, onSave, dateFrom, dateTo }) {
+  // 月キーを取得（dateFromの月）
+  const monthKey = dateFrom ? dateFrom.substring(0, 7) : '';
+  const currentExclusions = exclusions[monthKey] || [];
+
+  const [localExclusions, setLocalExclusions] = useState(currentExclusions);
+
+  // staffListから重複を排除（同じemployee_idは1つにまとめる）
+  const uniqueStaff = useMemo(() => {
+    const map = {};
+    staffList.forEach(s => {
+      if (!map[s.employee_id]) {
+        map[s.employee_id] = { ...s, totalHours: 0 };
+      }
+      map[s.employee_id].totalHours += s.work_hours;
+    });
+    return Object.values(map).sort((a, b) => b.totalHours - a.totalHours);
+  }, [staffList]);
+
+  const toggleExclusion = (employeeId) => {
+    setLocalExclusions(prev =>
+      prev.includes(employeeId)
+        ? prev.filter(id => id !== employeeId)
+        : [...prev, employeeId]
+    );
+  };
+
+  const handleSave = () => {
+    const newExclusions = { ...exclusions };
+    if (localExclusions.length > 0) {
+      newExclusions[monthKey] = localExclusions;
+    } else {
+      delete newExclusions[monthKey];
+    }
+    onSave(newExclusions);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <motion.div
+        initial={{ y: 100, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 100, opacity: 0 }}
+        className="relative bg-white dark:bg-gray-900 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[80vh] overflow-hidden shadow-2xl"
+      >
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-base">{storeName} - スタッフ除外設定</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {monthKey}の稼働時間から除外するスタッフを選択
+              </p>
+            </div>
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-4 overflow-y-auto max-h-[50vh]">
+          {uniqueStaff.length === 0 ? (
+            <p className="text-center text-muted-foreground text-sm py-8">
+              この期間のスタッフデータがありません
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {uniqueStaff.map(staff => {
+                const isExcluded = localExclusions.includes(staff.employee_id);
+                return (
+                  <button
+                    key={staff.employee_id}
+                    onClick={() => toggleExclusion(staff.employee_id)}
+                    className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${
+                      isExcluded
+                        ? 'bg-red-50 dark:bg-red-950/20 border-red-300 dark:border-red-800'
+                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+                        isExcluded ? 'bg-red-200 text-red-700 dark:bg-red-800 dark:text-red-200' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                      }`}>
+                        {isExcluded ? <UserX className="h-4 w-4" /> : staff.staff_name.charAt(0)}
+                      </div>
+                      <div className="text-left">
+                        <p className={`text-sm font-medium ${isExcluded ? 'line-through text-red-500' : ''}`}>
+                          {staff.staff_name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          合計 {staff.totalHours.toFixed(1)}h
+                        </p>
+                      </div>
+                    </div>
+                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                      isExcluded ? 'bg-red-500 border-red-500' : 'border-gray-300 dark:border-gray-600'
+                    }`}>
+                      {isExcluded && <X className="h-3.5 w-3.5 text-white" />}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex gap-3">
+          <Button onClick={onClose} variant="outline" className="flex-1">キャンセル</Button>
+          <Button onClick={handleSave} className="flex-1 bg-primary">
+            <Check className="h-4 w-4 mr-1" />
+            保存
+          </Button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+/**
  * 過去実績ページ
  */
 export default function ProductivityHistory() {
@@ -292,8 +588,10 @@ export default function ProductivityHistory() {
   const [activePreset, setActivePreset] = useState(1);
   const [chartType, setChartType] = useState('productivity');
   const [viewMode, setViewMode] = useState('trend');
-  const [activeTab, setActiveTab] = useState('store'); // 'store' | 'department'
-  const [expandedDept, setExpandedDept] = useState(null); // タップ詳細展開用
+  const [activeTab, setActiveTab] = useState('store');
+  const [expandedDept, setExpandedDept] = useState(null);
+  const [staffExclusions, setStaffExclusions] = useState(loadStaffExclusions);
+  const [exclusionModal, setExclusionModal] = useState({ open: false, storeName: '' });
 
   // データ取得
   const { data: apiResult, isLoading, error, refetch } = useQuery({
@@ -305,8 +603,25 @@ export default function ProductivityHistory() {
 
   const rawData = apiResult?.data || [];
   const departmentData = apiResult?.department_data || {};
+  const staffData = apiResult?.staff_data || {};
 
-  // 日付ごとに集計（全店舗合計）
+  // 現在の月キーの除外リスト
+  const monthKey = dateFrom ? dateFrom.substring(0, 7) : '';
+  const excludedStaffIds = staffExclusions[monthKey] || [];
+
+  // 除外スタッフの時間を店舗別に計算
+  const excludedHoursByStore = useMemo(() => {
+    const result = {};
+    Object.entries(staffData).forEach(([storeName, staffList]) => {
+      const excluded = staffList
+        .filter(s => excludedStaffIds.includes(s.employee_id))
+        .reduce((sum, s) => sum + s.work_hours, 0);
+      if (excluded > 0) result[storeName] = excluded;
+    });
+    return result;
+  }, [staffData, excludedStaffIds]);
+
+  // 日付ごとに集計（全店舗合計）- 除外反映
   const dailySummary = useMemo(() => {
     const byDate = {};
     rawData.forEach(item => {
@@ -320,6 +635,18 @@ export default function ProductivityHistory() {
       byDate[date].totalWorkers += parseInt(item.wk_cnt || 0);
       byDate[date].storeCount++;
     });
+
+    // 除外スタッフの日別時間を差し引く
+    Object.entries(staffData).forEach(([storeName, staffList]) => {
+      staffList
+        .filter(s => excludedStaffIds.includes(s.employee_id))
+        .forEach(s => {
+          if (byDate[s.work_date]) {
+            byDate[s.work_date].totalHours = Math.max(0, byDate[s.work_date].totalHours - s.work_hours);
+          }
+        });
+    });
+
     return Object.values(byDate)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(d => ({
@@ -327,7 +654,7 @@ export default function ProductivityHistory() {
         productivity: d.totalHours > 0 ? Math.round(d.totalSales / d.totalHours) : 0,
         label: format(parseISO(d.date), 'M/d（E）', { locale: ja }),
       }));
-  }, [rawData]);
+  }, [rawData, staffData, excludedStaffIds]);
 
   // 店舗ごとに集計
   const storesSummary = useMemo(() => {
@@ -343,14 +670,21 @@ export default function ProductivityHistory() {
       byStore[name].totalWorkers += parseInt(item.wk_cnt || 0);
       byStore[name].days++;
     });
+
     return Object.values(byStore)
-      .map(s => ({
-        ...s,
-        productivity: s.totalHours > 0 ? Math.round(s.totalSales / s.totalHours) : 0,
-        avgDailySales: s.days > 0 ? Math.round(s.totalSales / s.days) : 0,
-      }))
+      .map(s => {
+        const excluded = excludedHoursByStore[s.name] || 0;
+        const adjustedHours = Math.max(0, s.totalHours - excluded);
+        return {
+          ...s,
+          excludedHours: excluded,
+          adjustedHours,
+          productivity: adjustedHours > 0 ? Math.round(s.totalSales / adjustedHours) : 0,
+          avgDailySales: s.days > 0 ? Math.round(s.totalSales / s.days) : 0,
+        };
+      })
       .sort((a, b) => b.productivity - a.productivity);
-  }, [rawData]);
+  }, [rawData, excludedHoursByStore]);
 
   // 部署別集計
   const deptSummary = useMemo(() => {
@@ -361,6 +695,7 @@ export default function ProductivityHistory() {
       const totalWorkers = dates.reduce((s, d) => s + (d.attended_employees || 0), 0);
       result[name] = {
         name,
+        displayName: dept.name || name,
         category: dept.category,
         totalHours,
         totalWorkers,
@@ -424,6 +759,20 @@ export default function ProductivityHistory() {
     setActivePreset(-1);
   };
 
+  const handleSaveExclusions = (newExclusions) => {
+    setStaffExclusions(newExclusions);
+    saveStaffExclusions(newExclusions);
+  };
+
+  const handleOpenExclusion = (storeName) => {
+    setExclusionModal({ open: true, storeName });
+  };
+
+  // 除外モーダル用のスタッフリスト
+  const modalStaffList = useMemo(() => {
+    return staffData[exclusionModal.storeName] || [];
+  }, [staffData, exclusionModal.storeName]);
+
   return (
     <div className="space-y-5">
       {/* ヘッダー */}
@@ -437,10 +786,18 @@ export default function ProductivityHistory() {
             期間を選択して人時生産性の推移を確認
           </p>
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm" disabled={isLoading}>
-          <RefreshCw className={`h-4 w-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
-          更新
-        </Button>
+        <div className="flex items-center gap-2">
+          {excludedStaffIds.length > 0 && (
+            <span className="text-xs bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 px-2 py-1 rounded-full flex items-center gap-1">
+              <UserX className="h-3 w-3" />
+              {excludedStaffIds.length}名除外中
+            </span>
+          )}
+          <Button onClick={() => refetch()} variant="outline" size="sm" disabled={isLoading}>
+            <RefreshCw className={`h-4 w-4 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
+            更新
+          </Button>
+        </div>
       </div>
 
       {/* 期間選択 */}
@@ -699,7 +1056,7 @@ export default function ProductivityHistory() {
                 )}
               </div>
             ) : (
-              /* 店舗別比較 */
+              /* 店舗別比較 - カード形式 */
               <div className="space-y-4">
                 <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm">
                   <h3 className="font-bold mb-4 flex items-center gap-2">
@@ -732,64 +1089,20 @@ export default function ProductivityHistory() {
                   )}
                 </div>
 
-                {/* 店舗別サマリーテーブル */}
-                <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-                  <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                    <h3 className="font-bold flex items-center gap-2">
-                      <BarChart3 className="h-5 w-5 text-primary" />
-                      店舗別実績サマリー
-                    </h3>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                          <th className="text-left p-3 font-semibold text-xs uppercase tracking-wider">店舗名</th>
-                          <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider">期間合計売上</th>
-                          <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider">日平均売上</th>
-                          <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider">総労働時間</th>
-                          <th className="text-right p-3 font-semibold text-xs uppercase tracking-wider">延べ人数</th>
-                          <th className="text-center p-3 font-semibold text-xs uppercase tracking-wider">人時生産性</th>
-                          <th className="text-center p-3 font-semibold text-xs uppercase tracking-wider">評価</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {storesSummary.map((store, i) => (
-                          <motion.tr
-                            key={store.name}
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ duration: 0.2, delay: i * 0.03 }}
-                            className={`border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors ${i === 0 ? 'bg-emerald-50/50 dark:bg-emerald-950/10' : ''}`}
-                          >
-                            <td className="p-3 font-medium flex items-center gap-2">
-                              {i === 0 && <span className="text-xs">🥇</span>}
-                              {i === 1 && <span className="text-xs">🥈</span>}
-                              {i === 2 && <span className="text-xs">🥉</span>}
-                              {store.name}
-                            </td>
-                            <td className="p-3 text-right font-medium">¥{store.totalSales.toLocaleString()}</td>
-                            <td className="p-3 text-right text-muted-foreground">¥{store.avgDailySales.toLocaleString()}</td>
-                            <td className="p-3 text-right">{store.totalHours.toFixed(1)}h</td>
-                            <td className="p-3 text-right">{store.totalWorkers}人</td>
-                            <td className="p-3 text-center">
-                              <span className="font-bold" style={{ color: getProductivityColor(store.productivity) }}>
-                                ¥{store.productivity.toLocaleString()}/h
-                              </span>
-                            </td>
-                            <td className="p-3 text-center">
-                              <span
-                                className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold text-white shadow-sm"
-                                style={{ backgroundColor: getProductivityColor(store.productivity) }}
-                              >
-                                {getProductivityLabel(store.productivity)}
-                              </span>
-                            </td>
-                          </motion.tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                {/* 店舗別カード（タップで詳細展開） */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {storesSummary.map((store, i) => (
+                    <StoreCard
+                      key={store.name}
+                      store={store}
+                      rawData={rawData}
+                      dateFrom={dateFrom}
+                      dateTo={dateTo}
+                      staffByStore={staffData}
+                      excludedStaffIds={excludedStaffIds}
+                      onOpenExclusion={handleOpenExclusion}
+                    />
+                  ))}
                 </div>
               </div>
             )}
@@ -926,7 +1239,7 @@ export default function ProductivityHistory() {
                                 transition={{ duration: 0.2, delay: i * 0.05 }}
                                 className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
                               >
-                                <td className="p-3 font-medium">{dept.name}</td>
+                                <td className="p-3 font-medium">{dept.displayName || dept.name}</td>
                                 <td className="p-3 text-center">
                                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${catColor}`}>
                                     {catLabel}
@@ -966,7 +1279,7 @@ export default function ProductivityHistory() {
                     <ResponsiveContainer width="100%" height={250}>
                       <BarChart
                         data={categorySummary.manufacturing.depts.map(d => ({
-                          name: d.name,
+                          name: d.displayName || d.name,
                           totalHours: d.totalHours,
                           totalWorkers: d.totalWorkers,
                         }))}
@@ -991,6 +1304,22 @@ export default function ProductivityHistory() {
               </>
             )}
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* スタッフ除外モーダル */}
+      <AnimatePresence>
+        {exclusionModal.open && (
+          <StaffExclusionModal
+            isOpen={exclusionModal.open}
+            onClose={() => setExclusionModal({ open: false, storeName: '' })}
+            storeName={exclusionModal.storeName}
+            staffList={modalStaffList}
+            exclusions={staffExclusions}
+            onSave={handleSaveExclusions}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+          />
         )}
       </AnimatePresence>
 

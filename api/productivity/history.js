@@ -114,6 +114,18 @@ export default async function handler(req, res) {
       `work_date=gte.${date_from}&work_date=lte.${endDate}&order=work_date.asc`
     );
 
+    // DailyStaffHoursテーブルからスタッフ個別データを取得
+    let staffData = [];
+    try {
+      staffData = await fetchFromSupabase(
+        supabaseUrl, supabaseKey,
+        'DailyStaffHours',
+        `work_date=gte.${date_from}&work_date=lte.${endDate}&order=work_date.asc,assigned_store.asc`
+      );
+    } catch (staffErr) {
+      console.log(`[History] DailyStaffHours取得スキップ: ${staffErr.message}`);
+    }
+
     // 日付範囲のリストを生成
     const dates = getDateRange(date_from, endDate);
 
@@ -259,12 +271,28 @@ export default async function handler(req, res) {
       }
     }
 
+    // スタッフ個別データを店舗/部署別にグループ化
+    const staffByStore = {};
+    for (const s of staffData) {
+      const key = s.assigned_store;
+      if (!staffByStore[key]) staffByStore[key] = [];
+      staffByStore[key].push({
+        employee_id: s.employee_id,
+        staff_name: s.staff_name,
+        work_date: s.work_date,
+        work_hours: parseFloat(s.work_hours) || 0,
+        dept_code: s.dept_code,
+        clock_in_place: s.clock_in_place,
+      });
+    }
+
     return res.status(200).json({
       success: true,
       date_from,
       date_to: endDate,
       data: allData,
       department_data: departmentData,
+      staff_data: staffByStore,
       source: realtimeData ? 'supabase_cache+realtime' : 'supabase_cache',
       timestamp: new Date().toISOString(),
     });

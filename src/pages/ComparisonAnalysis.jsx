@@ -281,10 +281,12 @@ function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle
   );
 }
 
-// ===== 部署別比較カード =====
-function DeptComparisonCard({ deptName, current, previous, compLabel }) {
+// ===== 部署別比較カード（タップ展開付き） =====
+function DeptComparisonCard({ deptName, current, previous, compLabel, isExpanded, onToggle }) {
   const hoursYoY = calcYoY(current.work_hours, previous.work_hours);
+  const workersYoY = calcYoY(current.attended_employees || 0, previous.attended_employees || 0);
   const HoursIcon = getYoYIcon(hoursYoY);
+  const WorkersIcon = getYoYIcon(workersYoY);
   const IconComp = DEPT_ICONS[deptName] || Briefcase;
   const colors = DEPT_COLORS[deptName] || { bg: 'bg-gray-50 dark:bg-gray-950/30', border: 'border-gray-200 dark:border-gray-800', icon: 'bg-gray-500', text: 'text-gray-700 dark:text-gray-300' };
 
@@ -293,30 +295,89 @@ function DeptComparisonCard({ deptName, current, previous, compLabel }) {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3 }}
-      className={`rounded-xl border shadow-sm ${colors.bg} ${colors.border} p-4`}
+      className={`rounded-xl border shadow-sm ${colors.bg} ${colors.border} overflow-hidden`}
     >
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className={`p-2 rounded-lg ${colors.icon}`}>
-            <IconComp className="h-4 w-4 text-white" />
+      <div
+        className="p-4 cursor-pointer hover:opacity-90 transition-opacity"
+        onClick={onToggle}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className={`p-2 rounded-lg ${colors.icon}`}>
+              <IconComp className="h-4 w-4 text-white" />
+            </div>
+            <h4 className={`font-bold text-sm ${colors.text}`}>{deptName}</h4>
           </div>
-          <h4 className={`font-bold text-sm ${colors.text}`}>{deptName}</h4>
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-bold ${getYoYBg(hoursYoY)} ${getYoYColor(hoursYoY)}`}>
+              <HoursIcon className="h-3 w-3" />
+              {formatYoY(hoursYoY)}
+            </span>
+            {isExpanded ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
+          </div>
         </div>
-        <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-bold ${getYoYBg(hoursYoY)} ${getYoYColor(hoursYoY)}`}>
-          <HoursIcon className="h-3 w-3" />
-          {formatYoY(hoursYoY)}
-        </span>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs text-muted-foreground">対象 稼働時間</p>
+            <p className="text-lg font-bold">{current.work_hours.toFixed(1)}<span className="text-xs font-normal ml-0.5">h</span></p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">{compLabel || '比較'} 稼働時間</p>
+            <p className="text-lg font-bold text-muted-foreground">{previous.work_hours.toFixed(1)}<span className="text-xs font-normal ml-0.5">h</span></p>
+          </div>
+        </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <p className="text-xs text-muted-foreground">対象 稼働時間</p>
-          <p className="text-lg font-bold">{current.work_hours.toFixed(1)}<span className="text-xs font-normal ml-0.5">h</span></p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">{compLabel || '比較'} 稼働時間</p>
-          <p className="text-lg font-bold text-muted-foreground">{previous.work_hours.toFixed(1)}<span className="text-xs font-normal ml-0.5">h</span></p>
-        </div>
-      </div>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 border-t border-gray-200/50 dark:border-gray-700/50 pt-3">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-700">
+                    <th className="text-left py-1.5 px-1 font-semibold text-muted-foreground">指標</th>
+                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">対象</th>
+                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">{compLabel || '比較'}</th>
+                    <th className="text-right py-1.5 px-1 font-semibold text-muted-foreground">比率</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b border-gray-100 dark:border-gray-800">
+                    <td className="py-1.5 px-1 font-medium flex items-center gap-1"><Clock className="h-3 w-3 text-amber-500" />稼働時間</td>
+                    <td className="py-1.5 px-1 text-right font-semibold">{current.work_hours.toFixed(1)}h</td>
+                    <td className="py-1.5 px-1 text-right text-muted-foreground">{previous.work_hours.toFixed(1)}h</td>
+                    <td className={`py-1.5 px-1 text-right font-bold ${getYoYColor(hoursYoY)}`}>{formatYoY(hoursYoY)}</td>
+                  </tr>
+                  <tr className="border-b border-gray-100 dark:border-gray-800">
+                    <td className="py-1.5 px-1 font-medium flex items-center gap-1"><Users className="h-3 w-3 text-blue-500" />出勤人数</td>
+                    <td className="py-1.5 px-1 text-right font-semibold">{(current.attended_employees || 0)}人</td>
+                    <td className="py-1.5 px-1 text-right text-muted-foreground">{(previous.attended_employees || 0)}人</td>
+                    <td className={`py-1.5 px-1 text-right font-bold ${getYoYColor(workersYoY)}`}>{formatYoY(workersYoY)}</td>
+                  </tr>
+                  {(current.work_hours > 0 || previous.work_hours > 0) && (
+                    <tr>
+                      <td className="py-1.5 px-1 font-medium flex items-center gap-1"><Activity className="h-3 w-3 text-purple-500" />1人あたり時間</td>
+                      <td className="py-1.5 px-1 text-right font-semibold">
+                        {(current.attended_employees || 0) > 0 ? (current.work_hours / current.attended_employees).toFixed(1) : '0.0'}h
+                      </td>
+                      <td className="py-1.5 px-1 text-right text-muted-foreground">
+                        {(previous.attended_employees || 0) > 0 ? (previous.work_hours / previous.attended_employees).toFixed(1) : '0.0'}h
+                      </td>
+                      <td className="py-1.5 px-1 text-right font-bold text-gray-500">-</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -592,6 +653,7 @@ export default function ComparisonAnalysis() {
   const [activeTab, setActiveTab] = useState('store');
   const [chartMetric, setChartMetric] = useState('sales');
   const [expandedStore, setExpandedStore] = useState(null);
+  const [expandedDept, setExpandedDept] = useState(null);
   const [showStaffSettings, setShowStaffSettings] = useState(false);
 
   // 月別: 比較対象月の計算
@@ -1158,6 +1220,8 @@ export default function ComparisonAnalysis() {
                           current={d.current}
                           previous={d.previous}
                           compLabel={compLabel}
+                          isExpanded={expandedDept === d.name}
+                          onToggle={() => setExpandedDept(expandedDept === d.name ? null : d.name)}
                         />
                       ))}
                     </div>
