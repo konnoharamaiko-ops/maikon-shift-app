@@ -820,7 +820,7 @@ function BackfillManager() {
   const fetchProgress = async () => {
     try {
       const cronSecret = localStorage.getItem('maikon_cron_secret') || '';
-      const resp = await fetch(`/api/productivity/backfill?status&key=${cronSecret}`);
+      const resp = await fetch(`/api/productivity/save-history?mode=status&key=${cronSecret}`);
       if (resp.ok) {
         const data = await resp.json();
         setProgress(data);
@@ -847,7 +847,7 @@ function BackfillManager() {
     try {
       const cronSecret = localStorage.getItem('maikon_cron_secret') || '';
       const resp = await fetch(
-        `/api/productivity/backfill?date_from=${dateFrom}&date_to=${endDate}&key=${cronSecret}`
+        `/api/productivity/save-history?mode=backfill&date_from=${dateFrom}&date_to=${endDate}&key=${cronSecret}`
       );
       const data = await resp.json();
 
@@ -901,7 +901,7 @@ function BackfillManager() {
 
       try {
         const resp = await fetch(
-          `/api/productivity/backfill?date_from=${from}&date_to=${to}&key=${cronSecret}`
+          `/api/productivity/save-history?mode=backfill&date_from=${from}&date_to=${to}&key=${cronSecret}`
         );
         const data = await resp.json();
         if (data.success) {
