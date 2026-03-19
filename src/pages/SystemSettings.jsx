@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '@/api/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, Settings, Save, Store as StoreIcon, Users, Calendar, Bell, Lock, MessageSquare, ExternalLink, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Shield, Settings, Save, Store as StoreIcon, Users, Calendar, Bell, Lock, MessageSquare, ExternalLink, CheckCircle2, AlertCircle, Database, Play, Loader2, Download } from 'lucide-react';
 import RolePermissionsTab from '@/components/system-settings/RolePermissionsTab';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -241,6 +241,7 @@ export default function SystemSettings() {
             <TabsTrigger value="line" className="text-xs sm:text-sm">LINE連携</TabsTrigger>
             <TabsTrigger value="roles" className="text-xs sm:text-sm">ロール権限</TabsTrigger>
             <TabsTrigger value="advanced" className="text-xs sm:text-sm">詳細設定</TabsTrigger>
+            <TabsTrigger value="backfill" className="text-xs sm:text-sm">過去データ取得</TabsTrigger>
           </TabsList>
 
           <TabsContent value="general">
@@ -792,8 +793,297 @@ export default function SystemSettings() {
               </Button>
             </div>
           </TabsContent>
+
+          <TabsContent value="backfill">
+            <BackfillManager />
+          </TabsContent>
         </Tabs>
       </main>
+    </div>
+  );
+}
+
+// ============================================================
+// バックフィル管理コンポーネント
+// ============================================================
+
+function BackfillManager() {
+  const [isRunning, setIsRunning] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [autoMode, setAutoMode] = useState(false);
+  const [autoProgress, setAutoProgress] = useState({ current: '', total: 0, done: 0 });
+
+  // 進捗を取得
+  const fetchProgress = async () => {
+    try {
+      const cronSecret = localStorage.getItem('maikon_cron_secret') || '';
+      const resp = await fetch(`/api/productivity/backfill?status&key=${cronSecret}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setProgress(data);
+      }
+    } catch (e) {
+      console.error('進捗取得エラー:', e);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchProgress();
+  }, []);
+
+  // 手動バックフィル実行
+  const runBackfill = async () => {
+    if (!dateFrom) {
+      toast.error('開始日を指定してください');
+      return;
+    }
+    const endDate = dateTo || dateFrom;
+    setIsRunning(true);
+    addLog(`バックフィル開始: ${dateFrom} ～ ${endDate}`);
+
+    try {
+      const cronSecret = localStorage.getItem('maikon_cron_secret') || '';
+      const resp = await fetch(
+        `/api/productivity/backfill?date_from=${dateFrom}&date_to=${endDate}&key=${cronSecret}`
+      );
+      const data = await resp.json();
+
+      if (data.success) {
+        addLog(`完了: ${data.results.length}日分処理`);
+        data.results.forEach(r => {
+          addLog(`  ${r.date}: ${r.status} (${r.saved || 0}件保存)`);
+        });
+        toast.success(`${data.results.length}日分のデータを取得しました`);
+      } else {
+        addLog(`エラー: ${data.error}`);
+        toast.error(data.error);
+      }
+    } catch (e) {
+      addLog(`エラー: ${e.message}`);
+      toast.error(e.message);
+    } finally {
+      setIsRunning(false);
+      fetchProgress();
+    }
+  };
+
+  // 自動バックフィル（7日ずつ段階的に取得）
+  const runAutoBackfill = async () => {
+    const threeYearsAgo = new Date();
+    threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
+    const startDate = threeYearsAgo.toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0];
+
+    setAutoMode(true);
+    setIsRunning(true);
+    addLog(`自動バックフィル開始: ${startDate} ～ ${today}`);
+
+    let currentDate = new Date(startDate);
+    const endDateObj = new Date(today);
+    let totalDays = Math.ceil((endDateObj - currentDate) / (1000 * 60 * 60 * 24));
+    let doneDays = 0;
+
+    const cronSecret = localStorage.getItem('maikon_cron_secret') || '';
+
+    while (currentDate <= endDateObj && autoMode) {
+      const batchEnd = new Date(currentDate);
+      batchEnd.setDate(batchEnd.getDate() + 6);
+      if (batchEnd > endDateObj) batchEnd.setTime(endDateObj.getTime());
+
+      const from = currentDate.toISOString().split('T')[0];
+      const to = batchEnd.toISOString().split('T')[0];
+
+      setAutoProgress({ current: `${from} ～ ${to}`, total: totalDays, done: doneDays });
+      addLog(`処理中: ${from} ～ ${to}`);
+
+      try {
+        const resp = await fetch(
+          `/api/productivity/backfill?date_from=${from}&date_to=${to}&key=${cronSecret}`
+        );
+        const data = await resp.json();
+        if (data.success) {
+          const successCount = data.results.filter(r => r.status === 'success').length;
+          addLog(`  完了: ${successCount}/${data.results.length}日成功`);
+          doneDays += data.results.length;
+        } else {
+          addLog(`  エラー: ${data.error}`);
+        }
+      } catch (e) {
+        addLog(`  エラー: ${e.message}`);
+      }
+
+      // 次のバッチへ
+      currentDate = new Date(batchEnd);
+      currentDate.setDate(currentDate.getDate() + 1);
+
+      // レート制限対策: バッチ間に3秒待機
+      await new Promise(r => setTimeout(r, 3000));
+    }
+
+    setIsRunning(false);
+    setAutoMode(false);
+    addLog('自動バックフィル完了');
+    toast.success('自動バックフィルが完了しました');
+    fetchProgress();
+  };
+
+  const stopAutoBackfill = () => {
+    setAutoMode(false);
+    addLog('自動バックフィルを停止しました');
+    toast.info('停止しました。次回は続きから再開できます。');
+  };
+
+  const addLog = (msg) => {
+    const time = new Date().toLocaleTimeString('ja-JP');
+    setLogs(prev => [`[${time}] ${msg}`, ...prev].slice(0, 100));
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="w-5 h-5" />
+            過去実績データ取得（バックフィル）
+          </CardTitle>
+          <CardDescription>
+            ジョブカンから過去の勤怠データを取得してSupabaseに保存します。
+            1回のリクエストで最大7日分を処理します。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* 進捗表示 */}
+          {progress && (
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+              <h4 className="font-medium mb-2">取得進捗</h4>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                <div>
+                  <span className="text-gray-500">完了日数</span>
+                  <p className="font-bold text-lg">{progress.completed_days || 0}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500">目標日数</span>
+                  <p className="font-bold text-lg">{progress.total_target_days || 1095}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500">進捗率</span>
+                  <p className="font-bold text-lg">{progress.progress_percent || 0}%</p>
+                </div>
+                <div>
+                  <span className="text-gray-500">エラー</span>
+                  <p className="font-bold text-lg text-red-500">{progress.error_days || 0}</p>
+                </div>
+              </div>
+              {progress.oldest_date && (
+                <p className="text-xs text-gray-500 mt-2">
+                  取得範囲: {progress.oldest_date} ～ {progress.newest_date}
+                </p>
+              )}
+              <div className="w-full bg-gray-200 rounded-full h-2 mt-3">
+                <div
+                  className="bg-blue-500 h-2 rounded-full transition-all"
+                  style={{ width: `${progress.progress_percent || 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* CRON_SECRET入力 */}
+          <div>
+            <Label>認証キー（CRON_SECRET）</Label>
+            <Input
+              type="password"
+              placeholder="Vercelの環境変数に設定したCRON_SECRET"
+              defaultValue={localStorage.getItem('maikon_cron_secret') || ''}
+              onChange={e => localStorage.setItem('maikon_cron_secret', e.target.value)}
+              className="mt-1"
+            />
+            <p className="text-xs text-gray-500 mt-1">バックフィルAPIの認証に必要です</p>
+          </div>
+
+          {/* 手動実行 */}
+          <div className="border rounded-lg p-4 space-y-3">
+            <h4 className="font-medium">手動実行（日付範囲指定）</h4>
+            <div className="flex flex-wrap gap-3">
+              <div>
+                <Label>開始日</Label>
+                <Input
+                  type="date"
+                  value={dateFrom}
+                  onChange={e => setDateFrom(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label>終了日（最大7日間）</Label>
+                <Input
+                  type="date"
+                  value={dateTo}
+                  onChange={e => setDateTo(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+            <Button
+              onClick={runBackfill}
+              disabled={isRunning || !dateFrom}
+              className="gap-2"
+            >
+              {isRunning && !autoMode ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              実行
+            </Button>
+          </div>
+
+          {/* 自動バックフィル */}
+          <div className="border rounded-lg p-4 space-y-3">
+            <h4 className="font-medium">自動バックフィル（過去3年分を段階取得）</h4>
+            <p className="text-sm text-gray-500">
+              過去3年分のデータを7日ずつ自動的に取得します。
+              途中で停止しても、次回は続きから再開できます。
+            </p>
+            {autoMode && (
+              <div className="bg-blue-50 dark:bg-blue-950/30 rounded p-3 text-sm">
+                <p>処理中: {autoProgress.current}</p>
+                <p>進捗: {autoProgress.done} / {autoProgress.total} 日</p>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button
+                onClick={runAutoBackfill}
+                disabled={isRunning}
+                className="gap-2"
+                variant="default"
+              >
+                {isRunning && autoMode ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                自動取得開始
+              </Button>
+              {autoMode && (
+                <Button
+                  onClick={stopAutoBackfill}
+                  variant="destructive"
+                >
+                  停止
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* ログ表示 */}
+          {logs.length > 0 && (
+            <div className="border rounded-lg p-4">
+              <h4 className="font-medium mb-2">実行ログ</h4>
+              <div className="bg-gray-900 text-green-400 rounded p-3 max-h-60 overflow-y-auto font-mono text-xs">
+                {logs.map((log, i) => (
+                  <div key={i}>{log}</div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
