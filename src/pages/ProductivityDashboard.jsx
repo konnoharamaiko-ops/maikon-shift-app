@@ -688,17 +688,101 @@ function PlanningMemoSection({ selectedDate }) {
   );
 }
 
+// 全店舗・部署の選択肢を生成するヘルパー
+function StoreSelectOptions() {
+  return (
+    <>
+      <option value="">選択してください</option>
+      <optgroup label="店1018">
+        {ALL_STORE_NAMES.map(n => <option key={n} value={n}>{n}</option>)}
+      </optgroup>
+      <optgroup label="通企総0919">
+        <option value="特販部">特販部</option>
+        <option value="通販部">通販部</option>
+        <option value="企画部">企画部</option>
+      </optgroup>
+      <optgroup label="工房0918">
+        <option value="北摂工場">北摂工場</option>
+        <option value="かがや工場">かがや工場</option>
+        <option value="南田辺工房">南田辺工房</option>
+      </optgroup>
+      <optgroup label="駅催事出張">
+        <option value="駅催事出張">駅催事出張</option>
+      </optgroup>
+    </>
+  );
+}
+
 function ExcludedStaffCard({ s, updateStaffSetting, i }) {
   const [editingReason, setEditingReason] = useState(false);
   const [reasonText, setReasonText] = useState(s.exclude_reason || '');
+  const [useTimeAlloc, setUseTimeAlloc] = useState(!!(s.time_allocations && s.time_allocations.length > 0));
+  const [allocations, setAllocations] = useState(
+    s.time_allocations && s.time_allocations.length > 0
+      ? s.time_allocations
+      : [{ from: '09:00', to: '18:00', store: s.override_store || '' }]
+  );
+
+  // 時間帯別振り分けを更新して保存
+  const saveAllocations = (newAllocs) => {
+    setAllocations(newAllocs);
+    updateStaffSetting(s.id, 'time_allocations', newAllocs);
+    // 単一移動先も同期（後方互換用）
+    if (newAllocs.length === 1 && newAllocs[0].store) {
+      updateStaffSetting(s.id, 'override_store', newAllocs[0].store);
+    } else if (newAllocs.length > 1) {
+      // 複数の場合はoverride_storeをクリア（time_allocationsを優先）
+      updateStaffSetting(s.id, 'override_store', null);
+    }
+  };
+
+  const addAllocation = () => {
+    const last = allocations[allocations.length - 1];
+    const newAllocs = [...allocations, { from: last?.to || '12:00', to: '18:00', store: '' }];
+    saveAllocations(newAllocs);
+  };
+
+  const removeAllocation = (idx) => {
+    if (allocations.length <= 1) return;
+    const newAllocs = allocations.filter((_, i) => i !== idx);
+    saveAllocations(newAllocs);
+  };
+
+  const updateAllocation = (idx, key, value) => {
+    const newAllocs = allocations.map((a, i) => i === idx ? { ...a, [key]: value } : a);
+    saveAllocations(newAllocs);
+  };
+
+  // 単純移動先↔時間帯別の切り替え
+  const toggleTimeAlloc = () => {
+    if (useTimeAlloc) {
+      // 時間帯別→単純移動先に戻す
+      setUseTimeAlloc(false);
+      const firstStore = allocations[0]?.store || '';
+      updateStaffSetting(s.id, 'override_store', firstStore);
+      updateStaffSetting(s.id, 'time_allocations', null);
+    } else {
+      // 単純移動先→時間帯別に切り替え
+      setUseTimeAlloc(true);
+      const initAllocs = [{ from: '09:00', to: '18:00', store: s.override_store || '' }];
+      setAllocations(initAllocs);
+      saveAllocations(initAllocs);
+    }
+  };
+
+  // 移動先のサマリー表示
+  const allocSummary = useTimeAlloc && allocations.length > 0
+    ? allocations.filter(a => a.store).map(a => `${a.from}〜${a.to} ${a.store}`).join(', ')
+    : s.override_store || null;
+
   return (
     <div key={s.id} className={`p-3 bg-white dark:bg-gray-900 ${i > 0 ? 'border-t border-red-100 dark:border-red-900' : ''}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-bold">{s.id}</p>
-            {s.override_store && (
-              <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 px-1.5 py-0.5 rounded-full">→{s.override_store}</span>
+            {allocSummary && (
+              <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 px-1.5 py-0.5 rounded-full truncate max-w-[200px]">→{allocSummary}</span>
             )}
           </div>
           {s.excluded_from_store && (
@@ -706,6 +790,9 @@ function ExcludedStaffCard({ s, updateStaffSetting, i }) {
           )}
           {s.excluded_at && (
             <p className="text-xs text-muted-foreground">除外日時: {s.excluded_at}</p>
+          )}
+          {s.settings_date && (
+            <p className="text-[10px] text-orange-500 mt-0.5">※ 本日限りの設定（翌日自動リセット）</p>
           )}
           {/* 除外理由 */}
           <div className="mt-1.5">
@@ -737,32 +824,68 @@ function ExcludedStaffCard({ s, updateStaffSetting, i }) {
               </button>
             )}
           </div>
-          {/* 移動先変更 */}
-          <div className="mt-1.5">
-            <label className="text-xs text-muted-foreground block mb-0.5">移動先店舗（任意）</label>
-            <select
-              value={s.override_store || ''}
-              onChange={e => updateStaffSetting(s.id, 'override_store', e.target.value)}
-              className="w-full rounded border dark:border-gray-600 bg-gray-50 dark:bg-gray-800 px-2 py-1 text-xs"
-            >
-              <option value="">移動先なし</option>
-              <optgroup label="店1018">
-                {ALL_STORE_NAMES.map(n => <option key={n} value={n}>{n}</option>)}
-              </optgroup>
-              <optgroup label="通企総0919">
-                <option value="特販部">特販部</option>
-                <option value="通販部">通販部</option>
-                <option value="企画部">企画部</option>
-              </optgroup>
-              <optgroup label="工房0918">
-                <option value="北摂工場">北摂工場</option>
-                <option value="かがや工場">かがや工場</option>
-                <option value="南田辺工房">南田辺工房</option>
-              </optgroup>
-              <optgroup label="駅催事出張">
-                <option value="駅催事出張">駅催事出張</option>
-              </optgroup>
-            </select>
+          {/* 移動先設定: 単純 or 時間帯別 */}
+          <div className="mt-2">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-muted-foreground">移動先設定</label>
+              <button
+                onClick={toggleTimeAlloc}
+                className="text-[10px] text-blue-500 hover:underline"
+              >
+                {useTimeAlloc ? '← 単純移動先に戻す' : '時間帯別に振り分け →'}
+              </button>
+            </div>
+            {!useTimeAlloc ? (
+              /* 単純移動先（従来） */
+              <select
+                value={s.override_store || ''}
+                onChange={e => updateStaffSetting(s.id, 'override_store', e.target.value)}
+                className="w-full rounded border dark:border-gray-600 bg-gray-50 dark:bg-gray-800 px-2 py-1 text-xs"
+              >
+                <option value="">移動先なし</option>
+                <StoreSelectOptions />
+              </select>
+            ) : (
+              /* 時間帯別振り分け */
+              <div className="space-y-1.5">
+                {allocations.map((alloc, idx) => (
+                  <div key={idx} className="flex items-center gap-1 bg-gray-50 dark:bg-gray-800 rounded p-1.5">
+                    <input
+                      type="time"
+                      value={alloc.from}
+                      onChange={e => updateAllocation(idx, 'from', e.target.value)}
+                      className="w-[70px] rounded border dark:border-gray-600 bg-white dark:bg-gray-700 px-1 py-0.5 text-[11px]"
+                    />
+                    <span className="text-[10px] text-muted-foreground">〜</span>
+                    <input
+                      type="time"
+                      value={alloc.to}
+                      onChange={e => updateAllocation(idx, 'to', e.target.value)}
+                      className="w-[70px] rounded border dark:border-gray-600 bg-white dark:bg-gray-700 px-1 py-0.5 text-[11px]"
+                    />
+                    <select
+                      value={alloc.store}
+                      onChange={e => updateAllocation(idx, 'store', e.target.value)}
+                      className="flex-1 rounded border dark:border-gray-600 bg-white dark:bg-gray-700 px-1 py-0.5 text-[11px]"
+                    >
+                      <StoreSelectOptions />
+                    </select>
+                    {allocations.length > 1 && (
+                      <button
+                        onClick={() => removeAllocation(idx)}
+                        className="text-red-400 hover:text-red-600 text-xs px-1"
+                      >×</button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  onClick={addAllocation}
+                  className="text-[10px] text-blue-500 hover:underline flex items-center gap-0.5"
+                >
+                  <Plus size={10} /> 時間帯を追加
+                </button>
+              </div>
+            )}
           </div>
         </div>
         {/* 除外解除ボタン */}
@@ -1724,7 +1847,36 @@ function addOperationLog(action, staffName, detail) {
 function loadStaffSettings() {
   try {
     const saved = localStorage.getItem(STAFF_SETTINGS_KEY);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      const todayStr = new Date().toLocaleDateString('ja-JP');
+      let changed = false;
+      const cleaned = {};
+      for (const [id, setting] of Object.entries(parsed)) {
+        // 日次リセット: settings_dateが今日でなければ除外設定をクリア
+        if (setting.excluded === true && setting.settings_date && setting.settings_date !== todayStr) {
+          // 除外設定をリセット（確定値はSupabaseに保存済みなので影響なし）
+          cleaned[id] = {
+            ...setting,
+            excluded: false,
+            excluded_at: null,
+            excluded_from_store: null,
+            settings_date: null,
+            override_store: null,
+            time_allocations: null,
+            exclude_reason: null,
+          };
+          changed = true;
+          console.log(`[DailyReset] ${id} の除外設定をリセット（設定日: ${setting.settings_date}）`);
+        } else {
+          cleaned[id] = setting;
+        }
+      }
+      if (changed) {
+        localStorage.setItem(STAFF_SETTINGS_KEY, JSON.stringify(cleaned));
+      }
+      return cleaned;
+    }
   } catch (e) {}
   return {};
 }
@@ -2449,8 +2601,28 @@ export default function ProductivityDashboard() {
         localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
         console.log('[Migration] 店舗名を新名称に更新しました');
       }
-      // 日次自動リセットは初期化時には行わない（APIデータ取得後に出勤者確認でリセット）
-      // ※翌日その所属場所に初めて誰かが出勤するまでは設定を維持する
+      // 日次リセット: settings_dateが今日でなければ除外設定をクリア
+      const todayStr = new Date().toLocaleDateString('ja-JP');
+      let resetOccurred = false;
+      for (const [id, setting] of Object.entries(migratedSettings)) {
+        if (setting.excluded === true && setting.settings_date && setting.settings_date !== todayStr) {
+          migratedSettings[id] = {
+            ...setting,
+            excluded: false,
+            excluded_at: null,
+            excluded_from_store: null,
+            settings_date: null,
+            override_store: null,
+            time_allocations: null,
+            exclude_reason: null,
+          };
+          resetOccurred = true;
+          console.log(`[DailyReset] ${id} の除外設定をリセット（設定日: ${setting.settings_date}）`);
+        }
+      }
+      if (resetOccurred) {
+        localStorage.setItem('maikon_staff_settings', JSON.stringify(migratedSettings));
+      }
       return migratedSettings;
     } catch { return {}; }
   });

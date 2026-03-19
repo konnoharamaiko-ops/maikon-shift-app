@@ -591,8 +591,45 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
 
     // 除外設定がある場合の処理
     if (clientSetting?.excluded === true) {
-      if (clientSetting?.override_store) {
-        // 移動先が設定されている場合：元の店舗から除外し、移動先店舗の人時計算に追加する
+      // 時間帯別振り分けがある場合
+      if (clientSetting?.time_allocations && clientSetting.time_allocations.length > 0) {
+        const allocs = clientSetting.time_allocations.filter(a => a.store);
+        if (allocs.length > 0) {
+          // 各時間帯ごとに別の店舗に振り分けてstoreEmployeesに追加
+          const empStart = emp.clock_in_minutes;
+          const empEnd = emp.clock_out_minutes || (new Date().getHours() * 60 + new Date().getMinutes());
+          allocs.forEach(alloc => {
+            const allocFrom = parseTimeToMinutes(alloc.from);
+            const allocTo = parseTimeToMinutes(alloc.to);
+            if (allocFrom === null || allocTo === null) return;
+            // 重なる時間帯を計算
+            const overlapStart = Math.max(empStart, allocFrom);
+            const overlapEnd = Math.min(empEnd, allocTo);
+            if (overlapStart < overlapEnd) {
+              const allocHours = (overlapEnd - overlapStart) / 60;
+              storeEmployees.push({
+                ...emp,
+                store_name: alloc.store,
+                is_transferred: true,
+                work_hours: allocHours,
+                clock_in_minutes: overlapStart,
+                clock_out_minutes: overlapEnd,
+                staff_type: master?.staff_type || 'パート',
+                is_employee: isEmployee,
+                service_hours_applied: false,
+                time_allocation_applied: true,
+              });
+              console.log(`[StaffSettings] 時間帯別振り分け: ${emp.name} ${alloc.from}〜${alloc.to} → ${alloc.store} (${allocHours.toFixed(1)}h)`);
+            }
+          });
+          return; // 元の店舗からは除外
+        } else {
+          // 振り分け先なし：どの店舗にも追加しない
+          console.log(`[StaffSettings] 除外: ${emp.name}`);
+          return;
+        }
+      } else if (clientSetting?.override_store) {
+        // 単純移動先が設定されている場合：元の店舗から除外し、移動先店舗の人時計算に追加する
         emp = { ...emp, store_name: clientSetting.override_store, is_transferred: true };
         console.log(`[StaffSettings] 除外＋移動: ${emp.name} → ${clientSetting.override_store}`);
         // 移動先として処理を続行（returnしない）
