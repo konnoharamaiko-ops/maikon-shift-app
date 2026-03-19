@@ -271,14 +271,21 @@ async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, 
   const { storeEmployees, employeeProductivity } = applyEmployeeServiceHours(allEmployees, staffMaster, clientStaffSettings);
 
   // アプリ内所属設定に基づいてstoreEmployeesのstore_nameを上書き
-  // belongs_planning/online/manufacturingが登録されている場合は打刻場所に関わらずその所属に振り分け
+  // ただし、打刻場所（stamp_store）が取得できている場合は打刻場所を優先する
+  // belongs_*は「打刻場所が取得できない場合」または「未出勤の場合」のフォールバックとして使用
   storeEmployees.forEach(emp => {
     const affiliation = appUserAffiliationMap[emp.name] || null;
     if (affiliation) {
       emp.app_affiliation = affiliation.category;
       emp.app_affiliation_store = affiliation.storeName;
-      // store_nameを所属先に上書き
-      emp.store_name = affiliation.storeName;
+      // 打刻場所（stamp_store）が取得できている場合は打刻場所を優先
+      // stamp_storeがない場合（未出勤・打刻場所不明）のみbelongs設定で上書き
+      if (!emp.stamp_store) {
+        emp.store_name = affiliation.storeName;
+        console.log(`[Affiliation] ${emp.name}: 打刻場所なし → belongs設定で ${affiliation.storeName} に振り分け`);
+      } else {
+        console.log(`[Affiliation] ${emp.name}: 打刻場所あり(${emp.stamp_store}) → 打刻場所優先（belongs設定: ${affiliation.storeName}）`);
+      }
     }
   });
 
@@ -2146,6 +2153,12 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     // 出勤状況（JobCanから取得）
     let status = $work(cells[2]).text().trim();
 
+    // シフト時間（cells[3]）：例 "09:00～19:00" → シフト退勤予定時刻を取得
+    const shiftTimeRaw = $work(cells[3]).text().trim();
+    const shiftTimeMatch = shiftTimeRaw.match(/(\d{1,2}:\d{2})\s*[\uff5e〜~\-]\s*(\d{1,2}:\d{2})/);
+    const shiftStart = shiftTimeMatch ? shiftTimeMatch[1] : null;
+    const shiftEnd = shiftTimeMatch ? shiftTimeMatch[2] : null;
+
     // 出勤打刻時刻：cells[6]の形式は "08:48 (08:48)" → 括弧内が実際の打刻時刻
     const clockInRaw = $work(cells[6]).text().trim().replace(/\s+/g, ' ');
     const clockInBracket = clockInRaw.match(/\((\d{1,2}:\d{2})\)/);
@@ -2214,8 +2227,8 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
       // 退勤済みの場合: 出勤打刻場所 > 退勤打刻場所 > stampStoreName > 所属店舗
       assignedStore = clockInStoreName || clockOutStoreName2 || stampStoreName || deptStoreName;
     } else {
-      // 勤務中・休憩中の場合: 出勤打刻場所（stampStoreName）> 所属店舗
-      assignedStore = stampStoreName || deptStoreName;
+      // 勤務中・休憩中の場合: 出勤打刻場所（clockInStoreName）> stampStoreName > 所属店舗
+      assignedStore = clockInStoreName || stampStoreName || deptStoreName;
     }
 
     // ===== 休憩中の店舗間移動検出 =====
@@ -2262,6 +2275,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           dept_code: deptCode,
           dept_store_name: deptStoreName,
           store_name: empBreakStartStore,
+          stamp_store: empBreakStartStore,
           clock_location: clockLocation,
           status: '退勤済み',
           clock_in: clockIn || null,
@@ -2327,6 +2341,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           dept_code: deptCode,
           dept_store_name: deptStoreName,
           store_name: empBreakEndStore,  // 元店舗（休憩終了打刻場所 = 元の店舗）
+          stamp_store: empBreakEndStore,
           clock_location: clockLocation,
           status: '退勤済み',
           clock_in: clockIn || null,
@@ -2351,6 +2366,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           dept_code: deptCode,
           dept_store_name: deptStoreName,
           store_name: empBreakStartStore,  // 中間部署（休憩開始打刻場所 = 企画部等）
+          stamp_store: empBreakStartStore,
           clock_location: clockLocation,
           status: '退勤済み',
           clock_in: empBreakStartTime || null,
@@ -2376,6 +2392,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           dept_code: deptCode,
           dept_store_name: deptStoreName,
           store_name: empBreakEndStore,  // 元店舗（休憩終了打刻場所 = 元の店舗）
+          stamp_store: empBreakEndStore,
           clock_location: clockLocation,
           status: status,
           clock_in: empBreakEndTime || null,
@@ -2434,6 +2451,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           dept_code: deptCode,
           dept_store_name: deptStoreName,
           store_name: empBreakStartStore,
+          stamp_store: empBreakStartStore,
           clock_location: clockLocation,
           status: '退勤済み',
           clock_in: clockIn || null,
@@ -2457,6 +2475,7 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
           dept_code: deptCode,
           dept_store_name: deptStoreName,
           store_name: empBreakEndStore,
+          stamp_store: empBreakEndStore,
           clock_location: clockLocation,
           status: status,
           clock_in: empBreakEndTime || null,
@@ -2504,16 +2523,22 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
     }
 
     // 通常の店舗間移動なしのケース
+    // stamp_store: 打刻場所から判定された振り分け先（belongs上書き前の値）
+    // assignedStoreがdeptStoreNameと異なる場合 = 打刻場所で振り分けされた
+    const stampBasedStore = (assignedStore !== deptStoreName) ? assignedStore : (clockInStoreName || stampStoreName || null);
     const employee = {
       name: staffName,
       dept_code: deptCode,
       dept_store_name: deptStoreName,   // 所属店舗
       store_name: assignedStore,         // 振り分け先店舗（打刻場所優先）
+      stamp_store: stampBasedStore,      // 打刻場所ベースの振り分け先（belongs上書き前）
       clock_location: clockLocation,     // 打刻場所
       status: status,
       clock_in: clockIn || null,
       clock_out: (status === '退勤済み') ? (clockOut || null) : null,  // 退勤済みのみ退勤時刻
       break_start: (status === '退出中') ? (clockOut || null) : null,  // 退出中は休憩開始時刻
+      shift_start: shiftStart || null,    // シフト開始時刻
+      shift_end: shiftEnd || null,        // シフト終了（退勤予定）時刻
       had_break: breakMinutes > 0,  // 休憩実績があるか（勤務中に戻った後も休憩ログを表示するため）
       clock_in_minutes: clockInMinutes,   // 分単位（例: 10:30 → 630）
       clock_out_minutes: clockOutMinutes, // 分単位（退勤済みの場合）

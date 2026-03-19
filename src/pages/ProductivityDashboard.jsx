@@ -1479,6 +1479,12 @@ function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsC
                                     <span className="text-blue-500">休憩 {Math.floor(emp.break_minutes / 60) > 0 ? `${Math.floor(emp.break_minutes / 60)}時間` : ''}{emp.break_minutes % 60 > 0 ? `${emp.break_minutes % 60}分` : ''}</span>
                                   )}
                                   {emp.clock_out && <span>{emp.cross_store_transfer && !emp.is_transfer_arrival ? '移動前退勤' : '退勤'} {emp.clock_out}</span>}
+                                  {!emp.clock_out && emp.shift_end && emp.status !== '未出勤' && (
+                                    <span className="text-muted-foreground/60">退勤予定 {emp.shift_end}</span>
+                                  )}
+                                  {emp.status === '未出勤' && emp.shift_start && emp.shift_end && (
+                                    <span className="text-muted-foreground/60">シフト {emp.shift_start}～{emp.shift_end}</span>
+                                  )}
                                   {!emp.cross_store_transfer && emp.clock_location && emp.clock_location !== emp.dept_store_name && (
                                     <span className="flex items-center gap-0.5"><MapPin className="h-2.5 w-2.5" />{emp.clock_location}</span>
                                   )}
@@ -3365,7 +3371,16 @@ export default function ProductivityDashboard() {
                                     {isExcluded && <span className="text-[9px] bg-red-100 dark:bg-red-900/30 text-red-600 px-1.5 py-0.5 rounded-full">除外中</span>}
                                     {setting.override_store && <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 px-1.5 py-0.5 rounded-full">→{setting.override_store}</span>}
                                   </div>
-                                  <div className="text-xs text-muted-foreground">出勤 {emp.clock_in || '-'}</div>
+                                  <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                                    <span>出勤 {emp.clock_in || '-'}</span>
+                                    {emp.clock_out && <span>退勤 {emp.clock_out}</span>}
+                                    {!emp.clock_out && emp.shift_end && emp.status !== '未出勤' && (
+                                      <span className="text-muted-foreground/60">退勤予定 {emp.shift_end}</span>
+                                    )}
+                                    {emp.status === '未出勤' && emp.shift_start && emp.shift_end && (
+                                      <span className="text-muted-foreground/60">シフト {emp.shift_start}～{emp.shift_end}</span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
@@ -3584,6 +3599,7 @@ export default function ProductivityDashboard() {
             {[
               { name: '北摂工場', color: 'amber', baggingKey: 'hokusetsu_bagging', cookingKey: 'hokusetsu_cooking', deptKey: 'manufacturing_hokusetsu' },
               { name: '加賀屋工場', color: 'orange', baggingKey: 'kagaya_bagging', cookingKey: 'kagaya_cooking', deptKey: 'manufacturing_kagaya' },
+              { name: '南田辺工房', color: 'yellow', baggingKey: 'minamitanabe_bagging', cookingKey: 'minamitanabe_cooking', deptKey: 'manufacturing_minamitanabe' },
             ].map(({ name, color, baggingKey, cookingKey, deptKey }) => {
               const baggingData = mfgDataList.find(d => d.factory_name === name && d.section_name === '袋詰め');
               const cookingData = mfgDataList.find(d => d.factory_name === name && d.section_name === '炊き場');
@@ -3615,7 +3631,7 @@ export default function ProductivityDashboard() {
                           </div>
                           <div className="flex justify-between text-xs">
                             <span className="text-muted-foreground">勤務時間</span>
-                            <span className="font-semibold">{data?.total_hours ?? '-'} h</span>
+                            <span className="font-semibold">{data?.total_hours ?? (factoryDept?.total_hours > 0 ? factoryDept.total_hours.toFixed(1) : '-')} h</span>
                           </div>
                           <div className="flex justify-between text-xs">
                             <span className="text-muted-foreground">人時生産性</span>
@@ -3690,6 +3706,13 @@ export default function ProductivityDashboard() {
                                       <span className="text-xs font-semibold">{emp.name}</span>
                                       {isExcluded && <span className="text-[8px] bg-red-100 dark:bg-red-900/30 text-red-600 px-1 py-0.5 rounded-full">除外</span>}
                                       {setting.override_store && <span className="text-[8px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 px-1 py-0.5 rounded-full">→{setting.override_store}</span>}
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                      {emp.clock_in && <span>出勤 {emp.clock_in}</span>}
+                                      {emp.clock_out && <span>退勤 {emp.clock_out}</span>}
+                                      {!emp.clock_out && emp.shift_end && emp.status !== '未出勤' && (
+                                        <span className="text-muted-foreground/60">退勤予定 {emp.shift_end}</span>
+                                      )}
                                     </div>
                                   </div>
                                 </div>
@@ -3850,7 +3873,16 @@ export default function ProductivityDashboard() {
                                 {isExcluded && <span className="text-[9px] bg-red-100 dark:bg-red-900/30 text-red-600 px-1.5 py-0.5 rounded-full">除外中</span>}
                                 {setting.override_store && <span className="text-[9px] bg-purple-100 dark:bg-purple-900/30 text-purple-600 px-1.5 py-0.5 rounded-full">→{setting.override_store}</span>}
                               </div>
-                              <div className="text-xs text-muted-foreground">出勤 {emp.clock_in || '-'}</div>
+                              <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                                <span>出勤 {emp.clock_in || '-'}</span>
+                                {emp.clock_out && <span>退勤 {emp.clock_out}</span>}
+                                {!emp.clock_out && emp.shift_end && emp.status !== '未出勤' && (
+                                  <span className="text-muted-foreground/60">退勤予定 {emp.shift_end}</span>
+                                )}
+                                {emp.status === '未出勤' && emp.shift_start && emp.shift_end && (
+                                  <span className="text-muted-foreground/60">シフト {emp.shift_start}～{emp.shift_end}</span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
