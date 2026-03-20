@@ -596,8 +596,12 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
       ? (clientStaffSettings[master.id] || clientStaffSettings[master.staff_name] || null)
       : (clientStaffSettings[emp.name] || null);
 
-    // 除外設定がある場合の処理
-    if (clientSetting?.excluded === true) {
+    // 打刻場所（stamp_store）が取得できているスタッフは、打刻場所ベースの振り分けを最優先する
+    // override_storeやexcluded設定よりもstamp_storeを優先（打刻場所が実際の勤務地を示すため）
+    const hasStampStore = !!emp.stamp_store;
+
+    // 除外設定がある場合の処理（stamp_storeがある場合は除外・移動を無視）
+    if (clientSetting?.excluded === true && !hasStampStore) {
       // 時間帯別振り分けがある場合
       if (clientSetting?.time_allocations && clientSetting.time_allocations.length > 0) {
         const allocs = clientSetting.time_allocations.filter(a => a.store);
@@ -645,10 +649,16 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
         console.log(`[StaffSettings] 除外: ${emp.name}`);
         return;
       }
-    } else if (clientSetting?.override_store) {
-      // 除外なし・所属店舗変更のみの場合
+    } else if (clientSetting?.excluded === true && hasStampStore) {
+      // stamp_storeがある場合は除外・移動設定を無視して打刻場所を優先
+      console.log(`[StaffSettings] ${emp.name}: stamp_store(${emp.stamp_store})あり → 除外/移動設定を無視して打刻場所優先`);
+    } else if (clientSetting?.override_store && !hasStampStore) {
+      // 除外なし・所属店舗変更のみの場合（stamp_storeがない場合のみ適用）
       emp = { ...emp, store_name: clientSetting.override_store };
       console.log(`[StaffSettings] 所属変更: ${emp.name} → ${clientSetting.override_store}`);
+    } else if (clientSetting?.override_store && hasStampStore) {
+      // stamp_storeがある場合はoverride_storeを無視
+      console.log(`[StaffSettings] ${emp.name}: stamp_store(${emp.stamp_store})あり → override_store(${clientSetting.override_store})を無視`);
     }
 
     if (!isEmployee || !master?.service_start || !master?.service_end) {
