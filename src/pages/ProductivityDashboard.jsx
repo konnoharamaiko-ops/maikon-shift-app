@@ -930,9 +930,9 @@ function StoreDetailModal({ store, onClose, staffSettings = {}, onStaffSettingsC
       };
       addOperationLog('除外', staffId, `${store.store_name}から除外`);
     }
-    // 除外OFFになった瞬間に履歴をクリア
+    // 除外OFFになった瞬間に履歴をクリア（override_store, time_allocationsも一緒にクリア）
     if (key === 'excluded' && value === false) {
-      extra = { excluded_at: null, excluded_from_store: null, settings_date: null };
+      extra = { excluded_at: null, excluded_from_store: null, settings_date: null, override_store: null, time_allocations: null, exclude_reason: null };
       addOperationLog('除外解除', staffId, `除外を解除`);
     }
     // 移動先変更の履歴を記録
@@ -1874,6 +1874,16 @@ function loadStaffSettings() {
           };
           changed = true;
           console.log(`[DailyReset] ${id} の除外設定をリセット（設定日: ${setting.settings_date}）`);
+        } else if (!setting.excluded && setting.override_store && setting.settings_date && setting.settings_date !== todayStr) {
+          // 除外解除済みだがoverride_storeが残っている場合もクリア
+          cleaned[id] = {
+            ...setting,
+            override_store: null,
+            time_allocations: null,
+            settings_date: null,
+          };
+          changed = true;
+          console.log(`[DailyReset] ${id} の残留override_storeをクリア（設定日: ${setting.settings_date}）`);
         } else {
           cleaned[id] = setting;
         }
@@ -2624,6 +2634,15 @@ export default function ProductivityDashboard() {
           };
           resetOccurred = true;
           console.log(`[DailyReset] ${id} の除外設定をリセット（設定日: ${setting.settings_date}）`);
+        } else if (!setting.excluded && setting.override_store && setting.settings_date && setting.settings_date !== todayStr) {
+          migratedSettings[id] = {
+            ...setting,
+            override_store: null,
+            time_allocations: null,
+            settings_date: null,
+          };
+          resetOccurred = true;
+          console.log(`[DailyReset] ${id} の残留override_storeをクリア（設定日: ${setting.settings_date}）`);
         }
       }
       if (resetOccurred) {
@@ -2652,7 +2671,7 @@ export default function ProductivityDashboard() {
       addOperationLog('除外', staffId, `${deptName || '部署'}から除外`);
     }
     if (key === 'excluded' && value === false) {
-      extra = { excluded_at: null, excluded_from_store: null, settings_date: null };
+      extra = { excluded_at: null, excluded_from_store: null, settings_date: null, override_store: null, time_allocations: null, exclude_reason: null };
       addOperationLog('除外解除', staffId, `除外を解除`);
     }
     if (key === 'override_store') {
