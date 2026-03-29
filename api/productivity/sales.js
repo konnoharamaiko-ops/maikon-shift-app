@@ -222,10 +222,12 @@ async function fetchSalesFromN221(username, password, year, month, storeName, mo
       const salesText = salesColIdx < cells.length ? $(cells[salesColIdx]).text().trim() : '';
       const salesAmount = parseSalesAmount(salesText);
 
-      const customersText = customersColIdx >= 0 && customersColIdx < cells.length
+      const customersRaw = customersColIdx >= 0 && customersColIdx < cells.length
         ? $(cells[customersColIdx]).text().trim().replace(/[,\s]/g, '')
         : '';
-      const customersCount = parseInt(customersText) || 0;
+      // ツールチップテキストが混入する場合があるので、最後の数字列を取得
+      const custMatch = customersRaw.match(/(\d+)/g);
+      const customersCount = custMatch ? parseInt(custMatch[custMatch.length - 1]) || 0 : 0;
 
       const grossRateText = grossRateColIdx >= 0 && grossRateColIdx < cells.length
         ? $(cells[grossRateColIdx]).text().trim().replace('%', '').trim()
@@ -241,9 +243,10 @@ async function fetchSalesFromN221(username, password, year, month, storeName, mo
           return;
         }
         // "YYYY年MM月" パターン
-        if (/\d{4}年\d{2}月/.test(firstCellText) && salesAmount > 0) {
+        const yearMonthMatch = firstCellText.match(/(\d{4}年\d{2}月)/);
+        if (yearMonthMatch && salesAmount > 0) {
           monthlyList.push({
-            year_month: firstCellText,
+            year_month: yearMonthMatch[1],
             sales: salesAmount,
             customers: customersCount,
             gross_profit_rate: grossProfitRate,
