@@ -120,26 +120,22 @@ async function fetchSalesFromN221(username, password, year, month, storeName, mo
     endDate   = `${year}/${String(month).padStart(2, '0')}/${String(lastDay).padStart(2, '0')}`;
   }
 
-  const whichDaily = mode === 'monthly' ? '2' : '1'; // 1=日報, 2=月報
+  // 注意: 金額方式（値引前/値引後）はログインユーザーの基本設定に依存
+  // monthlymode: 'off'=日報, 'on'=月報
+  const monthlyMode = mode === 'monthly' ? 'on' : 'off';
 
   const body = new URLSearchParams({
-    searched_yyyymmdd1: startDate,
-    searched_yyyymmdd2: endDate,
+    chkcsv: 'false',
+    panSI_flag: '2',
     yyyymmdd1: startDate,
     yyyymmdd2: endDate,
     scode1: storeCode,
     scode2: storeCode,
-    which_daily: whichDaily,
-    daily: whichDaily,
-    which_zeinuki: '1',   // 税抜
-    zeinuki: '1',
-    which_tani: '1',
-    tani: '1',
-    which1: '1',
-    radio1: '1',
-    chkcsv: 'false',
-    chkcustom: '',
-    shopcode: '',
+    area1IsBottom: 'true',
+    areasearch: 'off',
+    monthlymode: monthlyMode,
+    consignAddFlagValue: 'off',
+    deleteCookie: 'on',
   });
 
   console.log(`[Sales] N221Servlet mode=${mode} store=${storeName}(${storeCode}) ${startDate}〜${endDate}`);

@@ -1252,24 +1252,20 @@ async function fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date) {
   const salesByStore = {};
 
   // 全店舗を一括で取得（scode1=0001, scode2=0013）
+  // 注意: 金額方式（値引前/値引後）はログインユーザーの基本設定に依存
+  // フォームパラメータには金額方式の指定はない
   const body = new URLSearchParams({
-    searched_yyyymmdd1: formattedDate,
-    searched_yyyymmdd2: formattedDate,
+    chkcsv: 'false',
+    panSI_flag: '2',
     yyyymmdd1: formattedDate,
     yyyymmdd2: formattedDate,
     scode1: '0001',
-    scode2: '0013',
-    which_daily: '1',
-    daily: '1',
-    which_zeinuki: '1',
-    zeinuki: '1',
-    which_tani: '1',
-    tani: '1',
-    which1: '1',
-    radio1: '1',
-    chkcustom: 'on',
-    chkcsv: 'false',
-    shopcode: '',
+    scode2: '2000',
+    area1IsBottom: 'true',
+    areasearch: 'off',
+    monthlymode: 'off',
+    consignAddFlagValue: 'off',
+    deleteCookie: 'on',
   });
 
   try {
