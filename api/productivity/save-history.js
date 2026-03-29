@@ -15,6 +15,16 @@
  */
 
 import * as cheerio from 'cheerio';
+import iconv from 'iconv-lite';
+
+// TempoVisor店舗コードマッピング
+const TEMPOVISOR_STORE_CODES = {
+  '田辺店': '0001', '大正店': '0002', '天下茶屋店': '0003',
+  '天王寺店': '0004', 'アベノ店': '0005', '心斎橋店': '0006',
+  'かがや店': '0007', '駅丸': '0008', '北摂店': '0009',
+  '堺東店': '0010', 'イオン松原店': '0011', 'イオン守口店': '0012',
+  '美和堂福島店': '0013',
+};
 
 // 部署コードと店舗名のマッピング
 const STORE_DEPT_MAP = {
@@ -165,6 +175,26 @@ async function handleDailySave(req, res) {
       await saveToDailyDeptProductivity(supabaseUrl, supabaseKey, deptRecords);
     }
 
+    // DailyProductivityテーブルに売上+勤怠データを保存
+    let productivitySaved = 0;
+    try {
+      const tvUser = process.env.TEMPOVISOR_USERNAME;
+      const tvPass = process.env.TEMPOVISOR_PASSWORD;
+      if (tvUser && tvPass) {
+        const { cookies: tvCookies, repBaseUrl } = await loginTempoVisor(tvUser, tvPass);
+        const salesByStore = await fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, targetDate);
+        const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, targetDate);
+        if (productivityRecords.length > 0) {
+          productivitySaved = await saveToDailyProductivity(supabaseUrl, supabaseKey, productivityRecords);
+        }
+        console.log(`[SaveHistory] DailyProductivity保存: ${productivitySaved}件`);
+      } else {
+        console.warn('[SaveHistory] TEMPOVISOR credentials not set, skipping DailyProductivity');
+      }
+    } catch (tvErr) {
+      console.error('[SaveHistory] DailyProductivity保存エラー:', tvErr.message);
+    }
+
     return res.status(200).json({
       success: true,
       date: targetDate,
@@ -173,6 +203,7 @@ async function handleDailySave(req, res) {
       records: historyRecords.length,
       staff_hours: staffHoursRecords.length,
       dept_records: deptRecords.length,
+      productivity_records: productivitySaved,
       timestamp: new Date().toISOString(),
     });
 
@@ -224,6 +255,24 @@ async function handleBackfill(req, res) {
     const cookies = await loginJobcan(jobcanCompany, jobcanUser, jobcanPass);
     console.log('[Backfill] ジョブカンログイン成功');
 
+    // TempoVisorにログイン（環境変数があれば）
+    let tvCookies = null;
+    let repBaseUrl = null;
+    const tvUser = process.env.TEMPOVISOR_USERNAME;
+    const tvPass = process.env.TEMPOVISOR_PASSWORD;
+    if (tvUser && tvPass) {
+      try {
+        const tvLogin = await loginTempoVisor(tvUser, tvPass);
+        tvCookies = tvLogin.cookies;
+        repBaseUrl = tvLogin.repBaseUrl;
+        console.log('[Backfill] TempoVisorログイン成功');
+      } catch (tvErr) {
+        console.warn('[Backfill] TempoVisorログイン失敗:', tvErr.message);
+      }
+    } else {
+      console.warn('[Backfill] TEMPOVISOR credentials not set, skipping DailyProductivity');
+    }
+
     // ユーザーマップとストアマップを取得
     const userMap = await fetchUserJobcanMap(supabaseUrl, supabaseKey);
     const storeMap = await fetchStoreMap(supabaseUrl, supabaseKey);
@@ -260,7 +309,21 @@ async function handleBackfill(req, res) {
           await saveToDailyDeptProductivity(supabaseUrl, supabaseKey, deptRecords);
         }
 
-        results.push({ date, status: 'success', saved: savedCount, staff_hours: staffHoursRecords.length, dept_records: deptRecords.length });
+        // DailyProductivityテーブルに売上+勤怠データを保存
+        let productivitySaved = 0;
+        if (tvCookies && repBaseUrl) {
+          try {
+            const salesByStore = await fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date);
+            const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, date);
+            if (productivityRecords.length > 0) {
+              productivitySaved = await saveToDailyProductivity(supabaseUrl, supabaseKey, productivityRecords);
+            }
+          } catch (tvErr) {
+            console.warn(`[Backfill] ${date} DailyProductivityエラー:`, tvErr.message);
+          }
+        }
+
+        results.push({ date, status: 'success', saved: savedCount, staff_hours: staffHoursRecords.length, dept_records: deptRecords.length, productivity: productivitySaved });
         await saveBackfillProgress(supabaseUrl, supabaseKey, date, 'success', savedCount);
 
       } catch (dateErr) {
@@ -1111,4 +1174,310 @@ function mergeCookies(existing, newCookies) {
   parse(existing);
   parse(newCookies);
   return Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+// ============================================================
+// TempoVisor売上データ取得
+// ============================================================
+
+function extractTempoVisorCookies(response) {
+  const setCookieHeaders = response.headers.getSetCookie
+    ? response.headers.getSetCookie()
+    : [];
+  if (!setCookieHeaders || setCookieHeaders.length === 0) {
+    const rawHeader = response.headers.get('set-cookie');
+    if (!rawHeader) return '';
+    return rawHeader.split(',').map(c => c.split(';')[0].trim()).join('; ');
+  }
+  return setCookieHeaders.map(c => c.split(';')[0].trim()).join('; ');
+}
+
+function mergeTempoVisorCookies(existing, newCookies) {
+  if (!existing) return newCookies;
+  if (!newCookies) return existing;
+  const map = {};
+  [...existing.split('; '), ...newCookies.split('; ')].forEach(pair => {
+    const [k, v] = pair.split('=');
+    if (k && k.trim()) map[k.trim()] = v || '';
+  });
+  return Object.entries(map).map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+async function loginTempoVisor(username, password) {
+  const loginUrl = 'https://www.tenpovisor.jp/alioth/servlet/LoginServlet';
+  const repBaseUrl = 'https://www.tenpovisor.jp/alioth/rep/';
+
+  const getRes = await fetch(loginUrl, {
+    method: 'GET',
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    redirect: 'manual',
+  });
+  const initialCookies = extractTempoVisorCookies(getRes);
+
+  const loginBody = new URLSearchParams({ id: username, pass: password }).toString();
+  const loginRes = await fetch(loginUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Cookie': initialCookies,
+      'Referer': loginUrl,
+    },
+    body: loginBody,
+    redirect: 'manual',
+  });
+  const loginCookies = extractTempoVisorCookies(loginRes);
+  const allCookies = mergeTempoVisorCookies(initialCookies, loginCookies);
+  console.log('[SaveHistory-TV] TempoVisor login done, cookies length:', allCookies.length);
+  return { cookies: allCookies, repBaseUrl };
+}
+
+function parseSalesAmount(text) {
+  if (!text) return 0;
+  const cleaned = text.replace(/[\\u00a5\uffe5,\s]/g, '').trim();
+  const num = parseInt(cleaned);
+  return isNaN(num) || num < 0 ? 0 : num;
+}
+
+/**
+ * TenpoVisor N221Servletから指定日の全店舗売上データを取得
+ * @param {string} tvCookies - TempoVisorのログインCookie
+ * @param {string} repBaseUrl - TempoVisorのレポートベースURL
+ * @param {string} date - yyyy-mm-dd形式の日付
+ * @returns {Object} { storeName: { sales, customers } }
+ */
+async function fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date) {
+  const [year, month, day] = date.split('-');
+  const formattedDate = `${year}/${month}/${day}`;
+  const salesByStore = {};
+
+  // 全店舗を一括で取得（scode1=0001, scode2=0013）
+  const body = new URLSearchParams({
+    searched_yyyymmdd1: formattedDate,
+    searched_yyyymmdd2: formattedDate,
+    yyyymmdd1: formattedDate,
+    yyyymmdd2: formattedDate,
+    scode1: '0001',
+    scode2: '0013',
+    which_daily: '1',
+    daily: '1',
+    which_zeinuki: '1',
+    zeinuki: '1',
+    which_tani: '1',
+    tani: '1',
+    which1: '1',
+    radio1: '1',
+    chkcustom: 'on',
+    chkcsv: 'false',
+    shopcode: '',
+  });
+
+  try {
+    const res = await fetch(`${repBaseUrl}N221Servlet`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': tvCookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': repBaseUrl,
+      },
+      body: body.toString(),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!res.ok) {
+      console.error(`[SaveHistory-TV] N221Servlet HTTP ${res.status}`);
+      return salesByStore;
+    }
+
+    const buffer = await res.arrayBuffer();
+    const html = iconv.decode(Buffer.from(buffer), 'cp932');
+
+    const $ = cheerio.load(html);
+
+    // 売上一覧テーブルを解析
+    // 日報・全店舗モードでは: 店舗コード:店舗名 | 人数 | 販売数 | 売上 | 粗利 | 粗利率 | 客単価 ...
+    $('table').each((_, table) => {
+      const rows = $(table).find('tr').toArray();
+      if (rows.length < 3) return;
+
+      const headerRow = $(rows[0]).find('td,th').toArray();
+      if (headerRow.length < 3) return;
+
+      const headerTexts = headerRow.map(c => $(c).text().trim().replace(/\s+/g, ''));
+
+      const hasSales = headerTexts.some(h => h.includes('売上'));
+      if (!hasSales) return;
+
+      // 列インデックスを特定
+      let salesColIdx = -1, customersColIdx = -1;
+      for (let i = 0; i < headerTexts.length; i++) {
+        const h = headerTexts[i];
+        if (h.includes('売上') && !h.includes('粗利') && !h.includes('率') && !h.includes('セール')) {
+          salesColIdx = i;
+        }
+        if (h.includes('人数') || h.includes('客数')) {
+          customersColIdx = i;
+        }
+      }
+      if (salesColIdx < 0) return;
+
+      console.log(`[SaveHistory-TV] Table headers: ${JSON.stringify(headerTexts)}, salesCol: ${salesColIdx}, customersCol: ${customersColIdx}`);
+
+      rows.forEach((row, rowIdx) => {
+        if (rowIdx === 0) return;
+        const cells = $(row).find('td,th').toArray();
+        if (cells.length < 2) return;
+
+        const firstCellText = $(cells[0]).text().trim().replace(/\s+/g, '');
+        if (!firstCellText) return;
+        if (firstCellText.includes('合計') || firstCellText.includes('平均')) return;
+
+        // 店舗コード:店舗名 パターンを検出
+        const storeCodeMatch = firstCellText.match(/^(\d{4}):(.+)/);
+        if (storeCodeMatch) {
+          const storeCode = storeCodeMatch[1];
+          const rawStoreName = storeCodeMatch[2].trim();
+
+          // 店舗コードから店舗名を逆引き
+          let storeName = null;
+          for (const [name, code] of Object.entries(TEMPOVISOR_STORE_CODES)) {
+            if (code === storeCode) {
+              storeName = name;
+              break;
+            }
+          }
+          if (!storeName) storeName = rawStoreName;
+
+          const salesText = salesColIdx < cells.length ? $(cells[salesColIdx]).text().trim() : '';
+          const salesAmount = parseSalesAmount(salesText);
+
+          const customersText = customersColIdx >= 0 && customersColIdx < cells.length
+            ? $(cells[customersColIdx]).text().trim().replace(/[,\s]/g, '')
+            : '';
+          const customersCount = parseInt(customersText) || 0;
+
+          salesByStore[storeName] = {
+            sales: salesAmount,
+            customers: customersCount,
+          };
+        }
+
+        // 日付パターン（YYYY/MM/DD）も検出（単一店舗モードの場合）
+        const dateMatch = firstCellText.match(/(\d{4}\/\d{2}\/\d{2})/);
+        if (dateMatch && !storeCodeMatch) {
+          const salesText = salesColIdx < cells.length ? $(cells[salesColIdx]).text().trim() : '';
+          const salesAmount = parseSalesAmount(salesText);
+          const customersText = customersColIdx >= 0 && customersColIdx < cells.length
+            ? $(cells[customersColIdx]).text().trim().replace(/[,\s]/g, '')
+            : '';
+          const customersCount = parseInt(customersText) || 0;
+
+          // 単一店舗モードの場合、後で店舗名を設定する
+          salesByStore['_single'] = {
+            sales: salesAmount,
+            customers: customersCount,
+          };
+        }
+      });
+    });
+
+    console.log(`[SaveHistory-TV] ${date}: ${Object.keys(salesByStore).length} stores found`);
+  } catch (err) {
+    console.error(`[SaveHistory-TV] ${date} fetch error:`, err.message);
+  }
+
+  return salesByStore;
+}
+
+/**
+ * 勤怠データと売上データを結合してDailyProductivityレコードを構築
+ */
+function buildProductivityRecords(attendanceData, salesByStore, date) {
+  // 勤怠データから店舗別の稼働時間と出勤人数を集計
+  const storeWorkData = {};
+  for (const emp of attendanceData) {
+    if (!emp.clock_in) continue;
+    const store = emp.assigned_store || emp.dept_store_name;
+    // 店舗のみ対象（部署はスキップ）
+    if (!TEMPOVISOR_STORE_CODES[store]) continue;
+
+    if (!storeWorkData[store]) {
+      storeWorkData[store] = { totalMinutes: 0, count: 0 };
+    }
+    storeWorkData[store].totalMinutes += emp.work_minutes || 0;
+    storeWorkData[store].count++;
+  }
+
+  const records = [];
+  // 売上データがある店舗を基準にレコードを作成
+  for (const [storeName, salesData] of Object.entries(salesByStore)) {
+    if (storeName === '_single') continue;
+    const workData = storeWorkData[storeName] || { totalMinutes: 0, count: 0 };
+    const workHours = Math.round((workData.totalMinutes / 60) * 100) / 100;
+    const sales = salesData.sales || 0;
+    const customers = salesData.customers || 0;
+    const unitPrice = customers > 0 ? Math.round(sales / customers) : 0;
+    const productivity = workHours > 0 ? Math.round(sales / workHours) : 0;
+
+    records.push({
+      work_date: date,
+      store_name: storeName,
+      sales: sales,
+      customers: customers,
+      work_hours: workHours,
+      attended_employees: workData.count,
+      productivity: productivity,
+      unit_price: unitPrice,
+      data_source: 'batch',
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  // 勤怠データはあるが売上データがない店舗（稼働時間のみ更新）
+  for (const [storeName, workData] of Object.entries(storeWorkData)) {
+    if (salesByStore[storeName]) continue; // 既に処理済み
+    const workHours = Math.round((workData.totalMinutes / 60) * 100) / 100;
+    records.push({
+      work_date: date,
+      store_name: storeName,
+      sales: 0,
+      customers: 0,
+      work_hours: workHours,
+      attended_employees: workData.count,
+      productivity: 0,
+      unit_price: 0,
+      data_source: 'batch',
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  return records;
+}
+
+async function saveToDailyProductivity(supabaseUrl, supabaseKey, records) {
+  if (records.length === 0) return 0;
+
+  const resp = await fetch(
+    `${supabaseUrl}/rest/v1/DailyProductivity`,
+    {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify(records),
+    }
+  );
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    console.error(`[SaveHistory] DailyProductivity保存エラー: ${resp.status} ${errText}`);
+  } else {
+    console.log(`[SaveHistory] DailyProductivity保存完了: ${records.length}件`);
+  }
+
+  return records.length;
 }
