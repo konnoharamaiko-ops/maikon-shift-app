@@ -87,9 +87,14 @@ async function loginTempoVisor(username, password) {
 function parseSalesAmount(text) {
   if (!text) return 0;
   // TenpoVisorは金額を "\6,886,401" のようにバックスラッシュ+カンマ区切りで返す
-  const cleaned = text.replace(/[¥￥\\,\s]/g, '').trim();
-  const num = parseInt(cleaned);
-  return isNaN(num) || num < 0 ? 0 : num;
+  // また日報テーブルではツールチップテキストが付く（例: "売上一覧を表示します。\682,770"）
+  // 通貨記号とカンマを除去してから数字部分を抽出
+  const cleaned = text.replace(/[¥￥\\,]/g, '');
+  const matches = cleaned.match(/(\d+)/g);
+  if (!matches) return 0;
+  // 複数の数字が見つかった場合、最も大きい数値を返す（売上金額が最大）
+  const nums = matches.map(m => parseInt(m)).filter(n => n > 0);
+  return nums.length > 0 ? Math.max(...nums) : 0;
 }
 
 /**
