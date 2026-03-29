@@ -1234,7 +1234,8 @@ async function loginTempoVisor(username, password) {
 
 function parseSalesAmount(text) {
   if (!text) return 0;
-  const cleaned = text.replace(/[\\u00a5\uffe5,\s]/g, '').trim();
+  // TenpoVisorは金額を "\6,886,401" のようにバックスラッシュ+カンマ区切りで返す
+  const cleaned = text.replace(/[¥￥\\,\s]/g, '').trim();
   const num = parseInt(cleaned);
   return isNaN(num) || num < 0 ? 0 : num;
 }
