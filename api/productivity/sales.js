@@ -273,7 +273,7 @@ async function fetchSalesFromN221(username, password, year, month, storeName, mo
             customers: customersCount,
             gross_profit_rate: grossProfitRate,
           });
-          totalSales += salesAmount;
+          // totalSalesは合計行から取得するので、ここでは加算しない
         }
       }
     });
