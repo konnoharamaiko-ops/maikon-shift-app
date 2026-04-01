@@ -312,12 +312,13 @@ async function handleBackfill(req, res) {
         }
 
         // DailyProductivityテーブルに売上+勤怠データを保存
+        // sales.js APIを内部呼び出しして各店舗の売上を取得
         let productivitySaved = 0;
         let salesDebug = {};
-        if (tvCookies && repBaseUrl) {
+        if (tvUser && tvPass) {
           try {
-            const salesByStore = await fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date);
-            salesDebug = { stores: Object.keys(salesByStore).filter(k => k !== '_debug').length, sample: Object.entries(salesByStore).filter(([k]) => k !== '_debug').slice(0, 3).map(([k,v]) => ({ store: k, sales: v.sales, customers: v.customers })), tvDebug: salesByStore._debug };
+            const salesByStore = await fetchDailySalesViaSalesAPI(date);
+            salesDebug = { stores: Object.keys(salesByStore).length, sample: Object.entries(salesByStore).slice(0, 3).map(([k,v]) => ({ store: k, sales: v.sales, customers: v.customers })) };
             console.log(`[Backfill] ${date} salesByStore: ${JSON.stringify(salesDebug)}`);
             const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, date);
             if (productivityRecords.length > 0) {
@@ -1268,6 +1269,52 @@ function parseSalesAmount(text) {
   if (!matches) return 0;
   const nums = matches.map(m => parseInt(m)).filter(n => n > 0);
   return nums.length > 0 ? Math.max(...nums) : 0;
+}
+
+/**
+ * sales.js APIを内部呼び出しして指定日の全店舗売上データを取得
+ * @param {string} date - yyyy-mm-dd形式の日付
+ * @returns {Object} { storeName: { sales, customers } }
+ */
+async function fetchDailySalesViaSalesAPI(date) {
+  const [year, month] = date.split('-');
+  const salesByStore = {};
+  const storeNames = Object.keys(TEMPOVISOR_STORE_CODES);
+
+  // 全店舗の日報データを並列で取得（3店舗ずつ）
+  for (let i = 0; i < storeNames.length; i += 3) {
+    const batch = storeNames.slice(i, i + 3);
+    const promises = batch.map(async (storeName) => {
+      try {
+        const apiUrl = `https://maikon-shift-app.vercel.app/api/productivity/sales?year=${year}&month=${parseInt(month)}&store_name=${encodeURIComponent(storeName)}&mode=daily`;
+        const res = await fetch(apiUrl, {
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!res.ok) {
+          console.warn(`[SalesAPI] ${storeName} HTTP ${res.status}`);
+          return;
+        }
+        const data = await res.json();
+        // daily_listから指定日のデータを取得
+        const targetDate = `${year}/${month}/${date.split('-')[2]}`;
+        const dayData = (data.daily_list || []).find(d => d.date === targetDate);
+        if (dayData && dayData.sales > 0) {
+          salesByStore[storeName] = {
+            sales: dayData.sales,
+            customers: dayData.customers || 0,
+          };
+        }
+      } catch (err) {
+        console.warn(`[SalesAPI] ${storeName} error:`, err.message);
+      }
+    });
+    await Promise.all(promises);
+    // レート制限対策
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`[SalesAPI] ${date}: ${Object.keys(salesByStore).length} stores with sales`);
+  return salesByStore;
 }
 
 /**
