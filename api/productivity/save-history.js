@@ -311,9 +311,12 @@ async function handleBackfill(req, res) {
 
         // DailyProductivityテーブルに売上+勤怠データを保存
         let productivitySaved = 0;
+        let salesDebug = {};
         if (tvCookies && repBaseUrl) {
           try {
             const salesByStore = await fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date);
+            salesDebug = { stores: Object.keys(salesByStore).length, sample: Object.entries(salesByStore).slice(0, 3).map(([k,v]) => ({ store: k, sales: v.sales, customers: v.customers })) };
+            console.log(`[Backfill] ${date} salesByStore: ${JSON.stringify(salesDebug)}`);
             const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, date);
             if (productivityRecords.length > 0) {
               productivitySaved = await saveToDailyProductivity(supabaseUrl, supabaseKey, productivityRecords);
@@ -323,7 +326,7 @@ async function handleBackfill(req, res) {
           }
         }
 
-        results.push({ date, status: 'success', saved: savedCount, staff_hours: staffHoursRecords.length, dept_records: deptRecords.length, productivity: productivitySaved });
+        results.push({ date, status: 'success', saved: savedCount, staff_hours: staffHoursRecords.length, dept_records: deptRecords.length, productivity: productivitySaved, salesDebug });
         await saveBackfillProgress(supabaseUrl, supabaseKey, date, 'success', savedCount);
 
       } catch (dateErr) {
