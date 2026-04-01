@@ -1386,12 +1386,20 @@ async function fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date) {
     });
 
     console.log(`[SaveHistory-TV] ${date}: ${Object.keys(salesByStore).length} stores found`);
-    // デバッグ: HTMLの先頭500文字とテーブル数を記録
+    // デバッグ: 各テーブルのヘッダー情報を記録
+    const tableDebug = [];
+    $('table').each((idx, table) => {
+      const rows = $(table).find('tr').toArray();
+      if (rows.length < 2) return;
+      const headerRow = $(rows[0]).find('td,th').toArray();
+      const headerTexts = headerRow.map(c => $(c).text().trim().replace(/\s+/g, ''));
+      const row1 = rows.length > 1 ? $(rows[1]).find('td,th').toArray().map(c => $(c).text().trim().substring(0, 30)) : [];
+      tableDebug.push({ idx, rows: rows.length, headers: headerTexts, row1Sample: row1.slice(0, 5) });
+    });
     salesByStore._debug = {
       htmlLength: html.length,
-      htmlSnippet: html.substring(0, 500),
       tableCount: $('table').length,
-      hasLogin: html.includes('Login') || html.includes('login') || html.includes('ログイン'),
+      tables: tableDebug.slice(0, 5),
     };
   } catch (err) {
     console.error(`[SaveHistory-TV] ${date} fetch error:`, err.message);
