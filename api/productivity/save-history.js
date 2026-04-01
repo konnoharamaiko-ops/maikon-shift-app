@@ -1459,7 +1459,7 @@ async function saveToDailyProductivity(supabaseUrl, supabaseKey, records) {
   if (records.length === 0) return 0;
 
   const resp = await fetch(
-    `${supabaseUrl}/rest/v1/DailyProductivity`,
+    `${supabaseUrl}/rest/v1/DailyProductivity?on_conflict=work_date,store_name`,
     {
       method: 'POST',
       headers: {
