@@ -1267,7 +1267,7 @@ async function fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date) {
     yyyymmdd1: formattedDate,
     yyyymmdd2: formattedDate,
     scode1: '0001',
-    scode2: '2000',
+    scode2: '0013',
     area1IsBottom: 'true',
     areasearch: 'off',
     monthlymode: 'off',
