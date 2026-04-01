@@ -315,7 +315,7 @@ async function handleBackfill(req, res) {
         if (tvCookies && repBaseUrl) {
           try {
             const salesByStore = await fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date);
-            salesDebug = { stores: Object.keys(salesByStore).length, sample: Object.entries(salesByStore).slice(0, 3).map(([k,v]) => ({ store: k, sales: v.sales, customers: v.customers })) };
+            salesDebug = { stores: Object.keys(salesByStore).filter(k => k !== '_debug').length, sample: Object.entries(salesByStore).filter(([k]) => k !== '_debug').slice(0, 3).map(([k,v]) => ({ store: k, sales: v.sales, customers: v.customers })), tvDebug: salesByStore._debug };
             console.log(`[Backfill] ${date} salesByStore: ${JSON.stringify(salesDebug)}`);
             const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, date);
             if (productivityRecords.length > 0) {
@@ -1386,8 +1386,16 @@ async function fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date) {
     });
 
     console.log(`[SaveHistory-TV] ${date}: ${Object.keys(salesByStore).length} stores found`);
+    // デバッグ: HTMLの先頭500文字とテーブル数を記録
+    salesByStore._debug = {
+      htmlLength: html.length,
+      htmlSnippet: html.substring(0, 500),
+      tableCount: $('table').length,
+      hasLogin: html.includes('Login') || html.includes('login') || html.includes('ログイン'),
+    };
   } catch (err) {
     console.error(`[SaveHistory-TV] ${date} fetch error:`, err.message);
+    salesByStore._debug = { error: err.message };
   }
 
   return salesByStore;
@@ -1415,7 +1423,7 @@ function buildProductivityRecords(attendanceData, salesByStore, date) {
   const records = [];
   // 売上データがある店舗を基準にレコードを作成
   for (const [storeName, salesData] of Object.entries(salesByStore)) {
-    if (storeName === '_single') continue;
+    if (storeName === '_single' || storeName === '_debug') continue;
     const workData = storeWorkData[storeName] || { totalMinutes: 0, count: 0 };
     const workHours = Math.round((workData.totalMinutes / 60) * 100) / 100;
     const sales = salesData.sales || 0;
