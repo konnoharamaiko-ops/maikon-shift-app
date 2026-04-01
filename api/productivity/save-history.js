@@ -347,8 +347,7 @@ async function handleBackfill(req, res) {
       date_from: dateFrom,
       date_to: dateTo,
       results,
-      tvLoginDebug: tvCookies ? { cookiesLength: tvCookies.length, cookiesPreview: tvCookies.substring(0, 100) } : { status: 'no_login', error: tvLoginError },
-      envDebug: { hasTvUser: !!process.env.TEMPOVISOR_USERNAME, hasTvPass: !!process.env.TEMPOVISOR_PASSWORD, tvUserLen: (process.env.TEMPOVISOR_USERNAME || '').length, tvPassLen: (process.env.TEMPOVISOR_PASSWORD || '').length },
+
       timestamp: new Date().toISOString(),
     });
 
