@@ -258,6 +258,7 @@ async function handleBackfill(req, res) {
     // TempoVisorにログイン（環境変数があれば）
     let tvCookies = null;
     let repBaseUrl = null;
+    let tvLoginError = null;
     const tvUser = process.env.TEMPOVISOR_USERNAME;
     const tvPass = process.env.TEMPOVISOR_PASSWORD;
     if (tvUser && tvPass) {
@@ -267,6 +268,7 @@ async function handleBackfill(req, res) {
         repBaseUrl = tvLogin.repBaseUrl;
         console.log('[Backfill] TempoVisorログイン成功, loginDebug:', JSON.stringify(tvLogin.loginDebug));
       } catch (tvErr) {
+        tvLoginError = tvErr.message + ' | ' + tvErr.stack;
         console.warn('[Backfill] TempoVisorログイン失敗:', tvErr.message);
       }
     } else {
@@ -344,7 +346,7 @@ async function handleBackfill(req, res) {
       date_from: dateFrom,
       date_to: dateTo,
       results,
-      tvLoginDebug: tvCookies ? { cookiesLength: tvCookies.length, cookiesPreview: tvCookies.substring(0, 100) } : 'no_login',
+      tvLoginDebug: tvCookies ? { cookiesLength: tvCookies.length, cookiesPreview: tvCookies.substring(0, 100) } : { status: 'no_login', error: tvLoginError },
       envDebug: { hasTvUser: !!process.env.TEMPOVISOR_USERNAME, hasTvPass: !!process.env.TEMPOVISOR_PASSWORD, tvUserLen: (process.env.TEMPOVISOR_USERNAME || '').length, tvPassLen: (process.env.TEMPOVISOR_PASSWORD || '').length },
       timestamp: new Date().toISOString(),
     });
