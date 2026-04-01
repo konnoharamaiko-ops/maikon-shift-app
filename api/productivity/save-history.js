@@ -265,7 +265,7 @@ async function handleBackfill(req, res) {
         const tvLogin = await loginTempoVisor(tvUser, tvPass);
         tvCookies = tvLogin.cookies;
         repBaseUrl = tvLogin.repBaseUrl;
-        console.log('[Backfill] TempoVisorログイン成功');
+        console.log('[Backfill] TempoVisorログイン成功, loginDebug:', JSON.stringify(tvLogin.loginDebug));
       } catch (tvErr) {
         console.warn('[Backfill] TempoVisorログイン失敗:', tvErr.message);
       }
@@ -344,6 +344,7 @@ async function handleBackfill(req, res) {
       date_from: dateFrom,
       date_to: dateTo,
       results,
+      tvLoginDebug: tvCookies ? { cookiesLength: tvCookies.length, cookiesPreview: tvCookies.substring(0, 100) } : 'no_login',
       timestamp: new Date().toISOString(),
     });
 
@@ -1231,8 +1232,28 @@ async function loginTempoVisor(username, password) {
   });
   const loginCookies = extractTempoVisorCookies(loginRes);
   const allCookies = mergeTempoVisorCookies(initialCookies, loginCookies);
-  console.log('[SaveHistory-TV] TempoVisor login done, cookies length:', allCookies.length);
-  return { cookies: allCookies, repBaseUrl };
+  const loginStatus = loginRes.status;
+  const loginLocation = loginRes.headers.get('location') || 'none';
+  console.log(`[SaveHistory-TV] TempoVisor login done, status=${loginStatus}, location=${loginLocation}, cookies length: ${allCookies.length}`);
+  
+  // ログイン後にリダイレクト先をフォローする
+  if (loginLocation && loginLocation !== 'none') {
+    const redirectUrl = loginLocation.startsWith('http') ? loginLocation : `https://www.tenpovisor.jp${loginLocation}`;
+    const redirectRes = await fetch(redirectUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Cookie': allCookies,
+      },
+      redirect: 'manual',
+    });
+    const redirectCookies = extractTempoVisorCookies(redirectRes);
+    const finalCookies = mergeTempoVisorCookies(allCookies, redirectCookies);
+    console.log(`[SaveHistory-TV] Redirect followed: ${redirectUrl}, new cookies: ${redirectCookies.length}`);
+    return { cookies: finalCookies, repBaseUrl, loginDebug: { status: loginStatus, location: loginLocation } };
+  }
+  
+  return { cookies: allCookies, repBaseUrl, loginDebug: { status: loginStatus, location: loginLocation } };
 }
 
 function parseSalesAmount(text) {
