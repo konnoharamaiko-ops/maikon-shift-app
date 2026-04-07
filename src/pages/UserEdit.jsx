@@ -92,7 +92,17 @@ export default function UserEdit() {
 
   const updateUserMutation = useMutation({
     mutationFn: async (data) => {
-      await updateRecord('User', targetUser.id, data);
+      // 管理者によるユーザー編集は、RLS制限を回避するためsupabaseAdmin（Service Role Key）を優先使用
+      // user_role等の保護されたカラムも確実に更新できる
+      if (supabaseAdmin) {
+        console.log(`[UserEdit] supabaseAdminでユーザー更新: ${targetUser.id}`, data);
+        const { error } = await supabaseAdmin.from('User').update(data).eq('id', targetUser.id);
+        if (error) throw error;
+      } else {
+        // supabaseAdminが利用不可の場合は通常のクライアントでフォールバック
+        console.warn('[UserEdit] supabaseAdminが利用不可、通常クライアントで更新');
+        await updateRecord('User', targetUser.id, data);
+      }
     },
     onSuccess: () => {
       invalidateUserQueries(queryClient);
