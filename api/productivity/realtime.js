@@ -273,7 +273,13 @@ async function fetchAndCacheData(tempovisorUser, tempovisorPass, jobcanCompany, 
   // アプリ内所属設定に基づいてstoreEmployeesのstore_nameを上書き
   // ただし、打刻場所（stamp_store）が取得できている場合は打刻場所を優先する
   // belongs_*は「打刻場所が取得できない場合」または「未出勤の場合」のフォールバックとして使用
+  // ただし、override_affiliationが設定済み（ユーザーが明示的に移動設定した）場合はスキップ
   storeEmployees.forEach(emp => {
+    // ユーザーが明示的に除外・移動設定で部署を指定した場合は、app_affiliationを上書きしない
+    if (emp.override_affiliation) {
+      console.log(`[Affiliation] ${emp.name}: override_affiliation設定済み(${emp.app_affiliation}/${emp.app_affiliation_store}) → ユーザー設定を優先`);
+      return;
+    }
     const affiliation = appUserAffiliationMap[emp.name] || null;
     if (affiliation) {
       emp.app_affiliation = affiliation.category;
@@ -600,6 +606,17 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
     // stamp_storeは設定がない場合のデフォルト振り分けとして使用
     const hasStampStore = !!emp.stamp_store;
 
+    // override_storeが部署名の場合、app_affiliationも上書きする（buildDepartmentDataで正しく振り分けるため）
+    const OVERRIDE_TO_AFFILIATION = {
+      '企画部': { category: 'planning', storeName: '企画部' },
+      '通販部': { category: 'online', storeName: '通販部' },
+      '特販部': { category: 'tokuhan', storeName: '特販部' },
+      '北摂工場': { category: 'manufacturing', storeName: '北摂工場' },
+      'かがや工場': { category: 'manufacturing', storeName: 'かがや工場' },
+      '南田辺工房': { category: 'manufacturing', storeName: '南田辺工房' },
+    };
+    const overrideAffiliation = clientSetting?.override_store ? OVERRIDE_TO_AFFILIATION[clientSetting.override_store] : null;
+
     // 除外設定がある場合の処理（ユーザー設定を最優先）
     if (clientSetting?.excluded === true) {
       // 時間帯別振り分けがある場合
@@ -618,6 +635,7 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
             const overlapEnd = Math.min(empEnd, allocTo);
             if (overlapStart < overlapEnd) {
               const allocHours = (overlapEnd - overlapStart) / 60;
+              const allocAffiliation = OVERRIDE_TO_AFFILIATION[alloc.store] || null;
               storeEmployees.push({
                 ...emp,
                 store_name: alloc.store,
@@ -629,6 +647,7 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
                 is_employee: isEmployee,
                 service_hours_applied: false,
                 time_allocation_applied: true,
+                ...(allocAffiliation ? { app_affiliation: allocAffiliation.category, app_affiliation_store: allocAffiliation.storeName, override_affiliation: true } : {}),
               });
               console.log(`[StaffSettings] 時間帯別振り分け: ${emp.name} ${alloc.from}〜${alloc.to} → ${alloc.store} (${allocHours.toFixed(1)}h)${hasStampStore ? ` (stamp_store: ${emp.stamp_store} を上書き)` : ''}`);
             }
@@ -642,7 +661,13 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
       } else if (clientSetting?.override_store) {
         // 単純移動先が設定されている場合：元の店舗から除外し、移動先店舗の人時計算に追加する
         emp = { ...emp, store_name: clientSetting.override_store, is_transferred: true };
-        console.log(`[StaffSettings] 除外＋移動: ${emp.name} → ${clientSetting.override_store}${hasStampStore ? ` (stamp_store: ${emp.stamp_store} を上書き)` : ''}`);
+        // override_storeが部署名の場合、app_affiliationも上書き
+        if (overrideAffiliation) {
+          emp.app_affiliation = overrideAffiliation.category;
+          emp.app_affiliation_store = overrideAffiliation.storeName;
+          emp.override_affiliation = true;
+        }
+        console.log(`[StaffSettings] 除外＋移動: ${emp.name} → ${clientSetting.override_store}${hasStampStore ? ` (stamp_store: ${emp.stamp_store} を上書き)` : ''}${overrideAffiliation ? ` (affiliation: ${overrideAffiliation.category})` : ''}`);
         // 移動先として処理を続行（returnしない）
       } else {
         // 移動先なし：どの店舗にも追加しない
@@ -652,7 +677,13 @@ function applyEmployeeServiceHours(employees, staffMaster, clientStaffSettings =
     } else if (clientSetting?.override_store) {
       // 除外なし・所属店舗変更のみの場合（stamp_storeがあってもユーザー設定を優先）
       emp = { ...emp, store_name: clientSetting.override_store };
-      console.log(`[StaffSettings] 所属変更: ${emp.name} → ${clientSetting.override_store}${hasStampStore ? ` (stamp_store: ${emp.stamp_store} を上書き)` : ''}`);
+      // override_storeが部署名の場合、app_affiliationも上書き
+      if (overrideAffiliation) {
+        emp.app_affiliation = overrideAffiliation.category;
+        emp.app_affiliation_store = overrideAffiliation.storeName;
+        emp.override_affiliation = true;
+      }
+      console.log(`[StaffSettings] 所属変更: ${emp.name} → ${clientSetting.override_store}${hasStampStore ? ` (stamp_store: ${emp.stamp_store} を上書き)` : ''}${overrideAffiliation ? ` (affiliation: ${overrideAffiliation.category})` : ''}`);
     }
 
     if (!isEmployee || !master?.service_start || !master?.service_end) {
