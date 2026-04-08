@@ -2922,8 +2922,8 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
 
       // 終了時刻の決定
       // - 退勤済み：退勤打刻時刻（ない場合はwork_hoursから退勤時刻を逆算）
-      // - 勤務中・休憩中：現在時刻（未来スロットの場合はスロット終了時刻）
-      const effectiveCurrentMinutes = isFutureSlot ? slotEndMinutes : currentMinutes;
+      // - 勤務中・休憩中：現在時刻を使用（現在進行中のスロットでも実際の経過時間のみを計算）
+      const effectiveCurrentMinutes = currentMinutes;
       let empEnd;
       if (emp.status === '退勤済み') {
         if (emp.clock_out_minutes !== null && emp.clock_out_minutes !== undefined) {
