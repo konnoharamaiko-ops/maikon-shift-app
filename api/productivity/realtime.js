@@ -2755,7 +2755,18 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       isAfterClose           // 閉店後（深夜含む）フラグ：全スロットの人時を0にする
     );
 
-    const todaySales = salesInfo.today_sales || 0;
+    const rawTodaySales = salesInfo.today_sales || 0;
+
+    // 営業中の場合：全体売上を時間帯別データの売上合計から再計算する
+    // テンポバイザーの「合計」列には前日レジ締め後データ（未来の時間帯の売上）が含まれる場合があるため、
+    // hourlyProductivityの売上合計（現在時刻までのデータのみ）を使用して正確な売上を算出する
+    const totalSalesFromHourly = hourlyProductivity.reduce((sum, h) => sum + (h.sales || 0), 0);
+    const todaySales = (isDuringBusiness && hourlyProductivity.length > 0 && totalSalesFromHourly < rawTodaySales)
+      ? totalSalesFromHourly
+      : rawTodaySales;
+    if (todaySales !== rawTodaySales) {
+      console.log(`[mergeStoreData] ${storeName}: 売上補正 raw=${rawTodaySales} → hourly合計=${totalSalesFromHourly} (前日レジ締め後データ除外)`);
+    }
 
     // ヘッダーの人時数・人時生産性を時間帯別データと統一する
     // attendInfo.total_hours は小数点1桁に丸めた値のため、
