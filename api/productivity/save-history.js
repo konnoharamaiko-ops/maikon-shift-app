@@ -19,11 +19,11 @@ import iconv from 'iconv-lite';
 
 // TempoVisor店舗コードマッピング
 const TEMPOVISOR_STORE_CODES = {
-  '田辺店': '0001', '大正店': '0002', '天下茶屋店': '0003',
-  '天王寺店': '0004', 'アベノ店': '0005', '心斎橋店': '0006',
-  'かがや店': '0007', '駅丸': '0008', '北摂店': '0009',
-  '堺東店': '0010', 'イオン松原店': '0011', 'イオン守口店': '0012',
-  '美和堂福島店': '0013',
+  '田辺店': '0001', '大正店': '0004', '天下茶屋店': '0005',
+  '天王寺店': '0006', 'アベノ店': '0008', '心斎橋店': '0009',
+  'かがや店': '0010', '駅丸': '0012', '北摂店': '0016',
+  '堺東店': '0017', 'イオン松原店': '0018', 'イオン守口店': '0019',
+  '美和堂福島店': '2000',
 };
 
 // 部署コードと店舗名のマッピング
@@ -1328,7 +1328,7 @@ async function fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date) {
   const formattedDate = `${year}/${month}/${day}`;
   const salesByStore = {};
 
-  // 全店舗を一括で取得（scode1=0001, scode2=0013）
+  // 全店舗を一括で取得（scode1=0001, scode2=2000）
   // 注意: 金額方式（値引前/値引後）はログインユーザーの基本設定に依存
   // フォームパラメータには金額方式の指定はない
   const body = new URLSearchParams({
@@ -1337,7 +1337,7 @@ async function fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date) {
     yyyymmdd1: formattedDate,
     yyyymmdd2: formattedDate,
     scode1: '0001',
-    scode2: '0013',
+    scode2: '2000',
     area1IsBottom: 'true',
     areasearch: 'off',
     monthlymode: 'off',
