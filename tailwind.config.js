@@ -2,6 +2,17 @@
 module.exports = {
     darkMode: ["class"],
     content: ["./index.html", "./src/**/*.{ts,tsx,js,jsx}"],
+    // 工場別カード等で使う動的カラークラス（テンプレート文字列）の JIT パージ対策（FD-03）
+    safelist: [
+      {
+        pattern: /(bg|text|border)-(amber|orange|yellow)-(50|100|200|300|400|600|700|800|900|950)/,
+        variants: ['dark', 'hover', 'dark:hover'],
+      },
+      'dark:bg-amber-900/30', 'dark:bg-orange-900/30', 'dark:bg-yellow-900/30',
+      'dark:bg-amber-900/20', 'dark:bg-orange-900/20', 'dark:bg-yellow-900/20',
+      'dark:bg-amber-950/20', 'dark:bg-orange-950/20', 'dark:bg-yellow-950/20',
+      'dark:hover:bg-amber-950/20', 'dark:hover:bg-orange-950/20', 'dark:hover:bg-yellow-950/20',
+    ],
   theme: {
   	extend: {
   		borderRadius: {
