@@ -278,6 +278,8 @@ export default async function handler(req, res) {
         work_hours: parseFloat(s.work_hours) || 0,
         dept_code: s.dept_code,
         clock_in_place: s.clock_in_place,
+        clock_in: s.clock_in || null,
+        clock_out: s.clock_out || null,
       });
     }
 

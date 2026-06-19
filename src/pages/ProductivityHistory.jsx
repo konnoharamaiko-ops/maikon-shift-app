@@ -320,6 +320,31 @@ function StoreCard({ store, rawData, dateFrom, dateTo, staffByStore, excludedSta
     return staffByStore[store.name] || [];
   }, [staffByStore, store.name]);
 
+  // スタッフ別に集計（期間内の複数日を合算。単日なら出退勤時刻も表示）
+  const staffAgg = useMemo(() => {
+    const map = {};
+    for (const s of storeStaff) {
+      const key = s.employee_id || s.staff_name;
+      if (!map[key]) {
+        map[key] = {
+          employee_id: s.employee_id,
+          name: s.staff_name,
+          days: 0,
+          hours: 0,
+          clock_in: s.clock_in,
+          clock_out: s.clock_out,
+          place: s.clock_in_place,
+          single: true,
+        };
+      } else {
+        map[key].single = false;
+      }
+      map[key].days += 1;
+      map[key].hours += s.work_hours || 0;
+    }
+    return Object.values(map).sort((a, b) => b.hours - a.hours);
+  }, [storeStaff]);
+
   // 除外スタッフの合計時間
   const excludedHours = useMemo(() => {
     return storeStaff
@@ -403,6 +428,43 @@ function StoreCard({ store, rawData, dateFrom, dateTo, staffByStore, excludedSta
                   </p>
                 </div>
               </div>
+
+              {/* スタッフ別明細（引き継ぎ書3.2 ドリルダウン） */}
+              {staffAgg.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground mb-1">スタッフ別明細（{staffAgg.length}名）</p>
+                  <div className="max-h-48 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-200 dark:border-gray-700">
+                          <th className="text-left py-1 px-1.5 font-semibold">氏名</th>
+                          <th className="text-left py-1 px-1.5 font-semibold">出退勤</th>
+                          <th className="text-right py-1 px-1.5 font-semibold">労働時間</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {staffAgg.map((s) => {
+                          const excluded = excludedStaffIds.includes(s.employee_id);
+                          return (
+                            <tr key={s.employee_id || s.name} className={`border-b border-gray-100 dark:border-gray-800 ${excluded ? 'opacity-40 line-through' : ''}`}>
+                              <td className="py-1 px-1.5">
+                                {s.name}
+                                {s.place && <span className="ml-1 text-[10px] text-muted-foreground">({s.place})</span>}
+                              </td>
+                              <td className="py-1 px-1.5 text-muted-foreground">
+                                {s.single && s.clock_in
+                                  ? `${s.clock_in ?? '—'}〜${s.clock_out ?? '—'}`
+                                  : `${s.days}日勤務`}
+                              </td>
+                              <td className="py-1 px-1.5 text-right font-medium">{s.hours.toFixed(1)}h</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* 日別テーブル */}
               {dailyData.length > 0 && (
