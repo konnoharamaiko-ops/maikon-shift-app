@@ -2231,9 +2231,14 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
     let netMinutes = 0;
     if (status === '勤務中' || status === '休憩中' || status === '退出中') {
-      // 勤務中・休憩中・退出中（一時外出）：現在時刻 - 出勤打刻時刻 - 休憩時間（リアルタイム）
+      // 勤務中：現在時刻まで。休憩中・退出中：step-out（休憩/外出開始）時刻で止める（RT-01）。
+      // 現在時刻まで在籍扱いすると、進行中の休憩/外出分を労働時間に過大計上する。
       if (clockInMinutes !== null) {
-        const elapsedMinutes = Math.max(0, nowTotalMinutes - clockInMinutes);
+        const endMinutes = ((status === '休憩中' || status === '退出中') &&
+                            clockOutMinutes !== null && clockOutMinutes > clockInMinutes)
+          ? Math.min(clockOutMinutes, nowTotalMinutes)
+          : nowTotalMinutes;
+        const elapsedMinutes = Math.max(0, endMinutes - clockInMinutes);
         netMinutes = Math.max(0, elapsedMinutes - breakMinutes);
       }
     } else if (status === '退勤済み') {
@@ -2935,10 +2940,16 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
           // work_hoursもない場合は現在時刻を使用（フォールバック）
           empEnd = effectiveCurrentMinutes;
         }
+      } else if ((emp.status === '休憩中' || emp.status === '退出中') &&
+                 emp.clock_out_minutes !== null && emp.clock_out_minutes !== undefined &&
+                 emp.clock_out_minutes > empStart) {
+        // 休憩中・退出中：休憩/外出の開始時刻（step-out）で止める（現在時刻は超えない）。
+        // 現在時刻まで在籍扱いすると、進行中の休憩/外出分を人時に過大計上する（RT-01）。
+        empEnd = Math.min(emp.clock_out_minutes, effectiveCurrentMinutes);
       } else {
+        // 勤務中（および step-out 時刻が不明な場合）：現在時刻
         empEnd = effectiveCurrentMinutes;
       }
-      // 退出中（一時外出）は休憩中と同様に現在時刻まで在籍として扱う
 
       // この時間帯との重複時間（分）を計算
       const overlapStart = Math.max(empStart, slotStartMinutes);
