@@ -6,6 +6,7 @@
 
 import * as cheerio from 'cheerio';
 import iconv from 'iconv-lite';
+import { applyCors, requireAuth } from '../_lib/security.js';
 
 // 部署コードと店舗名のマッピング（ジョブカン部署コード → 店舗名/部署名）
 // ジョブカン管理画面のグループ設定CSVから取得した全部署コード
@@ -146,22 +147,19 @@ const CACHE_TTL_MS = 90 * 1000;  // 90秒（自動更新間隔と同じ）
 const CACHE_STALE_MS = 300 * 1000; // 5分（古いデータを返す最大時間）
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (applyCors(req, res, { methods: 'GET,POST,OPTIONS' })) return;
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   try {
-    const tempovisorUser = process.env.TEMPOVISOR_USERNAME || 'manu';
-    const tempovisorPass = process.env.TEMPOVISOR_PASSWORD || 'manus';
-    const jobcanCompany = process.env.JOBCAN_COMPANY_ID || 'maikon';
-    const jobcanUser = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
-    const jobcanPass = process.env.JOBCAN_PASSWORD || 'fujita.yog';
+    const tempovisorUser = process.env.TEMPOVISOR_USERNAME;
+    const tempovisorPass = process.env.TEMPOVISOR_PASSWORD;
+    const jobcanCompany = process.env.JOBCAN_COMPANY_ID;
+    const jobcanUser = process.env.JOBCAN_LOGIN_ID;
+    const jobcanPass = process.env.JOBCAN_PASSWORD;
+    if (!jobcanCompany || !jobcanUser || !jobcanPass || !tempovisorUser || !tempovisorPass) {
+      return res.status(500).json({ success: false, error: 'Upstream credentials are not configured' });
+    }
 
     // staff_only=1 の場合はスタッフマスタのみ返す（設定画面用）
     if (req.query.staff_only === '1') {

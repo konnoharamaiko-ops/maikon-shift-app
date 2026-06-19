@@ -4,6 +4,7 @@ import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '@/api/supabaseClient';
+import { authedFetch } from '@/api/authedFetch';
 import { toast } from 'sonner';
 import {
   RefreshCw, Activity, Wifi, WifiOff, TrendingUp, TrendingDown,
@@ -229,7 +230,7 @@ async function fetchRealtimeData(storeSettings, staffSettings) {
     params.push(`staff_settings=${encodeURIComponent(JSON.stringify(staffSettings))}`);
   }
   if (params.length > 0) url += '?' + params.join('&');
-  const response = await fetch(url, {
+  const response = await authedFetch(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' },
   });
@@ -1912,7 +1913,7 @@ function StaffSettingsModal({ onClose, onSave }) {
 
   // Supabaseからスタッフマスタを取得
   useEffect(() => {
-    fetch('/api/productivity/realtime?staff_only=1')
+    authedFetch('/api/productivity/realtime?staff_only=1')
       .then(r => r.json())
       .then(data => {
         // スタッフマスタが存在する場合はそちらを使用
@@ -1921,7 +1922,7 @@ function StaffSettingsModal({ onClose, onSave }) {
           setLoading(false);
         } else {
           // StaffMasterが空の場合、リアルタイムAPIの通常レスポンスからスタッフリストを構築
-          fetch('/api/productivity/realtime')
+          authedFetch('/api/productivity/realtime')
             .then(r => r.json())
             .then(rtData => {
               if (rtData.employees && rtData.employees.length > 0) {
@@ -1954,7 +1955,7 @@ function StaffSettingsModal({ onClose, onSave }) {
     setSyncing(true);
     setSyncResult(null);
     try {
-      const res = await fetch('/api/productivity/sync-staff');
+      const res = await authedFetch('/api/productivity/sync-staff');
       const data = await res.json();
       if (data.success) {
         setSyncResult({ success: true, message: data.message });
@@ -4378,7 +4379,7 @@ function HistoricalComparisonModal({ onClose, month1, month2, setMonth1, setMont
     try {
       const params = new URLSearchParams({ month1 });
       if (month2) params.append('month2', month2);
-      const res = await fetch(`${API_BASE}/api/productivity?${params}`);
+      const res = await authedFetch(`${API_BASE}/api/productivity?${params}`);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       setData(json);

@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import { authedFetch } from '@/api/authedFetch';
 import { format, subDays, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -70,7 +71,7 @@ function saveStaffExclusions(exclusions) {
  * 過去データをAPIから取得
  */
 async function fetchHistoryData(dateFrom, dateTo) {
-  const response = await fetch('/api/productivity/history', {
+  const response = await authedFetch('/api/productivity/history', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }),

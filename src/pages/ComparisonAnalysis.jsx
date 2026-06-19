@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { authedFetch } from '@/api/authedFetch';
 import { format, subYears, subDays } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -46,7 +47,7 @@ const DEPT_COLORS = {
 // ===== API取得 =====
 async function fetchComparisonData(month1, month2) {
   const url = `/api/productivity?month1=${month1}&month2=${month2}&action=comparison`;
-  const response = await fetch(url);
+  const response = await authedFetch(url);
   if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
   return response.json();
 }
@@ -54,7 +55,7 @@ async function fetchComparisonData(month1, month2) {
 async function fetchDailyComparisonData(date1, date2) {
   let url = `/api/productivity?mode=daily&date1=${date1}`;
   if (date2) url += `&date2=${date2}`;
-  const response = await fetch(url);
+  const response = await authedFetch(url);
   if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
   return response.json();
 }
@@ -414,7 +415,7 @@ function StaffSettingsPanel({ onClose }) {
   const [filterType, setFilterType] = useState('all'); // 'all' | 'excluded' | 'moved'
 
   useEffect(() => {
-    fetch('/api/productivity/realtime?staff_only=1')
+    authedFetch('/api/productivity/realtime?staff_only=1')
       .then(r => r.json())
       .then(data => {
         if (data.staff_master && data.staff_master.length > 0) {
@@ -422,7 +423,7 @@ function StaffSettingsPanel({ onClose }) {
           setLoading(false);
         } else {
           // StaffMasterが空の場合、リアルタイムAPIの通常レスポンスからスタッフリストを構築
-          fetch('/api/productivity/realtime')
+          authedFetch('/api/productivity/realtime')
             .then(r => r.json())
             .then(rtData => {
               if (rtData.employees && rtData.employees.length > 0) {

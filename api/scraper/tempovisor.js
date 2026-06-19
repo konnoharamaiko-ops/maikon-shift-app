@@ -7,8 +7,8 @@ import { chromium } from 'playwright-core';
 import chromiumPkg from '@sparticuz/chromium';
 
 const TEMPOVISOR_URL = 'https://www.tenpovisor.jp/alioth/servlet/LoginServlet?legacy=true';
-const USERNAME = process.env.TEMPOVISOR_USERNAME || 'manu';
-const PASSWORD = process.env.TEMPOVISOR_PASSWORD || 'manus';
+const USERNAME = process.env.TEMPOVISOR_USERNAME;
+const PASSWORD = process.env.TEMPOVISOR_PASSWORD;
 
 export default async function handler(req, res) {
   // CORS設定

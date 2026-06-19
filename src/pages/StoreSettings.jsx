@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/api/supabaseClient';
+import { authedFetch } from '@/api/authedFetch';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import {
@@ -49,7 +50,7 @@ function DailySalesDialog({ open, onClose, store, year, month }) {
     setError(null);
     setDailyData([]);
     const storeName = encodeURIComponent(store.store_name);
-    fetch(`/api/productivity/sales?mode=daily&year=${year}&month=${month}&store_name=${storeName}`)
+    authedFetch(`/api/productivity/sales?mode=daily&year=${year}&month=${month}&store_name=${storeName}`)
       .then(r => r.json())
       .then(data => {
         if (data.success && data.daily_list && data.daily_list.length > 0) {
@@ -272,7 +273,7 @@ function StoreSalesInput({ store }) {
     setFetchingMonth(month);
     try {
       const storeName = encodeURIComponent(store.store_name);
-      const res = await fetch(`/api/productivity/sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
+      const res = await authedFetch(`/api/productivity/sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.message || `HTTP ${res.status}`);
@@ -306,7 +307,7 @@ function StoreSalesInput({ store }) {
     for (const month of months) {
       try {
         const storeName = encodeURIComponent(store.store_name);
-        const res = await fetch(`/api/productivity/sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
+        const res = await authedFetch(`/api/productivity/sales?year=${selectedYear}&month=${month}&store_name=${storeName}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.success && data.total_sales > 0) {
