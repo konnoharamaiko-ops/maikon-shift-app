@@ -2789,7 +2789,9 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       productivity = actualTotalHours > 0 ? Math.round(todaySales / actualTotalHours) : 0;
       console.log(`[mergeStoreData] ${storeName}: 閉店後固定 todaySales=${todaySales}, actualTotalHours=${actualTotalHours}, productivity=${productivity}`);
     } else {
-      productivity = totalHoursFromHourly > 0 ? Math.round(todaySales / totalHoursFromHourly) : 0;
+      // ヘッダの spd は、表示される wk_tm（= totalHours, 丸め済み）から再現できるよう
+      // 同じ丸め済み人時で算出する（RT-03: kingaku ÷ wk_tm ≒ spd を成立させ数値の辻褄を合わせる）。
+      productivity = totalHours > 0 ? Math.round(todaySales / totalHours) : 0;
     }
 
     return {
