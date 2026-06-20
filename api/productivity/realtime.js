@@ -3016,7 +3016,15 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
         hourlyProductivityValue = 0;
       }
     } else {
-      hourlyProductivityValue = personHours > 0 ? Math.round(hourlySales / personHours) : 0;
+      // 進行中スロットの開始直後は経過人時が極小で、単発の売上により spd が一時的に跳ねるため、
+      // 人時が一定量（0.25人時≒15人分）たまるまでは spd を表示しない（RT-04: 表示の安定化のみ。
+      // 売上・person_hours・全体集計には一切影響しない）。
+      const isInProgressSlot = (hour === currentHour);
+      if (isInProgressSlot && personHours > 0 && personHours < 0.25) {
+        hourlyProductivityValue = 0;
+      } else {
+        hourlyProductivityValue = personHours > 0 ? Math.round(hourlySales / personHours) : 0;
+      }
     }
 
     result.push({
