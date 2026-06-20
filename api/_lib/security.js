@@ -45,6 +45,24 @@ function getBearer(req) {
   return h.startsWith('Bearer ') ? h.slice(7).trim() : null;
 }
 
+// 定数時間に近い文字列比較（タイミング攻撃を緩和）
+function safeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
+/**
+ * CRON_SECRET による（サーバ間内部呼び出し用）認証。
+ * Authorization: Bearer <CRON_SECRET> が一致すれば true。
+ */
+export function hasValidCronSecret(req) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers['authorization'] || '';
+  return !!cronSecret && safeEqual(authHeader, `Bearer ${cronSecret}`);
+}
+
 /**
  * 呼び出し元のSupabaseセッションを検証。認証済みなら user、未認証なら null。
  */

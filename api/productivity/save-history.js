@@ -1011,7 +1011,7 @@ async function saveToDailyDeptProductivity(supabaseUrl, supabaseKey, records) {
   if (records.length === 0) return;
 
   const resp = await fetch(
-    `${supabaseUrl}/rest/v1/DailyDeptProductivity`,
+    `${supabaseUrl}/rest/v1/DailyDeptProductivity?on_conflict=work_date,dept_name`,
     {
       method: 'POST',
       headers: {
@@ -1327,6 +1327,7 @@ async function fetchDailySalesViaSalesAPI(date) {
       try {
         const apiUrl = `https://maikon-shift-app.vercel.app/api/productivity/sales?year=${year}&month=${parseInt(month)}&store_name=${encodeURIComponent(storeName)}&mode=daily`;
         const res = await fetch(apiUrl, {
+          headers: { 'Authorization': `Bearer ${process.env.CRON_SECRET || ''}` },
           signal: AbortSignal.timeout(60000),
         });
         if (!res.ok) {
