@@ -11,7 +11,7 @@
 
 import * as cheerio from 'cheerio';
 import iconv from 'iconv-lite';
-import { applyCors, requireAuth } from '../_lib/security.js';
+import { applyCors, requireAuth, hasValidCronSecret } from '../_lib/security.js';
 
 // TempoVisor店舗コードマッピング（0001〜0013）
 const TEMPOVISOR_STORE_CODES = {
@@ -301,8 +301,11 @@ async function fetchSalesFromN221(username, password, year, month, storeName, mo
 
 export default async function handler(req, res) {
   if (applyCors(req, res, { methods: 'GET,OPTIONS' })) return;
-  const user = await requireAuth(req, res);
-  if (!user) return;
+  // 認証: ログインユーザー もしくは CRON_SECRET（save-history からのサーバ間内部呼び出し）
+  if (!hasValidCronSecret(req)) {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+  }
 
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
