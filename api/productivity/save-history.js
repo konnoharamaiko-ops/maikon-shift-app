@@ -342,7 +342,13 @@ async function handleBackfill(req, res) {
         let salesDebug = {};
         if (tvUser && tvPass) {
           try {
-            const salesByStore = await fetchDailySalesViaSalesAPI(date);
+            // 単一ログイン(tvCookies)で全店舗を一括取得する（SCR-09）。
+            // 従来の店舗別 fan-out は1日あたり13回ログインし timeout/rate-limit による
+            // 取りこぼし＝売上カバレッジ欠落（=テンポバイザーとの数値乖離）の主因だった。
+            // ログインCookie未取得時のみ従来の店舗別API経由にフォールバックする。
+            const salesByStore = (tvCookies && repBaseUrl)
+              ? await fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date)
+              : await fetchDailySalesViaSalesAPI(date);
             const storeSalesCount = Object.keys(salesByStore).filter((k) => k !== '_single' && k !== '_debug').length;
             salesOk = storeSalesCount > 0;
             salesDebug = { stores: storeSalesCount, sample: Object.entries(salesByStore).filter(([k]) => k !== '_single' && k !== '_debug').slice(0, 3).map(([k, v]) => ({ store: k, sales: v.sales, customers: v.customers })) };
