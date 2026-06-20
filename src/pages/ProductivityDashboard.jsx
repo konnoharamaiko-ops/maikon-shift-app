@@ -3334,6 +3334,21 @@ export default function ProductivityDashboard() {
                     <span className="text-xs text-blue-500">（ジョブカン連携）</span>
                   </div>
                 )}
+                {/* 特販部の勤務状況（FD-02: 収集済みだが未表示だった department_data.tokuhan を可視化） */}
+                {(() => {
+                  const tokuhanDept = departmentData?.tokuhan || {};
+                  if (!(tokuhanDept.working_employees > 0 || tokuhanDept.attended_employees > 0)) return null;
+                  return (
+                    <div className="flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 rounded-xl px-4 py-2 text-sm">
+                      <Users className="h-4 w-4 text-orange-600" />
+                      <span className="text-orange-700 dark:text-orange-300 font-semibold">
+                        特販部 勤務中 {tokuhanDept.working_employees || 0}人 / 本日出勤 {tokuhanDept.attended_employees || 0}人
+                        {tokuhanDept.total_hours > 0 ? `（勤務時間 ${tokuhanDept.total_hours.toFixed(1)}h）` : ''}
+                      </span>
+                      <span className="text-xs text-orange-500">（ジョブカン連携）</span>
+                    </div>
+                  );
+                })()}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     { label: '本日受注件数', value: onlineData?.order_count ?? '-', unit: '件', icon: Package, color: 'from-blue-500 to-indigo-600' },
