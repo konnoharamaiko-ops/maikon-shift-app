@@ -11,6 +11,7 @@
 
 import * as cheerio from 'cheerio';
 import iconv from 'iconv-lite';
+import { applyCors, requireAuth } from '../_lib/security.js';
 
 // TempoVisor店舗コードマッピング（0001〜0013）
 const TEMPOVISOR_STORE_CODES = {
@@ -299,18 +300,9 @@ async function fetchSalesFromN221(username, password, year, month, storeName, mo
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (applyCors(req, res, { methods: 'GET,OPTIONS' })) return;
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });

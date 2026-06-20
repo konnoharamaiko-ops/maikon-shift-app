@@ -16,6 +16,15 @@
 
 import * as cheerio from 'cheerio';
 import iconv from 'iconv-lite';
+import { applyCors, requireAdmin } from '../_lib/security.js';
+
+// 定数時間に近い文字列比較（タイミング攻撃を緩和）
+function safeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
 
 // TempoVisor店舗コードマッピング
 const TEMPOVISOR_STORE_CODES = {
@@ -77,36 +86,37 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', '*');
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-
-  // 認証チェック
-  const authHeader = req.headers['authorization'];
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    const manualKey = req.query.key;
-    if (manualKey !== cronSecret) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-  }
+  if (applyCors(req, res, { methods: 'GET,POST,OPTIONS' })) return;
 
   const mode = req.query.mode || 'daily';
 
-  // モードルーティング
+  // 認証:
+  //  - status（読み取り専用の進捗確認）: 管理者セッション もしくは CRON_SECRET
+  //  - daily / backfill（書き込み）: CRON_SECRET 必須（fail-closed）
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers['authorization'] || '';
+  const hasCronSecret = !!cronSecret && safeEqual(authHeader, `Bearer ${cronSecret}`);
+
   if (mode === 'status') {
+    if (!hasCronSecret) {
+      const admin = await requireAdmin(req, res);
+      if (!admin) return; // requireAdmin が 401/403 を送出済み
+    }
     return await handleBackfillStatus(req, res);
-  } else if (mode === 'backfill') {
-    return await handleBackfill(req, res);
-  } else {
-    return await handleDailySave(req, res);
   }
+
+  // 書き込みモード（daily / backfill）: CRON_SECRET 必須（fail-closed）
+  if (!cronSecret) {
+    return res.status(503).json({ error: 'CRON_SECRET is not configured; this write endpoint is disabled' });
+  }
+  if (!hasCronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (mode === 'backfill') {
+    return await handleBackfill(req, res);
+  }
+  return await handleDailySave(req, res);
 }
 
 // ============================================================
@@ -115,14 +125,17 @@ export default async function handler(req, res) {
 
 async function handleDailySave(req, res) {
   try {
-    const jobcanCompany = process.env.JOBCAN_COMPANY_ID || 'maikon';
-    const jobcanUser = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
-    const jobcanPass = process.env.JOBCAN_PASSWORD || 'fujita.yog';
+    const jobcanCompany = process.env.JOBCAN_COMPANY_ID;
+    const jobcanUser = process.env.JOBCAN_LOGIN_ID;
+    const jobcanPass = process.env.JOBCAN_PASSWORD;
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
     const supabaseKey = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
       return res.status(500).json({ error: 'Supabase credentials not configured' });
+    }
+    if (!jobcanCompany || !jobcanUser || !jobcanPass) {
+      return res.status(500).json({ error: 'Jobcan credentials not configured' });
     }
 
     // 対象日付を決定
@@ -177,21 +190,31 @@ async function handleDailySave(req, res) {
 
     // DailyProductivityテーブルに売上+勤怠データを保存
     let productivitySaved = 0;
+    let productivityStatus = 'skipped'; // skipped | ok | sales_failed
     try {
       const tvUser = process.env.TEMPOVISOR_USERNAME;
       const tvPass = process.env.TEMPOVISOR_PASSWORD;
       if (tvUser && tvPass) {
         const { cookies: tvCookies, repBaseUrl } = await loginTempoVisor(tvUser, tvPass);
         const salesByStore = await fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, targetDate);
-        const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, targetDate);
-        if (productivityRecords.length > 0) {
-          productivitySaved = await saveToDailyProductivity(supabaseUrl, supabaseKey, productivityRecords);
+        const storeSalesCount = Object.keys(salesByStore).filter((k) => k !== '_single' && k !== '_debug').length;
+        if (storeSalesCount > 0) {
+          const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, targetDate);
+          if (productivityRecords.length > 0) {
+            productivitySaved = await saveToDailyProductivity(supabaseUrl, supabaseKey, productivityRecords);
+          }
+          productivityStatus = 'ok';
+        } else {
+          // 売上が空 → sales:0 で汚染せず、未取得として再実行に委ねる（SH-01/SH-04）
+          productivityStatus = 'sales_failed';
+          console.warn('[SaveHistory] 売上データが空のため DailyProductivity をスキップ（再取得対象）');
         }
-        console.log(`[SaveHistory] DailyProductivity保存: ${productivitySaved}件`);
+        console.log(`[SaveHistory] DailyProductivity保存: ${productivitySaved}件 (${productivityStatus})`);
       } else {
         console.warn('[SaveHistory] TEMPOVISOR credentials not set, skipping DailyProductivity');
       }
     } catch (tvErr) {
+      productivityStatus = 'sales_failed';
       console.error('[SaveHistory] DailyProductivity保存エラー:', tvErr.message);
     }
 
@@ -204,6 +227,7 @@ async function handleDailySave(req, res) {
       staff_hours: staffHoursRecords.length,
       dept_records: deptRecords.length,
       productivity_records: productivitySaved,
+      productivity_status: productivityStatus,
       timestamp: new Date().toISOString(),
     });
 
@@ -314,23 +338,39 @@ async function handleBackfill(req, res) {
         // DailyProductivityテーブルに売上+勤怠データを保存
         // sales.js APIを内部呼び出しして各店舗の売上を取得
         let productivitySaved = 0;
+        let salesOk = false; // 売上取得が成功したか
         let salesDebug = {};
         if (tvUser && tvPass) {
           try {
-            const salesByStore = await fetchDailySalesViaSalesAPI(date);
-            salesDebug = { stores: Object.keys(salesByStore).length, sample: Object.entries(salesByStore).slice(0, 3).map(([k,v]) => ({ store: k, sales: v.sales, customers: v.customers })) };
+            // 単一ログイン(tvCookies)で全店舗を一括取得する（SCR-09）。
+            // 従来の店舗別 fan-out は1日あたり13回ログインし timeout/rate-limit による
+            // 取りこぼし＝売上カバレッジ欠落（=テンポバイザーとの数値乖離）の主因だった。
+            // ログインCookie未取得時のみ従来の店舗別API経由にフォールバックする。
+            const salesByStore = (tvCookies && repBaseUrl)
+              ? await fetchDailySalesFromTempoVisor(tvCookies, repBaseUrl, date)
+              : await fetchDailySalesViaSalesAPI(date);
+            const storeSalesCount = Object.keys(salesByStore).filter((k) => k !== '_single' && k !== '_debug').length;
+            salesOk = storeSalesCount > 0;
+            salesDebug = { stores: storeSalesCount, sample: Object.entries(salesByStore).filter(([k]) => k !== '_single' && k !== '_debug').slice(0, 3).map(([k, v]) => ({ store: k, sales: v.sales, customers: v.customers })) };
             console.log(`[Backfill] ${date} salesByStore: ${JSON.stringify(salesDebug)}`);
-            const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, date);
-            if (productivityRecords.length > 0) {
-              productivitySaved = await saveToDailyProductivity(supabaseUrl, supabaseKey, productivityRecords);
+            if (salesOk) {
+              const productivityRecords = buildProductivityRecords(attendanceData, salesByStore, date);
+              if (productivityRecords.length > 0) {
+                productivitySaved = await saveToDailyProductivity(supabaseUrl, supabaseKey, productivityRecords);
+              }
+            } else {
+              console.warn(`[Backfill] ${date} 売上データが空のため DailyProductivity をスキップ（再試行対象）`);
             }
           } catch (tvErr) {
+            salesOk = false;
             console.warn(`[Backfill] ${date} DailyProductivityエラー:`, tvErr.message);
           }
         }
 
-        results.push({ date, status: 'success', saved: savedCount, staff_hours: staffHoursRecords.length, dept_records: deptRecords.length, productivity: productivitySaved, salesDebug });
-        await saveBackfillProgress(supabaseUrl, supabaseKey, date, 'success', savedCount);
+        // 売上が取得できた日のみ 'success'。売上失敗は 'partial'（再backfillで再取得対象）。SH-01/SH-05
+        const dayStatus = (tvUser && tvPass && !salesOk) ? 'partial' : 'success';
+        results.push({ date, status: dayStatus, saved: savedCount, staff_hours: staffHoursRecords.length, dept_records: deptRecords.length, productivity: productivitySaved, salesDebug });
+        await saveBackfillProgress(supabaseUrl, supabaseKey, date, dayStatus, savedCount);
 
       } catch (dateErr) {
         console.error(`[Backfill] ${date} エラー:`, dateErr.message);
@@ -1523,23 +1563,11 @@ function buildProductivityRecords(attendanceData, salesByStore, date) {
     });
   }
 
-  // 勤怠データはあるが売上データがない店舗（稼働時間のみ更新）
-  for (const [storeName, workData] of Object.entries(storeWorkData)) {
-    if (salesByStore[storeName]) continue; // 既に処理済み
-    const workHours = Math.round((workData.totalMinutes / 60) * 100) / 100;
-    records.push({
-      work_date: date,
-      store_name: storeName,
-      sales: 0,
-      customers: 0,
-      work_hours: workHours,
-      attended_employees: workData.count,
-      productivity: 0,
-      unit_price: 0,
-      data_source: 'batch',
-      updated_at: new Date().toISOString(),
-    });
-  }
+  // 売上データが無い店舗には DailyProductivity 行を書かない（SH-04）。
+  // 以前は sales:0 の行を書いていたが、売上取得失敗日を「売上ゼロ」と誤記録して
+  // 集計を汚染し、再backfillでも自己修復しなかった。勤怠（稼働時間）は
+  // WorkHistory / DailyStaffHours / DailyDeptProductivity 側に保存済みのため、
+  // ここでは「売上が取得できた店舗のみ」を DailyProductivity に保存する。
 
   return records;
 }
@@ -1564,9 +1592,9 @@ async function saveToDailyProductivity(supabaseUrl, supabaseKey, records) {
   if (!resp.ok) {
     const errText = await resp.text();
     console.error(`[SaveHistory] DailyProductivity保存エラー: ${resp.status} ${errText}`);
-  } else {
-    console.log(`[SaveHistory] DailyProductivity保存完了: ${records.length}件`);
+    // 書き込み失敗を成功と誤報告しない（SH-02）
+    throw new Error(`DailyProductivity upsert failed: ${resp.status} ${errText}`);
   }
-
+  console.log(`[SaveHistory] DailyProductivity保存完了: ${records.length}件`);
   return records.length;
 }

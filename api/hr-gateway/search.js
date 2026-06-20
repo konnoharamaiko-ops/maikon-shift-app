@@ -3,23 +3,13 @@
  * 顧客管理DB APIへの検索プロキシ
  */
 
+import { applyCors } from '../_lib/security.js';
+
 const API_BASE_URL = process.env.HR_API_BASE_URL || 'https://kokyaku-kanri.maikon.jp:9080';
 
 export default async function handler(req, res) {
-  // CORS設定
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
-
-  // OPTIONSリクエスト（プリフライト）の処理
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  // CORS: 許可Originのみ（オープンリレー防止）
+  if (applyCors(req, res, { methods: 'POST,OPTIONS' })) return;
 
   // POSTメソッドのみ許可
   if (req.method !== 'POST') {

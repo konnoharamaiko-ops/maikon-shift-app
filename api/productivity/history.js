@@ -10,6 +10,7 @@
 
 import * as cheerio from 'cheerio';
 import iconv from 'iconv-lite';
+import { applyCors, requireAuth } from '../_lib/security.js';
 
 // TempoVisorの店舗コード
 const TEMPOVISOR_STORE_CODES = {
@@ -62,15 +63,9 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (applyCors(req, res, { methods: 'GET,POST,OPTIONS' })) return;
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -283,6 +278,8 @@ export default async function handler(req, res) {
         work_hours: parseFloat(s.work_hours) || 0,
         dept_code: s.dept_code,
         clock_in_place: s.clock_in_place,
+        clock_in: s.clock_in || null,
+        clock_out: s.clock_out || null,
       });
     }
 
@@ -604,7 +601,9 @@ async function loginJobcan(companyId, loginId, password) {
 // ============================================================
 
 async function fetchFromSupabase(supabaseUrl, supabaseKey, tableName, query) {
-  const url = `${supabaseUrl}/rest/v1/${tableName}?${query}`;
+  // PostgREST のデフォルト1000行上限による無言 truncation を防ぐため明示的に上限を付与
+  const limitedQuery = /(^|&)limit=/.test(query) ? query : `${query}&limit=100000`;
+  const url = `${supabaseUrl}/rest/v1/${tableName}?${limitedQuery}`;
   const resp = await fetch(url, {
     headers: {
       'apikey': supabaseKey,

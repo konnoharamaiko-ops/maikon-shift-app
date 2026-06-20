@@ -6,6 +6,7 @@
 
 import * as cheerio from 'cheerio';
 import iconv from 'iconv-lite';
+import { applyCors, requireAuth } from '../_lib/security.js';
 
 // 部署コードと店舗名のマッピング（ジョブカン部署コード → 店舗名/部署名）
 // ジョブカン管理画面のグループ設定CSVから取得した全部署コード
@@ -146,22 +147,19 @@ const CACHE_TTL_MS = 90 * 1000;  // 90秒（自動更新間隔と同じ）
 const CACHE_STALE_MS = 300 * 1000; // 5分（古いデータを返す最大時間）
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (applyCors(req, res, { methods: 'GET,POST,OPTIONS' })) return;
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   try {
-    const tempovisorUser = process.env.TEMPOVISOR_USERNAME || 'manu';
-    const tempovisorPass = process.env.TEMPOVISOR_PASSWORD || 'manus';
-    const jobcanCompany = process.env.JOBCAN_COMPANY_ID || 'maikon';
-    const jobcanUser = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
-    const jobcanPass = process.env.JOBCAN_PASSWORD || 'fujita.yog';
+    const tempovisorUser = process.env.TEMPOVISOR_USERNAME;
+    const tempovisorPass = process.env.TEMPOVISOR_PASSWORD;
+    const jobcanCompany = process.env.JOBCAN_COMPANY_ID;
+    const jobcanUser = process.env.JOBCAN_LOGIN_ID;
+    const jobcanPass = process.env.JOBCAN_PASSWORD;
+    if (!jobcanCompany || !jobcanUser || !jobcanPass || !tempovisorUser || !tempovisorPass) {
+      return res.status(500).json({ success: false, error: 'Upstream credentials are not configured' });
+    }
 
     // staff_only=1 の場合はスタッフマスタのみ返す（設定画面用）
     if (req.query.staff_only === '1') {
@@ -2233,9 +2231,14 @@ async function fetchJobcanAttendance(companyId, loginId, password) {
 
     let netMinutes = 0;
     if (status === '勤務中' || status === '休憩中' || status === '退出中') {
-      // 勤務中・休憩中・退出中（一時外出）：現在時刻 - 出勤打刻時刻 - 休憩時間（リアルタイム）
+      // 勤務中：現在時刻まで。休憩中・退出中：step-out（休憩/外出開始）時刻で止める（RT-01）。
+      // 現在時刻まで在籍扱いすると、進行中の休憩/外出分を労働時間に過大計上する。
       if (clockInMinutes !== null) {
-        const elapsedMinutes = Math.max(0, nowTotalMinutes - clockInMinutes);
+        const endMinutes = ((status === '休憩中' || status === '退出中') &&
+                            clockOutMinutes !== null && clockOutMinutes > clockInMinutes)
+          ? Math.min(clockOutMinutes, nowTotalMinutes)
+          : nowTotalMinutes;
+        const elapsedMinutes = Math.max(0, endMinutes - clockInMinutes);
         netMinutes = Math.max(0, elapsedMinutes - breakMinutes);
       }
     } else if (status === '退勤済み') {
@@ -2786,7 +2789,9 @@ function mergeStoreData(sales, hourlyData, attendance, storeSettings = {}, yeste
       productivity = actualTotalHours > 0 ? Math.round(todaySales / actualTotalHours) : 0;
       console.log(`[mergeStoreData] ${storeName}: 閉店後固定 todaySales=${todaySales}, actualTotalHours=${actualTotalHours}, productivity=${productivity}`);
     } else {
-      productivity = totalHoursFromHourly > 0 ? Math.round(todaySales / totalHoursFromHourly) : 0;
+      // ヘッダの spd は、表示される wk_tm（= totalHours, 丸め済み）から再現できるよう
+      // 同じ丸め済み人時で算出する（RT-03: kingaku ÷ wk_tm ≒ spd を成立させ数値の辻褄を合わせる）。
+      productivity = totalHours > 0 ? Math.round(todaySales / totalHours) : 0;
     }
 
     return {
@@ -2937,10 +2942,16 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
           // work_hoursもない場合は現在時刻を使用（フォールバック）
           empEnd = effectiveCurrentMinutes;
         }
+      } else if ((emp.status === '休憩中' || emp.status === '退出中') &&
+                 emp.clock_out_minutes !== null && emp.clock_out_minutes !== undefined &&
+                 emp.clock_out_minutes > empStart) {
+        // 休憩中・退出中：休憩/外出の開始時刻（step-out）で止める（現在時刻は超えない）。
+        // 現在時刻まで在籍扱いすると、進行中の休憩/外出分を人時に過大計上する（RT-01）。
+        empEnd = Math.min(emp.clock_out_minutes, effectiveCurrentMinutes);
       } else {
+        // 勤務中（および step-out 時刻が不明な場合）：現在時刻
         empEnd = effectiveCurrentMinutes;
       }
-      // 退出中（一時外出）は休憩中と同様に現在時刻まで在籍として扱う
 
       // この時間帯との重複時間（分）を計算
       const overlapStart = Math.max(empStart, slotStartMinutes);
@@ -3005,7 +3016,15 @@ function calculateHourlyProductivity(employees, hourly, businessHours, currentHo
         hourlyProductivityValue = 0;
       }
     } else {
-      hourlyProductivityValue = personHours > 0 ? Math.round(hourlySales / personHours) : 0;
+      // 進行中スロットの開始直後は経過人時が極小で、単発の売上により spd が一時的に跳ねるため、
+      // 人時が一定量（0.25人時≒15人分）たまるまでは spd を表示しない（RT-04: 表示の安定化のみ。
+      // 売上・person_hours・全体集計には一切影響しない）。
+      const isInProgressSlot = (hour === currentHour);
+      if (isInProgressSlot && personHours > 0 && personHours < 0.25) {
+        hourlyProductivityValue = 0;
+      } else {
+        hourlyProductivityValue = personHours > 0 ? Math.round(hourlySales / personHours) : 0;
+      }
     }
 
     result.push({

@@ -4,6 +4,7 @@ import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { supabase } from '@/api/supabaseClient';
+import { authedFetch } from '@/api/authedFetch';
 import { toast } from 'sonner';
 import {
   RefreshCw, Activity, Wifi, WifiOff, TrendingUp, TrendingDown,
@@ -229,7 +230,7 @@ async function fetchRealtimeData(storeSettings, staffSettings) {
     params.push(`staff_settings=${encodeURIComponent(JSON.stringify(staffSettings))}`);
   }
   if (params.length > 0) url += '?' + params.join('&');
-  const response = await fetch(url, {
+  const response = await authedFetch(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/json' },
   });
@@ -1912,7 +1913,7 @@ function StaffSettingsModal({ onClose, onSave }) {
 
   // Supabaseからスタッフマスタを取得
   useEffect(() => {
-    fetch('/api/productivity/realtime?staff_only=1')
+    authedFetch('/api/productivity/realtime?staff_only=1')
       .then(r => r.json())
       .then(data => {
         // スタッフマスタが存在する場合はそちらを使用
@@ -1921,7 +1922,7 @@ function StaffSettingsModal({ onClose, onSave }) {
           setLoading(false);
         } else {
           // StaffMasterが空の場合、リアルタイムAPIの通常レスポンスからスタッフリストを構築
-          fetch('/api/productivity/realtime')
+          authedFetch('/api/productivity/realtime')
             .then(r => r.json())
             .then(rtData => {
               if (rtData.employees && rtData.employees.length > 0) {
@@ -1954,7 +1955,7 @@ function StaffSettingsModal({ onClose, onSave }) {
     setSyncing(true);
     setSyncResult(null);
     try {
-      const res = await fetch('/api/productivity/sync-staff');
+      const res = await authedFetch('/api/productivity/sync-staff');
       const data = await res.json();
       if (data.success) {
         setSyncResult({ success: true, message: data.message });
@@ -3333,6 +3334,21 @@ export default function ProductivityDashboard() {
                     <span className="text-xs text-blue-500">（ジョブカン連携）</span>
                   </div>
                 )}
+                {/* 特販部の勤務状況（FD-02: 収集済みだが未表示だった department_data.tokuhan を可視化） */}
+                {(() => {
+                  const tokuhanDept = departmentData?.tokuhan || {};
+                  if (!(tokuhanDept.working_employees > 0 || tokuhanDept.attended_employees > 0)) return null;
+                  return (
+                    <div className="flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 rounded-xl px-4 py-2 text-sm">
+                      <Users className="h-4 w-4 text-orange-600" />
+                      <span className="text-orange-700 dark:text-orange-300 font-semibold">
+                        特販部 勤務中 {tokuhanDept.working_employees || 0}人 / 本日出勤 {tokuhanDept.attended_employees || 0}人
+                        {tokuhanDept.total_hours > 0 ? `（勤務時間 ${tokuhanDept.total_hours.toFixed(1)}h）` : ''}
+                      </span>
+                      <span className="text-xs text-orange-500">（ジョブカン連携）</span>
+                    </div>
+                  );
+                })()}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     { label: '本日受注件数', value: onlineData?.order_count ?? '-', unit: '件', icon: Package, color: 'from-blue-500 to-indigo-600' },
@@ -4378,7 +4394,7 @@ function HistoricalComparisonModal({ onClose, month1, month2, setMonth1, setMont
     try {
       const params = new URLSearchParams({ month1 });
       if (month2) params.append('month2', month2);
-      const res = await fetch(`${API_BASE}/api/productivity?${params}`);
+      const res = await authedFetch(`${API_BASE}/api/productivity?${params}`);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       setData(json);

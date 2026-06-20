@@ -5,27 +5,25 @@
  */
 
 import * as cheerio from 'cheerio';
+import { applyCors, requireAuth } from '../_lib/security.js';
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  if (applyCors(req, res, { methods: 'GET,POST,OPTIONS' })) return;
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   try {
-    const jobcanCompany = process.env.JOBCAN_COMPANY_ID || 'maikon';
-    const jobcanUser = process.env.JOBCAN_LOGIN_ID || 'fujita.yog';
-    const jobcanPass = process.env.JOBCAN_PASSWORD || 'fujita.yog';
+    const jobcanCompany = process.env.JOBCAN_COMPANY_ID;
+    const jobcanUser = process.env.JOBCAN_LOGIN_ID;
+    const jobcanPass = process.env.JOBCAN_PASSWORD;
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
     const supabaseKey = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
       return res.status(500).json({ error: 'Supabase credentials not configured' });
+    }
+    if (!jobcanCompany || !jobcanUser || !jobcanPass) {
+      return res.status(500).json({ error: 'Jobcan credentials not configured' });
     }
 
     // ジョブカンにログイン

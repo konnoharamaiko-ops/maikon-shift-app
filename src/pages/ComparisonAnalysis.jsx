@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { authedFetch } from '@/api/authedFetch';
 import { format, subYears, subDays } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -46,7 +47,7 @@ const DEPT_COLORS = {
 // ===== API取得 =====
 async function fetchComparisonData(month1, month2) {
   const url = `/api/productivity?month1=${month1}&month2=${month2}&action=comparison`;
-  const response = await fetch(url);
+  const response = await authedFetch(url);
   if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
   return response.json();
 }
@@ -54,7 +55,7 @@ async function fetchComparisonData(month1, month2) {
 async function fetchDailyComparisonData(date1, date2) {
   let url = `/api/productivity?mode=daily&date1=${date1}`;
   if (date2) url += `&date2=${date2}`;
-  const response = await fetch(url);
+  const response = await authedFetch(url);
   if (!response.ok) throw new Error(`APIエラー: ${response.status}`);
   return response.json();
 }
@@ -172,7 +173,7 @@ function YoYMetricCard({ title, currentValue, previousValue, unit, icon: Icon, c
 }
 
 // ===== 店舗別比較行 =====
-function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle, compLabel }) {
+function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle, compLabel, dateFrom, dateTo }) {
   const salesYoY = calcYoY(current.sales, previous.sales);
   const customersYoY = calcYoY(current.customers, previous.customers);
   const hoursYoY = calcYoY(current.work_hours, previous.work_hours);
@@ -180,6 +181,43 @@ function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle
 
   const SalesIcon = getYoYIcon(salesYoY);
   const ProdIcon = getYoYIcon(prodYoY);
+
+  // スタッフ詳細（展開時にオンデマンドで履歴APIから取得）
+  const [staffList, setStaffList] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffLoaded, setStaffLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!isExpanded || staffLoaded || !dateFrom) return;
+    let cancelled = false;
+    setStaffLoading(true);
+    authedFetch('/api/productivity/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date_from: dateFrom, date_to: dateTo || dateFrom }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const rows = (data.staff_data && data.staff_data[storeName]) || [];
+        const map = {};
+        for (const s of rows) {
+          const key = s.employee_id || s.staff_name;
+          if (!map[key]) {
+            map[key] = { employee_id: s.employee_id, name: s.staff_name, days: 0, hours: 0, clock_in: s.clock_in, clock_out: s.clock_out, place: s.clock_in_place, single: true };
+          } else {
+            map[key].single = false;
+          }
+          map[key].days += 1;
+          map[key].hours += s.work_hours || 0;
+        }
+        setStaffList(Object.values(map).sort((a, b) => b.hours - a.hours));
+        setStaffLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setStaffLoaded(true); })
+      .finally(() => { if (!cancelled) setStaffLoading(false); });
+    return () => { cancelled = true; };
+  }, [isExpanded, staffLoaded, dateFrom, dateTo, storeName]);
 
   return (
     <motion.div
@@ -273,6 +311,43 @@ function StoreComparisonRow({ storeName, current, previous, isExpanded, onToggle
                   </tr>
                 </tbody>
               </table>
+
+              {/* スタッフ別明細（引き継ぎ書3.2 ドリルダウン・オンデマンド取得） */}
+              <div className="mt-3">
+                <p className="text-xs font-semibold text-muted-foreground mb-1">
+                  スタッフ別明細{staffLoading ? '（読込中…）' : staffList.length > 0 ? `（${staffList.length}名）` : ''}
+                </p>
+                {staffLoaded && !staffLoading && staffList.length === 0 && (
+                  <p className="text-xs text-muted-foreground">この期間の個別スタッフデータがありません</p>
+                )}
+                {staffList.length > 0 && (
+                  <div className="max-h-48 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-200 dark:border-gray-700">
+                          <th className="text-left py-1 px-1 font-semibold text-muted-foreground">氏名</th>
+                          <th className="text-left py-1 px-1 font-semibold text-muted-foreground">出退勤</th>
+                          <th className="text-right py-1 px-1 font-semibold text-muted-foreground">労働時間</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {staffList.map((s) => (
+                          <tr key={s.employee_id || s.name} className="border-b border-gray-100 dark:border-gray-800">
+                            <td className="py-1 px-1">
+                              {s.name}
+                              {s.place && <span className="ml-1 text-[10px] text-muted-foreground">({s.place})</span>}
+                            </td>
+                            <td className="py-1 px-1 text-muted-foreground">
+                              {s.single && s.clock_in ? `${s.clock_in ?? '—'}〜${s.clock_out ?? '—'}` : `${s.days}日勤務`}
+                            </td>
+                            <td className="py-1 px-1 text-right font-medium">{s.hours.toFixed(1)}h</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
@@ -414,7 +489,7 @@ function StaffSettingsPanel({ onClose }) {
   const [filterType, setFilterType] = useState('all'); // 'all' | 'excluded' | 'moved'
 
   useEffect(() => {
-    fetch('/api/productivity/realtime?staff_only=1')
+    authedFetch('/api/productivity/realtime?staff_only=1')
       .then(r => r.json())
       .then(data => {
         if (data.staff_master && data.staff_master.length > 0) {
@@ -422,7 +497,7 @@ function StaffSettingsPanel({ onClose }) {
           setLoading(false);
         } else {
           // StaffMasterが空の場合、リアルタイムAPIの通常レスポンスからスタッフリストを構築
-          fetch('/api/productivity/realtime')
+          authedFetch('/api/productivity/realtime')
             .then(r => r.json())
             .then(rtData => {
               if (rtData.employees && rtData.employees.length > 0) {
@@ -1161,6 +1236,8 @@ export default function ComparisonAnalysis() {
                       isExpanded={expandedStore === s.name}
                       onToggle={() => setExpandedStore(expandedStore === s.name ? null : s.name)}
                       compLabel={compLabel}
+                      dateFrom={currentData?.dateFrom}
+                      dateTo={currentData?.dateTo}
                     />
                   ))}
                 </div>

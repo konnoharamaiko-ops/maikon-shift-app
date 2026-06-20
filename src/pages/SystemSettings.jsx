@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '@/api/supabaseClient';
+import { authedFetch } from '@/api/authedFetch';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Shield, Settings, Save, Store as StoreIcon, Users, Calendar, Bell, Lock, MessageSquare, ExternalLink, CheckCircle2, AlertCircle, Database, Play, Loader2, Download } from 'lucide-react';
 import RolePermissionsTab from '@/components/system-settings/RolePermissionsTab';
@@ -819,8 +820,7 @@ function BackfillManager() {
   // 進捗を取得
   const fetchProgress = async () => {
     try {
-      const cronSecret = localStorage.getItem('maikon_cron_secret') || '';
-      const resp = await fetch(`/api/productivity/save-history?mode=status&key=${cronSecret}`);
+      const resp = await authedFetch(`/api/productivity/save-history?mode=status`);
       if (resp.ok) {
         const data = await resp.json();
         setProgress(data);
@@ -847,7 +847,8 @@ function BackfillManager() {
     try {
       const cronSecret = localStorage.getItem('maikon_cron_secret') || '';
       const resp = await fetch(
-        `/api/productivity/save-history?mode=backfill&date_from=${dateFrom}&date_to=${endDate}&key=${cronSecret}`
+        `/api/productivity/save-history?mode=backfill&date_from=${dateFrom}&date_to=${endDate}`,
+        { headers: { Authorization: `Bearer ${cronSecret}` } }
       );
       const data = await resp.json();
 
@@ -901,7 +902,8 @@ function BackfillManager() {
 
       try {
         const resp = await fetch(
-          `/api/productivity/save-history?mode=backfill&date_from=${from}&date_to=${to}&key=${cronSecret}`
+          `/api/productivity/save-history?mode=backfill&date_from=${from}&date_to=${to}`,
+          { headers: { Authorization: `Bearer ${cronSecret}` } }
         );
         const data = await resp.json();
         if (data.success) {

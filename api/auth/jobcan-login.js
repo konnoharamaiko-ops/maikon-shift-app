@@ -12,16 +12,11 @@
  * 3. トークンとプロフィールを返す
  */
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+import { applyCors } from '../_lib/security.js';
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+export default async function handler(req, res) {
+  // CORS: 許可Originのみ（クレデンシャル中継・オープンリレー防止）
+  if (applyCors(req, res, { methods: 'POST,OPTIONS' })) return;
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -46,25 +41,14 @@ export default async function handler(req, res) {
     const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY
       || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    // デバッグ用ログ（本番でも一時的に残す）
-    console.log('[JobcanLogin] ENV check:', {
-      hasUrl: !!supabaseUrl,
-      urlPrefix: supabaseUrl ? supabaseUrl.substring(0, 30) : 'MISSING',
-      hasAnonKey: !!supabaseAnonKey,
-      hasServiceKey: !!supabaseServiceKey,
-      jobcan_code,
-    });
-
     if (!supabaseUrl || !supabaseAnonKey) {
-      console.error('[JobcanLogin] Missing Supabase config. Available env keys:', Object.keys(process.env).filter(k => k.includes('SUPABASE')));
+      console.error('[JobcanLogin] Missing Supabase configuration');
       return res.status(500).json({ error: 'Supabase設定が不正です（環境変数未設定）' });
     }
 
     // 1. ジョブカンコードからメールアドレスを検索（Service Roleキーを使用）
     const lookupKey = supabaseServiceKey || supabaseAnonKey;
     const lookupUrl = `${supabaseUrl}/rest/v1/User?jobcan_code=eq.${encodeURIComponent(jobcan_code)}&select=id,email,full_name,is_active,jobcan_code&limit=1`;
-
-    console.log('[JobcanLogin] Lookup URL:', lookupUrl.replace(supabaseUrl, '[URL]'));
 
     const userLookupRes = await fetch(lookupUrl, {
       headers: {
@@ -75,10 +59,9 @@ export default async function handler(req, res) {
     });
 
     const lookupBody = await userLookupRes.text();
-    console.log('[JobcanLogin] Lookup response:', userLookupRes.status, lookupBody.substring(0, 200));
 
     if (!userLookupRes.ok) {
-      console.error('[JobcanLogin] User lookup failed:', userLookupRes.status, lookupBody);
+      console.error('[JobcanLogin] User lookup failed:', userLookupRes.status);
       return res.status(500).json({ error: `ユーザー検索に失敗しました (${userLookupRes.status})` });
     }
 
@@ -86,7 +69,7 @@ export default async function handler(req, res) {
     try {
       users = JSON.parse(lookupBody);
     } catch (e) {
-      console.error('[JobcanLogin] Failed to parse lookup response:', lookupBody);
+      console.error('[JobcanLogin] Failed to parse lookup response');
       return res.status(500).json({ error: 'ユーザー検索レスポンスの解析に失敗しました' });
     }
 

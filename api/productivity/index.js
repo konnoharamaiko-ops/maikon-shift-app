@@ -21,6 +21,8 @@
  *   例: 今日が3/16の場合、month1=2026-03は3/1-3/16、month2=2025-03は3/1-3/16で比較
  */
 
+import { applyCors, requireAuth } from '../_lib/security.js';
+
 // ===== 定数 =====
 const TEMPOVISOR_STORE_CODES = {
   '田辺店': '0001', '大正店': '0004', '天下茶屋店': '0005',
@@ -59,10 +61,9 @@ function getTodayJST() {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (applyCors(req, res, { methods: 'GET,OPTIONS' })) return;
+  const user = await requireAuth(req, res);
+  if (!user) return;
 
   try {
     const { mode, month1, month2, action, date1, date2 } = req.query;
@@ -163,6 +164,9 @@ async function fetchMonthData(supabaseUrl, supabaseKey, month, cutoffDay) {
     `work_date=gte.${dateFrom}&work_date=lte.${dateTo}`
   );
 
+  // 実際に保存されている日数（データカバレッジ）= distinct work_date
+  const savedDays = new Set(storeRecords.map((r) => r.work_date).filter(Boolean)).size;
+
   // 店舗別に集計
   const storeAgg = {};
   for (const record of storeRecords) {
@@ -231,7 +235,9 @@ async function fetchMonthData(supabaseUrl, supabaseKey, month, cutoffDay) {
     month,
     dateFrom,
     dateTo,
-    days: effectiveCutoffDay,
+    days: savedDays,                    // 実際に保存されている日数（データカバレッジ）
+    calendar_days: effectiveCutoffDay,  // 比較対象の暦日数（期間）
+    data_complete: savedDays >= effectiveCutoffDay,
     stores,
     total,
     departments,
@@ -571,7 +577,9 @@ function mergeRealtimeIntoDayData(dayData, rtData) {
 // ===== Supabase読み取り =====
 
 async function fetchFromSupabase(supabaseUrl, supabaseKey, tableName, query) {
-  const url = `${supabaseUrl}/rest/v1/${tableName}?${query}`;
+  // PostgREST のデフォルト1000行上限による無言 truncation を防ぐため明示的に上限を付与
+  const limitedQuery = /(^|&)limit=/.test(query) ? query : `${query}&limit=100000`;
+  const url = `${supabaseUrl}/rest/v1/${tableName}?${limitedQuery}`;
   const resp = await fetch(url, {
     headers: {
       'apikey': supabaseKey,

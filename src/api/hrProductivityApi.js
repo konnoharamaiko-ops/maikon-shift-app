@@ -3,6 +3,8 @@
  * 顧客管理DB APIとの通信を担当
  */
 
+import { authedFetch } from './authedFetch';
+
 // 新しいProductivity APIを使用（Vercel Serverless Functions）
 const API_BASE_URL = '/api/productivity';
 
@@ -47,7 +49,7 @@ export const hrProductivityApi = {
    */
   async getProductivityData(token, searchFrom, searchTo, page = 1) {
     try {
-      const response = await fetch(API_BASE_URL, {
+      const response = await authedFetch(API_BASE_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -98,7 +100,7 @@ export const hrProductivityApi = {
    */
   async getStoreProductivityData(token, storeCode, searchFrom, searchTo) {
     try {
-      const response = await fetch(API_BASE_URL, {
+      const response = await authedFetch(API_BASE_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
