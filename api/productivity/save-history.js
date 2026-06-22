@@ -310,7 +310,7 @@ async function handleBackfill(req, res) {
     for (const date of dates) {
       console.log(`[Backfill] 処理中: ${date}`);
       try {
-        const attendanceData = await fetchAttendanceForDate(cookies, date);
+        const attendanceData = await fetchAttendanceWithLocation(cookies, date);
         console.log(`[Backfill] ${date}: ${attendanceData.length}件取得`);
 
         if (attendanceData.length === 0) {
@@ -729,10 +729,15 @@ async function fetchAttendanceWithLocation(cookies, date) {
     const breakTimeText = $work(cells[9]).text().trim();
     const breakMinutes = parseJapaneseTime(breakTimeText);
 
-    // 労働時間
+    // 労働時間: 出退勤の打刻時刻(clock_in〜clock_out)差から算出する。
+    // 過去日ページでは「労働時間」セルが不正確/欠落し小さく出るため、確実な打刻時刻ベースを
+    // 優先し、時刻が揃わない(進行中等)場合のみ従来の労働時間セル値にフォールバックする。
     const workTimeText = $work(cells[8]).text().trim();
-    const workMinutesRaw = parseJapaneseTime(workTimeText);
-    const workMinutes = Math.max(0, workMinutesRaw - breakMinutes);
+    const ciMin = clockToMinutes(clockIn);
+    const coMin = clockToMinutes(clockOut);
+    const workMinutes = (ciMin != null && coMin != null && coMin > ciMin)
+      ? Math.max(0, (coMin - ciMin) - breakMinutes)
+      : Math.max(0, parseJapaneseTime(workTimeText) - breakMinutes);
 
     // 振り分け先の店舗を決定（打刻場所優先）
     const clockInStoreName = empDetail?.clockInCode ? STORE_DEPT_MAP[empDetail.clockInCode] : null;
@@ -1159,6 +1164,13 @@ function parseJapaneseTime(text) {
   const hours = hoursMatch ? parseInt(hoursMatch[1]) : 0;
   const minutes = minutesMatch ? parseInt(minutesMatch[1]) : 0;
   return hours * 60 + minutes;
+}
+
+// "HH:MM" 形式の打刻時刻を分に変換（取得できなければ null）
+function clockToMinutes(t) {
+  if (!t) return null;
+  const m = String(t).match(/(\d{1,2}):(\d{2})/);
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
 }
 
 function getDateRange(startDate, endDate) {
