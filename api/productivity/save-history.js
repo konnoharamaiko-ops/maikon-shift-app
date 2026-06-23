@@ -400,6 +400,7 @@ async function handleBackfill(req, res) {
       success: true,
       date_from: dateFrom,
       date_to: dateTo,
+      roster_size: roster.length,
       results,
 
       timestamp: new Date().toISOString(),
@@ -545,7 +546,7 @@ function buildDeptRecords(attendanceData, date) {
 //   この社員一覧を名簿源にする（在籍スタッフ全員＝氏名・部署コード付き）
 // ============================================================
 async function fetchStaffRoster(cookies) {
-  const url = 'https://ssl.jobcan.jp/client/staff/?number_par_page=500&retirement=work';
+  const url = 'https://ssl.jobcan.jp/client/staff/?number_par_page=200&retirement=work';
   const res = await fetch(url, {
     headers: {
       'Cookie': cookies,
@@ -559,22 +560,50 @@ async function fetchStaffRoster(cookies) {
 
   const roster = [];
   const seen = new Set();
-  $('a[href*="/client/staff/"]').each((i, el) => {
-    const href = $(el).attr('href') || '';
-    const m = href.match(/\/client\/staff\/(\d+)/);
-    if (!m) return;
-    const staffId = m[1];
-    if (seen.has(staffId)) return;
-    const name = $(el).text().trim().replace(/\s+/g, ' ');
-    if (!name || name.length < 2) return;
-    // 同じ行から5桁の部署コードを拾う（取れなければ null。実店舗はadit打刻場所で決定する）
-    const rowText = $(el).closest('tr').text();
-    const deptMatch = rowText.match(/(\d{5})/);
-    seen.add(staffId);
-    roster.push({ staffId, name, deptCode: deptMatch ? deptMatch[1] : null });
+
+  // 主経路: スタッフ一覧テーブル。氏名は先頭セルから取る（行内の /client/staff/{id}
+  // リンクは編集アイコン等でテキストが空のことが多く、リンク文字列からは氏名を取れない）。
+  $('table').each((i, table) => {
+    const headerText = $(table).find('tr').first().text();
+    if (!headerText.includes('スタッフ') && !headerText.includes('コード')) return;
+    $(table).find('tr').each((rowIdx, row) => {
+      if (rowIdx === 0) return; // ヘッダー行
+      const cells = $(row).find('td').toArray();
+      if (cells.length < 3) return;
+      const href = $(row).find('a[href*="/client/staff/"]').first().attr('href') || '';
+      const m = href.match(/\/client\/staff\/(\d+)/);
+      if (!m) return;
+      const staffId = m[1];
+      if (seen.has(staffId)) return;
+      const name = $(cells[0]).text().trim().replace(/\s+/g, ' ');
+      if (!name) return;
+      let deptCode = null;
+      cells.forEach((cell) => {
+        const t = $(cell).text().trim();
+        if (/^\d{5}$/.test(t)) deptCode = t; // 5桁=部署/スタッフコード（実店舗はadit打刻場所で確定）
+      });
+      seen.add(staffId);
+      roster.push({ staffId, name, deptCode });
+    });
   });
 
-  console.log(`[SaveHistory] 社員一覧(名簿): ${roster.length}名`);
+  // フォールバック: テーブルが取れない場合はリンクのテキストから（ページ仕様変更対策）
+  if (roster.length === 0) {
+    $('a[href*="/client/staff/"]').each((i, el) => {
+      const href = $(el).attr('href') || '';
+      const m = href.match(/\/client\/staff\/(\d+)/);
+      if (!m) return;
+      const staffId = m[1];
+      if (seen.has(staffId)) return;
+      const name = $(el).text().trim().replace(/\s+/g, ' ');
+      if (!name || name.length < 2) return;
+      const dm = $(el).closest('tr').text().match(/(\d{5})/);
+      seen.add(staffId);
+      roster.push({ staffId, name, deptCode: dm ? dm[1] : null });
+    });
+  }
+
+  console.log(`[SaveHistory] 社員一覧(名簿): ${roster.length}名 (HTTP ${res.status})`);
   return roster;
 }
 
