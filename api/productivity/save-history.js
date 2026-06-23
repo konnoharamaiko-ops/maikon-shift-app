@@ -667,7 +667,18 @@ async function fetchAttendanceWithLocation(cookies, date) {
         });
       }
 
-      return { empId, clockInCode, clockOutCode, breakStartCode, breakEndCode, hasAutoClockOut, realClockInTime, realClockOutTime };
+      // 出入詳細「承認済み打刻の合計」から労働時間・休憩時間を取得（過去日も正確な確定値）
+      let realWorkMinutes = 0, realBreakMinutes = 0;
+      $adit('table tr').each((ti, tr) => {
+        const cs = $adit(tr).find('td, th').toArray();
+        if (cs.length < 2) return;
+        const label = $adit(cs[0]).text().trim();
+        const value = $adit(cs[1]).text().trim();
+        if (label === '労働時間') { const m = parseJapaneseTime(value); if (m > 0) realWorkMinutes = m; }
+        else if (label === '休憩時間') { const m = parseJapaneseTime(value); if (m > 0) realBreakMinutes = m; }
+      });
+
+      return { empId, clockInCode, clockOutCode, breakStartCode, breakEndCode, hasAutoClockOut, realClockInTime, realClockOutTime, realWorkMinutes, realBreakMinutes };
     })
   );
 
@@ -704,50 +715,24 @@ async function fetchAttendanceWithLocation(cookies, date) {
 
     const jobcanCode = staffId;
 
-    let status = $work(cells[2]).text().trim();
-
-    // 出勤打刻時刻
-    const clockInRaw = $work(cells[6]).text().trim().replace(/\s+/g, ' ');
-    const clockInBracket = clockInRaw.match(/\((\d{1,2}:\d{2})\)/);
-    const clockIn = clockInBracket ? clockInBracket[1] : (clockInRaw.match(/^(\d{1,2}:\d{2})/) ? clockInRaw.match(/^(\d{1,2}:\d{2})/)[1] : null);
-
-    // 退勤打刻時刻
-    const clockOutRaw = $work(cells[7]).text().trim().replace(/\s+/g, ' ');
-    const clockOutBracket = clockOutRaw.match(/\((\d{1,2}:\d{2})\)/);
-    let clockOut = clockOutBracket ? clockOutBracket[1] : (clockOutRaw.match(/^(\d{1,2}:\d{2})/) ? clockOutRaw.match(/^(\d{1,2}:\d{2})/)[1] : null);
-
-    // 自動退出の除外
+    // 出入詳細(証左)の確定値を正とする。勤務状況ページのセルは過去日では“今日”の値になるため使わない。
     const empDetail = staffId ? stampDetailMap[staffId] : null;
-    if (empDetail?.hasAutoClockOut && status === '退勤済み') {
-      status = '勤務中';
-      clockOut = null;
-    } else if (empDetail?.realClockOutTime && status === '退勤済み') {
-      clockOut = empDetail.realClockOutTime;
-    }
 
-    // 休憩時間
-    const breakTimeText = $work(cells[9]).text().trim();
-    const breakMinutes = parseJapaneseTime(breakTimeText);
+    // その日に実際の労働実績が無ければ記録しない（出勤していない日を「勤務」と数えない＝N日勤務の過大を防ぐ）
+    const realWorkMinutes = empDetail?.realWorkMinutes || 0;
+    if (realWorkMinutes <= 0) continue;
 
-    // 労働時間: 出退勤の打刻時刻(clock_in〜clock_out)差から算出する。
-    // 過去日ページでは「労働時間」セルが不正確/欠落し小さく出るため、確実な打刻時刻ベースを
-    // 優先し、時刻が揃わない(進行中等)場合のみ従来の労働時間セル値にフォールバックする。
-    const workTimeText = $work(cells[8]).text().trim();
-    const ciMin = clockToMinutes(clockIn);
-    const coMin = clockToMinutes(clockOut);
-    const workMinutes = (ciMin != null && coMin != null && coMin > ciMin)
-      ? Math.max(0, (coMin - ciMin) - breakMinutes)
-      : Math.max(0, parseJapaneseTime(workTimeText) - breakMinutes);
+    const clockIn = empDetail?.realClockInTime || null;
+    // 自動退出は退勤時刻として採用しない
+    const clockOut = empDetail?.hasAutoClockOut ? null : (empDetail?.realClockOutTime || null);
+    const status = clockOut ? '退勤済み' : '勤務中';
+    const breakMinutes = empDetail?.realBreakMinutes || 0;
+    const workMinutes = realWorkMinutes;
 
     // 振り分け先の店舗を決定（打刻場所優先）
     const clockInStoreName = empDetail?.clockInCode ? STORE_DEPT_MAP[empDetail.clockInCode] : null;
     const clockOutStoreName = empDetail?.clockOutCode ? STORE_DEPT_MAP[empDetail.clockOutCode] : null;
-    let assignedStore;
-    if (status === '退勤済み') {
-      assignedStore = clockInStoreName || clockOutStoreName || deptStoreName;
-    } else {
-      assignedStore = clockInStoreName || deptStoreName;
-    }
+    const assignedStore = clockInStoreName || clockOutStoreName || deptStoreName;
 
     attendanceList.push({
       name: staffName,
