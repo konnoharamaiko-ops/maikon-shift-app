@@ -253,12 +253,12 @@ async function handleBackfill(req, res) {
       return res.status(400).json({ error: 'date_from is required' });
     }
 
-    // 最大7日間の制限
+    // 最大3日間の制限（全名簿×出入詳細を取得するため1リクエストの負荷が大きい）
     const daysDiff = getDaysDifference(dateFrom, dateTo);
-    if (daysDiff > 7) {
+    if (daysDiff > 3) {
       return res.status(400).json({
-        error: 'Date range exceeds maximum of 7 days per request',
-        suggestion: 'Split into multiple requests of 7 days each',
+        error: 'Date range exceeds maximum of 3 days per request',
+        suggestion: 'Split into multiple requests of 3 days each',
       });
     }
 
@@ -303,6 +303,15 @@ async function handleBackfill(req, res) {
     const userMap = await fetchUserJobcanMap(supabaseUrl, supabaseKey);
     const storeMap = await fetchStoreMap(supabaseUrl, supabaseKey);
 
+    // 日付非依存の社員一覧(名簿)を取得。これを各日の対象スタッフ源にする
+    //（勤務状況ページは本日のみ＝過去日の対象者取得に使えないため）
+    const roster = await fetchStaffRoster(cookies);
+    if (!roster || roster.length === 0) {
+      return res.status(502).json({
+        error: 'スタッフ名簿(社員一覧)を取得できませんでした。ジョブカンのセッション/ページ仕様を確認してください。',
+      });
+    }
+
     // 日付範囲を生成
     const dates = getDateRange(dateFrom, dateTo);
     const results = [];
@@ -310,8 +319,13 @@ async function handleBackfill(req, res) {
     for (const date of dates) {
       console.log(`[Backfill] 処理中: ${date}`);
       try {
-        const attendanceData = await fetchAttendanceWithLocation(cookies, date);
+        const attendanceData = await fetchAttendanceWithLocation(cookies, date, roster);
         console.log(`[Backfill] ${date}: ${attendanceData.length}件取得`);
+
+        // 当日分の労働時間系テーブルを一旦クリアして作り直す（過去の誤レコード・
+        // 未出勤日の偽レコード＝出勤日数の過大計上を除去。名簿取得成功が前提）
+        await deleteByWorkDate(supabaseUrl, supabaseKey, 'DailyStaffHours', date);
+        await deleteByWorkDate(supabaseUrl, supabaseKey, 'DailyDeptProductivity', date);
 
         if (attendanceData.length === 0) {
           results.push({ date, status: 'no_data', saved: 0 });
@@ -526,13 +540,13 @@ function buildDeptRecords(attendanceData, date) {
 }
 
 // ============================================================
-// ジョブカン勤怠データ取得（当日用 - 出入詳細ページ付き）
+// ジョブカン社員一覧（日付非依存の完全名簿）
+//   勤務状況ページは「本日のみ」を返すため、過去日バックフィルでは
+//   この社員一覧を名簿源にする（在籍スタッフ全員＝氏名・部署コード付き）
 // ============================================================
-
-async function fetchAttendanceWithLocation(cookies, date) {
-  const workUrl = `https://ssl.jobcan.jp/client/work-state/show/?submit_type=day&searching=1&list_type=normal&number_par_page=300&retirement=work&search_date=${date}`;
-
-  const workRes = await fetch(workUrl, {
+async function fetchStaffRoster(cookies) {
+  const url = 'https://ssl.jobcan.jp/client/staff/?number_par_page=500&retirement=work';
+  const res = await fetch(url, {
     headers: {
       'Cookie': cookies,
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -540,185 +554,215 @@ async function fetchAttendanceWithLocation(cookies, date) {
     },
     redirect: 'follow',
   });
-  const workHtml = await workRes.text();
-  const $work = cheerio.load(workHtml);
+  const html = await res.text();
+  const $ = cheerio.load(html);
 
-  let targetTable = null;
-  $work('table').each((i, table) => {
-    const headerText = $work(table).find('tr').first().text();
-    if (headerText.includes('スタッフ') && headerText.includes('出勤状況') && headerText.includes('労働時間')) {
-      targetTable = table;
+  const roster = [];
+  const seen = new Set();
+  $('a[href*="/client/staff/"]').each((i, el) => {
+    const href = $(el).attr('href') || '';
+    const m = href.match(/\/client\/staff\/(\d+)/);
+    if (!m) return;
+    const staffId = m[1];
+    if (seen.has(staffId)) return;
+    const name = $(el).text().trim().replace(/\s+/g, ' ');
+    if (!name || name.length < 2) return;
+    // 同じ行から5桁の部署コードを拾う（取れなければ null。実店舗はadit打刻場所で決定する）
+    const rowText = $(el).closest('tr').text();
+    const deptMatch = rowText.match(/(\d{5})/);
+    seen.add(staffId);
+    roster.push({ staffId, name, deptCode: deptMatch ? deptMatch[1] : null });
+  });
+
+  console.log(`[SaveHistory] 社員一覧(名簿): ${roster.length}名`);
+  return roster;
+}
+
+// 出入詳細(adit)1名分を取得・解析。確定労働時間/休憩/実打刻時刻/打刻場所コードを返す
+async function fetchAditDetail(cookies, empId, year, month, day) {
+  const aditUrl = `https://ssl.jobcan.jp/client/adit?employee_id=${empId}&year=${year}&month=${parseInt(month)}&day=${parseInt(day)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  let aditHtml;
+  try {
+    const aditRes = await fetch(aditUrl, {
+      headers: {
+        'Cookie': cookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://ssl.jobcan.jp/client/',
+      },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    aditHtml = await aditRes.text();
+  } finally {
+    clearTimeout(timer);
+  }
+  const $adit = cheerio.load(aditHtml);
+
+  let clockInCode = null, clockOutCode = null, breakStartCode = null, breakEndCode = null;
+  let hasAutoClockOut = false;
+  let realClockInTime = null, realClockOutTime = null;
+
+  const stampRows = [];
+  $adit('table').each((ti, tbl) => {
+    const hdr = $adit(tbl).find('tr').first().text();
+    if (hdr.includes('打刻区分') && hdr.includes('打刻方法')) {
+      $adit(tbl).find('tr').each((ri, row) => {
+        if (ri === 0) return;
+        const tds = $adit(row).find('td');
+        if (tds.length < 4) return;
+        const typeEl = $adit(tds[0]).find('select option[selected]');
+        const stampType = typeEl.length > 0 ? typeEl.text().trim() : $adit(tds[0]).text().trim();
+        const stampTime = $adit(tds[1]).text().trim();
+        const stampMethod = $adit(tds[2]).text().trim();
+        const placeEl = $adit(tds[3]).find('select option[selected]');
+        const placeText = placeEl.length > 0 ? placeEl.text().trim() : $adit(tds[3]).text().trim();
+        const codeMatch = placeText.match(/^(\d{5})/);
+        const placeCode = codeMatch ? codeMatch[1] : null;
+        const isAutoClockOut = stampMethod.includes('自動退出');
+        stampRows.push({ stampType, stampTime, placeCode, isAutoClockOut });
+      });
     }
   });
 
-  if (!targetTable) {
-    console.warn(`[SaveHistory] 勤務状況テーブルが見つかりません (date: ${date})`);
-    return [];
-  }
-
-  const rows = $work(targetTable).find('tr').toArray();
-
-  // スタッフIDリストを収集
-  const staffIdList = [];
-  const staffBasicInfo = {};
-
-  for (let i = 1; i < rows.length; i++) {
-    const cells = $work(rows[i]).find('td').toArray();
-    if (cells.length < 10) continue;
-
-    const staffCell = $work(cells[0]).text().trim().replace(/\s+/g, ' ');
-    if (!staffCell) continue;
-
-    const deptMatch = staffCell.match(/(\d{5})\s/);
-    if (!deptMatch) continue;
-
-    const staffLink = $work(cells[0]).find('a').attr('href') || '';
-    const staffIdMatch = staffLink.match(/employee_id=(\d+)/);
-    const staffId = staffIdMatch ? staffIdMatch[1] : null;
-
-    if (staffId) {
-      staffIdList.push(staffId);
-      staffBasicInfo[staffId] = {
-        staffCell,
-        deptCode: deptMatch[1],
-        rowIndex: i,
-      };
-    }
-  }
-
-  // 出入詳細ページから打刻場所を並列取得
-  const [year, month, day] = date.split('-');
-  const stampDetailMap = {};
-
-  const fetchWithTimeout = (url, options, timeoutMs = 8000) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(url, { ...options, signal: controller.signal })
-      .finally(() => clearTimeout(timer));
-  };
-
-  const allStampResults = await Promise.allSettled(
-    staffIdList.map(async (empId) => {
-      const aditUrl = `https://ssl.jobcan.jp/client/adit?employee_id=${empId}&year=${year}&month=${parseInt(month)}&day=${parseInt(day)}`;
-      const aditRes = await fetchWithTimeout(aditUrl, {
-        headers: {
-          'Cookie': cookies,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://ssl.jobcan.jp/client/',
-        },
-        redirect: 'follow',
-      }, 8000);
-
-      const aditHtml = await aditRes.text();
-      const $adit = cheerio.load(aditHtml);
-
-      let clockInCode = null, clockOutCode = null, breakStartCode = null, breakEndCode = null;
-      let hasAutoClockOut = false;
-      let realClockInTime = null, realClockOutTime = null;
-
-      const stampRows = [];
-      $adit('table').each((ti, tbl) => {
-        const hdr = $adit(tbl).find('tr').first().text();
-        if (hdr.includes('打刻区分') && hdr.includes('打刻方法')) {
-          $adit(tbl).find('tr').each((ri, row) => {
-            if (ri === 0) return;
-            const tds = $adit(row).find('td');
-            if (tds.length < 4) return;
-            const typeEl = $adit(tds[0]).find('select option[selected]');
-            const stampType = typeEl.length > 0 ? typeEl.text().trim() : $adit(tds[0]).text().trim();
-            const stampTime = $adit(tds[1]).text().trim();
-            const stampMethod = $adit(tds[2]).text().trim();
-            const placeEl = $adit(tds[3]).find('select option[selected]');
-            const placeText = placeEl.length > 0 ? placeEl.text().trim() : $adit(tds[3]).text().trim();
-            const codeMatch = placeText.match(/^(\d{5})/);
-            const placeCode = codeMatch ? codeMatch[1] : null;
-            const isAutoClockOut = stampMethod.includes('自動退出');
-            stampRows.push({ stampType, stampTime, placeCode, isAutoClockOut });
-          });
+  if (stampRows.length > 0) {
+    stampRows.forEach(({ stampType, stampTime, placeCode, isAutoClockOut }, rowIdx) => {
+      if (!stampType) return;
+      if (isAutoClockOut) { hasAutoClockOut = true; return; }
+      if (stampType === '出勤' || stampType === '1') {
+        if (placeCode) clockInCode = placeCode;
+        if (stampTime) realClockInTime = stampTime;
+      } else if (stampType === '休憩開始' || stampType === '3') {
+        if (placeCode) breakStartCode = placeCode;
+      } else if (stampType === '休憩終了' || stampType === '4') {
+        if (placeCode) breakEndCode = placeCode;
+      } else if (stampType === '退勤' || stampType === '退室' || stampType === '2' ||
+                 stampType.startsWith('- ') || stampType === '-退勤') {
+        if (!isAutoClockOut) {
+          if (placeCode) clockOutCode = placeCode;
+          if (stampTime) realClockOutTime = stampTime;
         }
-      });
-
-      if (stampRows.length > 0) {
-        stampRows.forEach(({ stampType, stampTime, placeCode, isAutoClockOut }, rowIdx) => {
-          if (!stampType) return;
-          if (isAutoClockOut) { hasAutoClockOut = true; return; }
-          if (stampType === '出勤' || stampType === '1') {
-            if (placeCode) clockInCode = placeCode;
-            if (stampTime) realClockInTime = stampTime;
-          } else if (stampType === '休憩開始' || stampType === '3') {
-            if (placeCode) breakStartCode = placeCode;
-          } else if (stampType === '休憩終了' || stampType === '4') {
-            if (placeCode) breakEndCode = placeCode;
-          } else if (stampType === '退勤' || stampType === '退室' || stampType === '2' ||
-                     stampType.startsWith('- ') || stampType === '-退勤') {
-            if (!isAutoClockOut) {
-              if (placeCode) clockOutCode = placeCode;
-              if (stampTime) realClockOutTime = stampTime;
-            }
-          } else if (stampType.includes('(自動判別)')) {
-            if (rowIdx === 0) {
-              if (placeCode) clockInCode = placeCode;
-              if (stampTime) realClockInTime = stampTime;
-            } else {
-              if (placeCode) clockOutCode = placeCode;
-              if (stampTime) realClockOutTime = stampTime;
-            }
-          }
-        });
+      } else if (stampType.includes('(自動判別)')) {
+        if (rowIdx === 0) {
+          if (placeCode) clockInCode = placeCode;
+          if (stampTime) realClockInTime = stampTime;
+        } else {
+          if (placeCode) clockOutCode = placeCode;
+          if (stampTime) realClockOutTime = stampTime;
+        }
       }
+    });
+  }
 
-      // 出入詳細「承認済み打刻の合計」から労働時間・休憩時間を取得（過去日も正確な確定値）
-      let realWorkMinutes = 0, realBreakMinutes = 0;
-      $adit('table tr').each((ti, tr) => {
-        const cs = $adit(tr).find('td, th').toArray();
-        if (cs.length < 2) return;
-        const label = $adit(cs[0]).text().trim();
-        const value = $adit(cs[1]).text().trim();
-        if (label === '労働時間') { const m = parseJapaneseTime(value); if (m > 0) realWorkMinutes = m; }
-        else if (label === '休憩時間') { const m = parseJapaneseTime(value); if (m > 0) realBreakMinutes = m; }
-      });
+  // 出入詳細「承認済み打刻の合計」から労働時間・休憩時間を取得（過去日も正確な確定値）
+  let realWorkMinutes = 0, realBreakMinutes = 0;
+  $adit('table tr').each((ti, tr) => {
+    const cs = $adit(tr).find('td, th').toArray();
+    if (cs.length < 2) return;
+    const label = $adit(cs[0]).text().trim();
+    const value = $adit(cs[1]).text().trim();
+    if (label === '労働時間') { const m = parseJapaneseTime(value); if (m > 0) realWorkMinutes = m; }
+    else if (label === '休憩時間') { const m = parseJapaneseTime(value); if (m > 0) realBreakMinutes = m; }
+  });
 
-      return { empId, clockInCode, clockOutCode, breakStartCode, breakEndCode, hasAutoClockOut, realClockInTime, realClockOutTime, realWorkMinutes, realBreakMinutes };
-    })
-  );
+  return { clockInCode, clockOutCode, breakStartCode, breakEndCode, hasAutoClockOut, realClockInTime, realClockOutTime, realWorkMinutes, realBreakMinutes };
+}
 
-  for (const result of allStampResults) {
-    if (result.status === 'fulfilled') {
-      const { empId, ...detail } = result.value;
-      stampDetailMap[empId] = detail;
+// 複数名の出入詳細をバッチ並列＋最大3回リトライで取得（取りこぼし＝出勤者の欠落を防ぐ）
+async function fetchAditDetailsBatched(cookies, empIds, year, month, day) {
+  const stampDetailMap = {};
+  const BATCH = 12;
+  for (let i = 0; i < empIds.length; i += BATCH) {
+    const batch = empIds.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      batch.map(async (empId) => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            return { empId, detail: await fetchAditDetail(cookies, empId, year, month, day) };
+          } catch (e) {
+            if (attempt === 2) return { empId, detail: null };
+          }
+        }
+        return { empId, detail: null };
+      })
+    );
+    results.forEach((r) => {
+      if (r.status === 'fulfilled' && r.value && r.value.detail) {
+        stampDetailMap[r.value.empId] = r.value.detail;
+      }
+    });
+  }
+  return stampDetailMap;
+}
+
+// ============================================================
+// 勤怠データ取得（出入詳細=証左を正とする）
+//   roster 指定時（バックフィル）: 日付非依存の社員一覧を対象に各日のaditを取得
+//   roster 未指定時（当日cron）  : 勤務状況ページ(本日)を対象（従来動作）
+// ============================================================
+async function fetchAttendanceWithLocation(cookies, date, roster = null) {
+  const [year, month, day] = date.split('-');
+
+  // 対象スタッフ候補（{ staffId, name, deptCode }）を決定
+  let candidates = [];
+  if (roster && roster.length > 0) {
+    candidates = roster
+      .filter((r) => r.staffId)
+      .map((r) => ({ staffId: String(r.staffId), name: r.name, deptCode: r.deptCode || null }));
+  } else {
+    const workUrl = `https://ssl.jobcan.jp/client/work-state/show/?submit_type=day&searching=1&list_type=normal&number_par_page=300&retirement=work&search_date=${date}`;
+    const workRes = await fetch(workUrl, {
+      headers: {
+        'Cookie': cookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://ssl.jobcan.jp/client/',
+      },
+      redirect: 'follow',
+    });
+    const workHtml = await workRes.text();
+    const $work = cheerio.load(workHtml);
+
+    let targetTable = null;
+    $work('table').each((i, table) => {
+      const headerText = $work(table).find('tr').first().text();
+      if (headerText.includes('スタッフ') && headerText.includes('出勤状況') && headerText.includes('労働時間')) {
+        targetTable = table;
+      }
+    });
+    if (!targetTable) {
+      console.warn(`[SaveHistory] 勤務状況テーブルが見つかりません (date: ${date})`);
+      return [];
+    }
+
+    const rows = $work(targetTable).find('tr').toArray();
+    for (let i = 1; i < rows.length; i++) {
+      const cells = $work(rows[i]).find('td').toArray();
+      if (cells.length < 10) continue;
+      const staffCell = $work(cells[0]).text().trim().replace(/\s+/g, ' ');
+      if (!staffCell) continue;
+      const deptMatch = staffCell.match(/(\d{5})\s/);
+      if (!deptMatch) continue;
+      const nameMatch = staffCell.match(/^(.+?)\s*\d{5}/);
+      const staffName = nameMatch ? nameMatch[1].replace(/\xa0/g, ' ').trim() : staffCell.split(/\d{5}/)[0].trim();
+      const staffLink = $work(cells[0]).find('a').attr('href') || '';
+      const staffIdMatch = staffLink.match(/employee_id=(\d+)/);
+      const staffId = staffIdMatch ? staffIdMatch[1] : null;
+      if (staffId) candidates.push({ staffId, name: staffName, deptCode: deptMatch[1] });
     }
   }
 
-  // 勤怠データを構築
+  if (candidates.length === 0) return [];
+
+  // 出入詳細(証左)を全候補についてバッチ取得（確定労働時間・打刻場所）
+  const stampDetailMap = await fetchAditDetailsBatched(cookies, candidates.map((c) => c.staffId), year, month, day);
+
+  // 勤怠データを構築（その日に実労働があった人のみ＝出勤していない日の過大計上を防ぐ）
   const attendanceList = [];
+  for (const c of candidates) {
+    const empDetail = stampDetailMap[c.staffId];
 
-  for (let i = 1; i < rows.length; i++) {
-    const cells = $work(rows[i]).find('td').toArray();
-    if (cells.length < 10) continue;
-
-    const staffCell = $work(cells[0]).text().trim().replace(/\s+/g, ' ');
-    if (!staffCell) continue;
-
-    const deptMatch = staffCell.match(/(\d{5})\s/);
-    if (!deptMatch) continue;
-
-    const deptCode = deptMatch[1];
-    const deptStoreName = STORE_DEPT_MAP[deptCode];
-    if (!deptStoreName) continue;
-
-    const nameMatch = staffCell.match(/^(.+?)\s*\d{5}/);
-    const staffName = nameMatch ? nameMatch[1].replace(/\xa0/g, ' ').trim() : staffCell.split(/\d{5}/)[0].trim();
-
-    const staffLink = $work(cells[0]).find('a').attr('href') || '';
-    const staffIdMatch = staffLink.match(/employee_id=(\d+)/);
-    const staffId = staffIdMatch ? staffIdMatch[1] : null;
-
-    const jobcanCode = staffId;
-
-    // 出入詳細(証左)の確定値を正とする。勤務状況ページのセルは過去日では“今日”の値になるため使わない。
-    const empDetail = staffId ? stampDetailMap[staffId] : null;
-
-    // その日に実際の労働実績が無ければ記録しない（出勤していない日を「勤務」と数えない＝N日勤務の過大を防ぐ）
+    // その日に実際の労働実績が無ければ記録しない
     const realWorkMinutes = empDetail?.realWorkMinutes || 0;
     if (realWorkMinutes <= 0) continue;
 
@@ -729,18 +773,20 @@ async function fetchAttendanceWithLocation(cookies, date) {
     const breakMinutes = empDetail?.realBreakMinutes || 0;
     const workMinutes = realWorkMinutes;
 
-    // 振り分け先の店舗を決定（打刻場所優先）
+    // 振り分け先店舗: 実打刻場所を最優先（1日複数店舗対応）。無ければ所属部署。
+    const deptStoreName = c.deptCode ? STORE_DEPT_MAP[c.deptCode] : null;
     const clockInStoreName = empDetail?.clockInCode ? STORE_DEPT_MAP[empDetail.clockInCode] : null;
     const clockOutStoreName = empDetail?.clockOutCode ? STORE_DEPT_MAP[empDetail.clockOutCode] : null;
     const assignedStore = clockInStoreName || clockOutStoreName || deptStoreName;
+    if (!assignedStore) continue; // 店舗を特定できない打刻（本部等）は集計対象外
 
     attendanceList.push({
-      name: staffName,
-      jobcan_code: jobcanCode,
-      dept_code: deptCode,
-      dept_store_name: deptStoreName,
+      name: c.name,
+      jobcan_code: c.staffId,
+      dept_code: c.deptCode || empDetail?.clockInCode || null,
+      dept_store_name: deptStoreName || assignedStore,
       assigned_store: assignedStore,
-      clock_in_place: clockInStoreName || deptStoreName,
+      clock_in_place: clockInStoreName || deptStoreName || assignedStore,
       status,
       clock_in: clockIn,
       clock_out: clockOut,
@@ -1017,6 +1063,29 @@ async function saveToDailyDeptProductivity(supabaseUrl, supabaseKey, records) {
   if (!resp.ok) {
     const errText = await resp.text();
     console.error(`[SaveHistory] DailyDeptProductivity保存エラー: ${resp.status} ${errText}`);
+  }
+}
+
+// 指定テーブルの当日レコードを削除（バックフィルの作り直し用＝冪等化・偽レコード除去）
+async function deleteByWorkDate(supabaseUrl, supabaseKey, table, date) {
+  try {
+    const resp = await fetch(
+      `${supabaseUrl}/rest/v1/${table}?work_date=eq.${date}`,
+      {
+        method: 'DELETE',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Prefer': 'return=minimal',
+        },
+      }
+    );
+    if (!resp.ok) {
+      const t = await resp.text();
+      console.warn(`[Backfill] ${table}削除警告 ${date}: ${resp.status} ${t}`);
+    }
+  } catch (e) {
+    console.warn(`[Backfill] ${table}削除スキップ ${date}: ${e.message}`);
   }
 }
 
