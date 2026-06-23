@@ -303,12 +303,12 @@ async function handleBackfill(req, res) {
     const userMap = await fetchUserJobcanMap(supabaseUrl, supabaseKey);
     const storeMap = await fetchStoreMap(supabaseUrl, supabaseKey);
 
-    // 日付非依存の社員一覧(名簿)を取得。これを各日の対象スタッフ源にする
-    //（勤務状況ページは本日のみ＝過去日の対象者取得に使えないため）
-    const { roster, debug: rosterDebug } = await fetchStaffRoster(cookies);
+    // 日付非依存の社員名簿を取得（DailyStaffHoursの蓄積employee_id＝adit互換ID）。
+    // ジョブカンの /client/staff/ は廃止されたため、確実なIDを持つDBから構築する。
+    const { roster, debug: rosterDebug } = await fetchStaffRoster(supabaseUrl, supabaseKey);
     if (!roster || roster.length === 0) {
       return res.status(502).json({
-        error: 'スタッフ名簿(社員一覧)を取得できませんでした。ジョブカンのセッション/ページ仕様を確認してください。',
+        error: '社員名簿を構築できませんでした（DailyStaffHoursにemployee_id実績がありません）。',
         rosterDebug,
       });
     }
@@ -541,79 +541,57 @@ function buildDeptRecords(attendanceData, date) {
   }));
 }
 
+// 勤務状況/明細セルに混入する「11012 工房0918->かがや...」等を除去し氏名のみ返す
+function cleanStaffName(raw) {
+  if (!raw) return '';
+  const s = String(raw).replace(/\xa0/g, ' ');
+  // 最初の5桁コードの手前までを氏名とみなす（コードが無ければ全体）
+  const m = s.match(/^(.+?)\s*\d{5}/);
+  return (m ? m[1] : s).trim();
+}
+
 // ============================================================
-// ジョブカン社員一覧（日付非依存の完全名簿）
-//   勤務状況ページは「本日のみ」を返すため、過去日バックフィルでは
-//   この社員一覧を名簿源にする（在籍スタッフ全員＝氏名・部署コード付き）
+// 社員名簿（日付非依存の完全名簿）
+//   ジョブカンの /client/staff/ は廃止され page-not-found に飛ぶため使用不可。
+//   既存の DailyStaffHours に蓄積された employee_id は、cron が勤務状況ページの
+//   employee_id= から取得し adit へ渡して成功している＝adit互換の確実なID。
+//   これを名簿源にする（在籍スタッフ158名規模、2025年以降の実績ベース）。
 // ============================================================
-async function fetchStaffRoster(cookies) {
-  const url = 'https://ssl.jobcan.jp/client/staff/?number_par_page=200&retirement=work';
+async function fetchStaffRoster(supabaseUrl, supabaseKey) {
+  const url = `${supabaseUrl}/rest/v1/DailyStaffHours?select=employee_id,staff_name,dept_code&limit=100000`;
   const res = await fetch(url, {
     headers: {
-      'Cookie': cookies,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Referer': 'https://ssl.jobcan.jp/client/',
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
     },
-    redirect: 'follow',
   });
-  const html = await res.text();
-  const $ = cheerio.load(html);
+  const rows = res.ok ? await res.json() : [];
+  const list = Array.isArray(rows) ? rows : [];
 
-  const roster = [];
-  const seen = new Set();
-
-  // 主経路: スタッフ一覧テーブル。氏名は先頭セルから取る（行内の /client/staff/{id}
-  // リンクは編集アイコン等でテキストが空のことが多く、リンク文字列からは氏名を取れない）。
-  $('table').each((i, table) => {
-    const headerText = $(table).find('tr').first().text();
-    if (!headerText.includes('スタッフ') && !headerText.includes('コード')) return;
-    $(table).find('tr').each((rowIdx, row) => {
-      if (rowIdx === 0) return; // ヘッダー行
-      const cells = $(row).find('td').toArray();
-      if (cells.length < 3) return;
-      const href = $(row).find('a[href*="/client/staff/"]').first().attr('href') || '';
-      const m = href.match(/\/client\/staff\/(\d+)/);
-      if (!m) return;
-      const staffId = m[1];
-      if (seen.has(staffId)) return;
-      const name = $(cells[0]).text().trim().replace(/\s+/g, ' ');
-      if (!name) return;
-      let deptCode = null;
-      cells.forEach((cell) => {
-        const t = $(cell).text().trim();
-        if (/^\d{5}$/.test(t)) deptCode = t; // 5桁=部署/スタッフコード（実店舗はadit打刻場所で確定）
-      });
-      seen.add(staffId);
-      roster.push({ staffId, name, deptCode });
-    });
-  });
-
-  // フォールバック: テーブルが取れない場合はリンクのテキストから（ページ仕様変更対策）
-  if (roster.length === 0) {
-    $('a[href*="/client/staff/"]').each((i, el) => {
-      const href = $(el).attr('href') || '';
-      const m = href.match(/\/client\/staff\/(\d+)/);
-      if (!m) return;
-      const staffId = m[1];
-      if (seen.has(staffId)) return;
-      const name = $(el).text().trim().replace(/\s+/g, ' ');
-      if (!name || name.length < 2) return;
-      const dm = $(el).closest('tr').text().match(/(\d{5})/);
-      seen.add(staffId);
-      roster.push({ staffId, name, deptCode: dm ? dm[1] : null });
-    });
+  // employee_id 単位に集約。氏名は最もきれいな（短い）ものを採用、部署コードは取れたものを保持。
+  const byId = new Map();
+  for (const r of list) {
+    if (r.employee_id === null || r.employee_id === undefined || r.employee_id === '') continue;
+    const id = String(r.employee_id);
+    const cleanName = cleanStaffName(r.staff_name);
+    const prev = byId.get(id);
+    const name = (() => {
+      if (!prev || !prev.name) return cleanName || (prev && prev.name) || id;
+      if (cleanName && cleanName.length < prev.name.length) return cleanName;
+      return prev.name;
+    })();
+    const deptCode = (prev && prev.deptCode) || r.dept_code || null;
+    byId.set(id, { staffId: id, name, deptCode });
   }
 
+  const roster = [...byId.values()];
   const debug = {
+    source: 'DailyStaffHours',
     httpStatus: res.status,
-    finalUrl: res.url || url,
-    htmlLength: html.length,
-    linkCount: $('a[href*="/client/staff/"]').length,
-    tableCount: $('table').length,
-    looksLikeLogin: /client_login_password|client_manager_login_id|ログイン画面|loginForm/i.test(html),
+    rowCount: list.length,
     rosterCount: roster.length,
   };
-  console.log(`[SaveHistory] 社員一覧(名簿): ${roster.length}名`, JSON.stringify(debug));
+  console.log(`[SaveHistory] 名簿(Supabase): ${roster.length}名`, JSON.stringify(debug));
   return { roster, debug };
 }
 
