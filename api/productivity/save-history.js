@@ -305,10 +305,11 @@ async function handleBackfill(req, res) {
 
     // 日付非依存の社員一覧(名簿)を取得。これを各日の対象スタッフ源にする
     //（勤務状況ページは本日のみ＝過去日の対象者取得に使えないため）
-    const roster = await fetchStaffRoster(cookies);
+    const { roster, debug: rosterDebug } = await fetchStaffRoster(cookies);
     if (!roster || roster.length === 0) {
       return res.status(502).json({
         error: 'スタッフ名簿(社員一覧)を取得できませんでした。ジョブカンのセッション/ページ仕様を確認してください。',
+        rosterDebug,
       });
     }
 
@@ -603,8 +604,17 @@ async function fetchStaffRoster(cookies) {
     });
   }
 
-  console.log(`[SaveHistory] 社員一覧(名簿): ${roster.length}名 (HTTP ${res.status})`);
-  return roster;
+  const debug = {
+    httpStatus: res.status,
+    finalUrl: res.url || url,
+    htmlLength: html.length,
+    linkCount: $('a[href*="/client/staff/"]').length,
+    tableCount: $('table').length,
+    looksLikeLogin: /client_login_password|client_manager_login_id|ログイン画面|loginForm/i.test(html),
+    rosterCount: roster.length,
+  };
+  console.log(`[SaveHistory] 社員一覧(名簿): ${roster.length}名`, JSON.stringify(debug));
+  return { roster, debug };
 }
 
 // 出入詳細(adit)1名分を取得・解析。確定労働時間/休憩/実打刻時刻/打刻場所コードを返す
