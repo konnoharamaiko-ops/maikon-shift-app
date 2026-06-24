@@ -323,16 +323,20 @@ async function handleBackfill(req, res) {
         const attendanceData = await fetchAttendanceWithLocation(cookies, date, roster);
         console.log(`[Backfill] ${date}: ${attendanceData.length}件取得`);
 
-        // 当日分の労働時間系テーブルを一旦クリアして作り直す（過去の誤レコード・
-        // 未出勤日の偽レコード＝出勤日数の過大計上を除去。名簿取得成功が前提）
-        await deleteByWorkDate(supabaseUrl, supabaseKey, 'DailyStaffHours', date);
-        await deleteByWorkDate(supabaseUrl, supabaseKey, 'DailyDeptProductivity', date);
-
+        // adit実績が1件も取れない日は、既存データを保護するため delete も再挿入もしない。
+        // ジョブカンの出入詳細(adit)は約2か月で打刻明細が消えるため、retention外の過去日は
+        // adit が空になる。ここで delete してしまうと、過去にcronがライブ取得して蓄積した
+        // 復元不能な実績データを消すだけになる（過去の事故の根本原因）。空の日はスキップする。
         if (attendanceData.length === 0) {
           results.push({ date, status: 'no_data', saved: 0 });
           await saveBackfillProgress(supabaseUrl, supabaseKey, date, 'no_data', 0);
           continue;
         }
+
+        // 実績がある日のみ、当日分の労働時間系テーブルをクリアして作り直す
+        // （過去の誤レコード・未出勤日の偽レコード＝出勤日数の過大計上を除去）
+        await deleteByWorkDate(supabaseUrl, supabaseKey, 'DailyStaffHours', date);
+        await deleteByWorkDate(supabaseUrl, supabaseKey, 'DailyDeptProductivity', date);
 
         // WorkHistoryテーブルに保存
         const records = buildHistoryRecords(attendanceData, date, userMap, storeMap);
