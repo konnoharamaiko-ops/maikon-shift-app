@@ -113,10 +113,52 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  if (mode === 'debug-adit') {
+    return await handleDebugAdit(req, res);
+  }
   if (mode === 'backfill') {
     return await handleBackfill(req, res);
   }
   return await handleDailySave(req, res);
+}
+
+// 診断用: cronのログインで指定employee/dateのadit生レスポンスを返す（古い日が取れない原因の切り分け）
+async function handleDebugAdit(req, res) {
+  try {
+    const empId = String(req.query.employee_id || '6');
+    const date = req.query.date || '2025-06-09';
+    const [year, month, day] = date.split('-');
+    const cookies = await loginJobcan(process.env.JOBCAN_COMPANY_ID, process.env.JOBCAN_LOGIN_ID, process.env.JOBCAN_PASSWORD);
+    const url = `https://ssl.jobcan.jp/client/adit?employee_id=${empId}&year=${year}&month=${parseInt(month)}&day=${parseInt(day)}`;
+    const r = await fetch(url, {
+      headers: {
+        'Cookie': cookies,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://ssl.jobcan.jp/client/',
+      },
+      redirect: 'follow',
+    });
+    const html = await r.text();
+    const idx = html.indexOf('労働時間');
+    const snippet = idx >= 0
+      ? html.slice(idx, idx + 300).replace(/<[^>]+>/g, '|').replace(/[|\s]+/g, ' ').slice(0, 220)
+      : html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 220);
+    let detail = null;
+    try { detail = await fetchAditDetail(cookies, empId, year, month, day); } catch (e) { detail = { error: e.message }; }
+    return res.status(200).json({
+      url,
+      httpStatus: r.status,
+      finalUrl: r.url,
+      htmlLength: html.length,
+      has労働時間: idx >= 0,
+      looksLikeLogin: /client_login_password|client_manager_login_id/.test(html),
+      hasSearchForm: html.includes('検索条件') || html.includes('表示'),
+      snippet,
+      detail,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: (e.stack || '').slice(0, 300) });
+  }
 }
 
 // ============================================================
