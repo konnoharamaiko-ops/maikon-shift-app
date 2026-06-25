@@ -694,29 +694,27 @@ async function fetchAditDetail(cookies, empId, year, month, day) {
   let hasAutoClockOut = false;
   let realClockInTime = null, realClockOutTime = null;
 
+  // テーブルのネスト構造で行対応がずれるのを避けるため、ページ全体の<tr>を走査し
+  // 「打刻種別＋HH:MM時刻」を持つ行だけを打刻行として採用する。
   const stampRows = [];
-  $adit('table').each((ti, tbl) => {
-    // 1行目だけでなくテーブル全体のテキストで判定（管理者入力等で見出しの形が違う場合に対応）
-    const wholeText = $adit(tbl).text();
-    if (wholeText.includes('打刻区分') && wholeText.includes('打刻方法')) {
-      $adit(tbl).find('tr').each((ri, row) => {
-        const tds = $adit(row).find('td');
-        if (tds.length < 4) return;
-        const typeEl = $adit(tds[0]).find('select option[selected]');
-        let stampType = (typeEl.length > 0 ? typeEl.text() : $adit(tds[0]).text());
-        // 「- 出勤」「 出勤 」等の先頭記号・空白を除去（管理者入力は先頭に "- " が付く）
-        stampType = stampType.replace(/\s+/g, ' ').replace(/^[\s‐―－\-ー･・]+/, '').trim();
-        if (!stampType || stampType.includes('打刻区分')) return; // 見出し行スキップ
-        const stampTime = $adit(tds[1]).text().trim();
-        const stampMethod = $adit(tds[2]).text().trim();
-        const placeEl = $adit(tds[3]).find('select option[selected]');
-        const placeText = (placeEl.length > 0 ? placeEl.text() : $adit(tds[3]).text()).replace(/\s+/g, ' ').trim();
-        const codeMatch = placeText.match(/(\d{5})/); // 先頭限定をやめ、どこにあっても5桁コードを拾う
-        const placeCode = codeMatch ? codeMatch[1] : null;
-        const isAutoClockOut = stampMethod.includes('自動退出');
-        stampRows.push({ stampType, stampTime, placeCode, isAutoClockOut });
-      });
-    }
+  $adit('tr').each((ri, row) => {
+    const tds = $adit(row).find('td');
+    if (tds.length < 4) return;
+    const typeEl = $adit(tds[0]).find('select option[selected]');
+    let stampType = (typeEl.length > 0 ? typeEl.text() : $adit(tds[0]).text());
+    // 「- 出勤」「 出勤 」等の先頭記号・空白を除去（管理者入力は先頭に "- " が付く）
+    stampType = stampType.replace(/\s+/g, ' ').replace(/^[\s‐―－\-ー･・]+/, '').trim();
+    const stampTime = $adit(tds[1]).text().trim();
+    const knownType = /^(出勤|退勤|退室|休憩開始|休憩終了)/.test(stampType) || /^[1-4]$/.test(stampType);
+    if (!knownType) return;                       // 打刻行以外（見出し・年セレクタ・合計等）を除外
+    if (!/^\d{1,2}:\d{2}/.test(stampTime)) return; // 時刻が無い行を除外
+    const stampMethod = $adit(tds[2]).text().trim();
+    const placeEl = $adit(tds[3]).find('select option[selected]');
+    const placeText = (placeEl.length > 0 ? placeEl.text() : $adit(tds[3]).text()).replace(/\s+/g, ' ').trim();
+    const codeMatch = placeText.match(/(\d{5})/); // どこにあっても5桁コードを拾う
+    const placeCode = codeMatch ? codeMatch[1] : null;
+    const isAutoClockOut = stampMethod.includes('自動退出');
+    stampRows.push({ stampType, stampTime, placeCode, isAutoClockOut });
   });
 
   if (stampRows.length > 0) {
@@ -759,7 +757,7 @@ async function fetchAditDetail(cookies, empId, year, month, day) {
     else if (label === '休憩時間') { const m = parseJapaneseTime(value); if (m > 0) realBreakMinutes = m; }
   });
 
-  return { clockInCode, clockOutCode, breakStartCode, breakEndCode, hasAutoClockOut, realClockInTime, realClockOutTime, realWorkMinutes, realBreakMinutes };
+  return { clockInCode, clockOutCode, breakStartCode, breakEndCode, hasAutoClockOut, realClockInTime, realClockOutTime, realWorkMinutes, realBreakMinutes, stampRows };
 }
 
 // 複数名の出入詳細をバッチ並列＋最大3回リトライで取得（取りこぼし＝出勤者の欠落を防ぐ）
