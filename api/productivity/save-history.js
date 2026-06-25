@@ -696,19 +696,22 @@ async function fetchAditDetail(cookies, empId, year, month, day) {
 
   const stampRows = [];
   $adit('table').each((ti, tbl) => {
-    const hdr = $adit(tbl).find('tr').first().text();
-    if (hdr.includes('打刻区分') && hdr.includes('打刻方法')) {
+    // 1行目だけでなくテーブル全体のテキストで判定（管理者入力等で見出しの形が違う場合に対応）
+    const wholeText = $adit(tbl).text();
+    if (wholeText.includes('打刻区分') && wholeText.includes('打刻方法')) {
       $adit(tbl).find('tr').each((ri, row) => {
-        if (ri === 0) return;
         const tds = $adit(row).find('td');
         if (tds.length < 4) return;
         const typeEl = $adit(tds[0]).find('select option[selected]');
-        const stampType = typeEl.length > 0 ? typeEl.text().trim() : $adit(tds[0]).text().trim();
+        let stampType = (typeEl.length > 0 ? typeEl.text() : $adit(tds[0]).text());
+        // 「- 出勤」「 出勤 」等の先頭記号・空白を除去（管理者入力は先頭に "- " が付く）
+        stampType = stampType.replace(/\s+/g, ' ').replace(/^[\s‐―－\-ー･・]+/, '').trim();
+        if (!stampType || stampType.includes('打刻区分')) return; // 見出し行スキップ
         const stampTime = $adit(tds[1]).text().trim();
         const stampMethod = $adit(tds[2]).text().trim();
         const placeEl = $adit(tds[3]).find('select option[selected]');
-        const placeText = placeEl.length > 0 ? placeEl.text().trim() : $adit(tds[3]).text().trim();
-        const codeMatch = placeText.match(/^(\d{5})/);
+        const placeText = (placeEl.length > 0 ? placeEl.text() : $adit(tds[3]).text()).replace(/\s+/g, ' ').trim();
+        const codeMatch = placeText.match(/(\d{5})/); // 先頭限定をやめ、どこにあっても5桁コードを拾う
         const placeCode = codeMatch ? codeMatch[1] : null;
         const isAutoClockOut = stampMethod.includes('自動退出');
         stampRows.push({ stampType, stampTime, placeCode, isAutoClockOut });
