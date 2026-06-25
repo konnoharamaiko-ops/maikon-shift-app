@@ -145,6 +145,31 @@ async function handleDebugAdit(req, res) {
       : html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 220);
     let detail = null;
     try { detail = await fetchAditDetail(cookies, empId, year, month, day); } catch (e) { detail = { error: e.message }; }
+
+    // 打刻明細テーブルの構造をダンプ（解析失敗の原因特定用）
+    const $dbg = cheerio.load(html);
+    const tables = [];
+    let punchTableFound = false;
+    $dbg('table').each((ti, tbl) => {
+      const allRows = $dbg(tbl).find('tr');
+      const hdr = allRows.first().text().replace(/\s+/g, ' ').trim().slice(0, 70);
+      const wholeText = $dbg(tbl).text();
+      const isPunch = wholeText.includes('打刻区分') && wholeText.includes('打刻方法');
+      const entry = { i: ti, rows: allRows.length, hdr };
+      if (isPunch) {
+        punchTableFound = true;
+        entry.PUNCH = true;
+        entry.sample = allRows.toArray().slice(1, 4).map((row) => {
+          const tds = $dbg(row).find('td').toArray();
+          return tds.map((td) => {
+            const sel = $dbg(td).find('select option[selected]');
+            return (sel.length ? sel.text() : $dbg(td).text()).replace(/\s+/g, ' ').trim().slice(0, 35);
+          });
+        });
+      }
+      if (isPunch || allRows.length >= 2) tables.push(entry);
+    });
+
     return res.status(200).json({
       url,
       httpStatus: r.status,
@@ -153,6 +178,8 @@ async function handleDebugAdit(req, res) {
       has労働時間: idx >= 0,
       looksLikeLogin: /client_login_password|client_manager_login_id/.test(html),
       hasSearchForm: html.includes('検索条件') || html.includes('表示'),
+      punchTableFound,
+      tables,
       snippet,
       detail,
     });
